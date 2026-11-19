@@ -16,7 +16,29 @@ servers:
 security:
   - cookieSession: []
     csrfToken: []
+  # Set by SILLYTAVERN_COMPANION_MODE=true: the loopback-only companion entry
+  # requires a 32-byte bearer capability instead of cookie/CSRF auth.
+  - bearerCapability: []
 paths:
+  /api/v1/companion/health:
+    get:
+      operationId: getCompanionHealth
+      summary: Readiness probe for the loopback-only native companion entry.
+      description: Only present in companion mode; capability-gated like all other routes.
+      responses:
+        '200':
+          description: Companion is ready.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  service: { type: string }
+                  version: { type: integer }
+                  headless: { type: boolean }
+        '401':
+          description: Missing or invalid capability.
   /api/v1/capabilities:
     get:
       operationId: getCapabilities
@@ -298,6 +320,10 @@ components:
       type: apiKey
       in: header
       name: X-CSRF-Token
+    bearerCapability:
+      type: http
+      scheme: bearer
+      description: 64 hex characters (32 random bytes), regenerated on every companion start.
   parameters:
     characterId:
       name: characterId

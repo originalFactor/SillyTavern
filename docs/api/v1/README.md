@@ -138,3 +138,42 @@ Headless extensions are **not sandboxed against Node** — they run as ESM in a 
 Only `main_api=openai` with `chat_completion_source=openai` or `custom` is supported. Basic `{{char}}`/`{{user}}` macros, global World Info books, embedded character books, global regex scripts and static system/story/jailbreak prompts are assembled server-side. Advanced macros, Prompt Manager presets, scoped/preset regex, instruct mode, group chats, swipes, tools, images, TTS, vectors and chat rename return `unsupported` or are marked `false` in capabilities — check the document rather than assuming.
 
 See `openapi.yaml` and `schema/*.json` for the machine-readable contract, and `tests/api-v1-plugins.test.js` for the headless plugin compat-layer tests.
+
+## Companion mode (native Messenger front-end)
+
+`src/headless-companion.js` is a **separate, minimal entry point** for the
+optional `cc.ptoe.messenger.stbridge` Android app. It is NOT the full ST server:
+it mounts only `/api/v1`, binds strictly to `127.0.0.1`, and requires a 32-byte
+bearer capability on **every** request (including GET). There is no SPA, no
+static file serving, no cookie/CSRF login flow and no CORS. Provider keys stay
+in `secrets.json` and never enter a response.
+
+```bash
+node src/headless-companion.js --dataRoot <dir> --port 0 --token <64-hex>
+```
+
+- It writes a companion-owned `config.yaml` next to the data root (v1 enabled,
+  accounts/basic auth off, loopback whitelist) BEFORE importing any ST module,
+  because several modules read config at evaluation time.
+- It emits one machine-readable handshake line on stdout:
+  `{"type":"companion_ready","port":<ephemeral>,"token":"<hex>"}`. The
+  companion APK reads that line and passes `port` + `token` to Messenger over a
+  signature-protected AIDL service. The token is regenerated on every start and
+  is never persisted or logged.
+- `capabilities.auth` reports `bearerToken: true` / `cookieSession: false` /
+  `csrf: false` in this mode (`SILLYTAVERN_COMPANION_MODE=true`).
+- `GET /api/v1/companion/health` is a capability-gated readiness probe.
+  Everything outside `/api/v1` returns 404.
+
+`scripts/build-companion-bundle.mjs --out <dir>` produces the minimal 38-file
+server-side bundle (static + dynamic import graph walk, packaged defaults,
+tokenizer data, and the URL-loaded plugin worker) with a verified
+`companion-bundle.json` manifest. The Messenger `:stbridge` module's
+`build-payload.mjs` consumes it, adds the transitive production-only
+`node_modules` tree offline (preserving nested conflicting versions), and pairs
+it with a pinned static-PIE Android Node executable shipped as
+`jniLibs/<abi>/libnode.so`. See the Messenger repo's `stbridge/AGENTS.md`.
+
+Validation: `tests/api-v1-companion.test.js` (boot + auth gating + capabilities
++ settings round-trip) and `tests/api-v1-bundle.test.js` (bundle contents,
+exclusions, determinism).
