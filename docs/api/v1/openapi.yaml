@@ -1,0 +1,421 @@
+openapi: 3.1.0
+info:
+  title: SillyTavern Headless API
+  version: 1.0.0
+  summary: Opt-in versioned API for native clients, including Jetpack Compose.
+  description: |
+    API v1 is disabled by default. Enable `api.v1.enabled` in `config.yaml` or set
+    `SILLYTAVERN_API_V1_ENABLED=true`. All endpoints are mounted under `/api/v1`
+    after the standard SillyTavern authentication and CSRF middleware.
+
+    Headless plugin hooks are additionally gated by `api.v1.headlessPlugins`
+    (default false). When enabled, `runtime: headless` extensions execute in an
+    isolated Worker with a bounded `SillyTavern.getContext()` compatibility shim.
+servers:
+  - url: /
+security:
+  - cookieSession: []
+    csrfToken: []
+paths:
+  /api/v1/capabilities:
+    get:
+      operationId: getCapabilities
+      summary: List supported API v1 capabilities.
+      description: |
+        `features.serverPlugins` reflects the real `enableServerPlugins` config.
+        `features.headlessPlugins` reflects `api.v1.headlessPlugins`; when true,
+        `features.headlessHooks` lists the supported hook names. Clients MUST show
+        unsupported features explicitly and MUST NOT fall back to private SPA endpoints.
+      responses:
+        '200':
+          description: Capability document.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /csrf-token:
+    get:
+      operationId: getCsrfToken
+      summary: Obtain the CSRF token for the current cookie session.
+      responses:
+        '200':
+          description: CSRF token.
+  /api/v1/session:
+    get:
+      operationId: getSession
+      summary: Describe the authenticated user session.
+      responses:
+        '200':
+          description: Session document.
+  /api/v1/settings:
+    get:
+      operationId: getSettings
+      summary: Read raw and typed user settings.
+    patch:
+      operationId: patchSettings
+      summary: Apply an RFC 7386 JSON Merge Patch to user settings.
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              type: object
+              additionalProperties: true
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Updated raw settings.
+  /api/v1/characters:
+    get:
+      operationId: listCharacters
+      summary: List characters using stable filename-based identifiers.
+  /api/v1/characters/{characterId}:
+    get:
+      operationId: getCharacter
+      summary: Read a normalized character card.
+      parameters:
+        - $ref: '#/components/parameters/characterId'
+  /api/v1/characters/{characterId}/chats:
+    get:
+      operationId: listChats
+      summary: List JSONL chats for a character.
+      parameters:
+        - $ref: '#/components/parameters/characterId'
+    post:
+      operationId: createChat
+      summary: Create a new chat, optionally seeded with the character greeting.
+      parameters:
+        - $ref: '#/components/parameters/characterId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chatId]
+              properties:
+                chatId:
+                  type: string
+                firstMessage:
+                  type: string
+                  description: Overrides the card greeting; omitted uses the card's first_mes.
+      responses:
+        '201':
+          description: Chat created.
+        '409':
+          description: Chat already exists.
+  /api/v1/chats/{chatId}:
+    get:
+      operationId: getChat
+      summary: Read a stable-indexed page of ST chat messages.
+      parameters:
+        - $ref: '#/components/parameters/chatId'
+        - $ref: '#/components/parameters/characterIdQuery'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 200
+        - name: before
+          in: query
+          description: Return the newest messages with index below this value.
+          schema:
+            type: integer
+            minimum: 0
+        - name: after
+          in: query
+          description: Return the oldest messages with index above this value.
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: Chat page with total, hasMore and nextBefore.
+    delete:
+      operationId: deleteChat
+      summary: Delete a chat file.
+      parameters:
+        - $ref: '#/components/parameters/chatId'
+        - $ref: '#/components/parameters/characterIdQuery'
+      responses:
+        '200':
+          description: Chat deleted.
+        '404':
+          description: Chat not found.
+  /api/v1/chats/{chatId}/messages:
+    post:
+      operationId: mutateChat
+      summary: Append, edit or delete a chat message by stable index.
+      parameters:
+        - $ref: '#/components/parameters/chatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [characterId, action]
+              properties:
+                characterId:
+                  type: string
+                action:
+                  type: string
+                  enum: [append, edit, delete]
+                index:
+                  type: integer
+                  description: Required for edit/delete.
+                message:
+                  type: object
+                  description: Required for append/edit.
+      responses:
+        '201':
+          description: Message appended.
+        '200':
+          description: Message edited or deleted.
+  /api/v1/extensions:
+    get:
+      operationId: listExtensions
+      summary: List UI/server extensions and their API v1 runtime classification.
+  /api/v1/extensions/{extensionId}/settings:
+    get:
+      operationId: getExtensionSettings
+      summary: Read one extension's settings namespace.
+      parameters:
+        - $ref: '#/components/parameters/extensionId'
+      responses:
+        '200':
+          description: Extension settings.
+    patch:
+      operationId: patchExtensionSettings
+      summary: Merge-patch one extension's settings namespace (requires headlessPlugins).
+      parameters:
+        - $ref: '#/components/parameters/extensionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Updated extension settings.
+        '403':
+          description: Headless plugins are disabled.
+  /api/v1/extensions/{extensionId}/shell:
+    get:
+      operationId: getExtensionShell
+      summary: Open a same-origin compatibility WebView shell with a real context bridge.
+      parameters:
+        - $ref: '#/components/parameters/extensionId'
+      responses:
+        '200':
+          description: HTML shell.
+          content:
+            text/html:
+              schema:
+                type: string
+  /api/v1/generations/preview:
+    post:
+      operationId: previewGeneration
+      summary: Assemble a prompt without contacting a model provider.
+      description: Also returns the derived providerRequest for inspection.
+      requestBody:
+        $ref: '#/components/requestBodies/GenerationInput'
+      responses:
+        '200':
+          description: Prompt messages, segments, warnings and provider request.
+  /api/v1/generations:
+    post:
+      operationId: createGeneration
+      summary: Start an idempotent generation.
+      description: |
+        Detached from the request. The chat JSONL is written ONCE, atomically, at
+        successful completion; a failure or cancellation leaves no partial user row.
+        `regenerate` drops the trailing assistant reply; `continue` appends to it.
+      requestBody:
+        $ref: '#/components/requestBodies/GenerationInput'
+      responses:
+        '202':
+          description: Generation accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerationAccepted'
+  /api/v1/generations/{requestId}:
+    get:
+      operationId: getGeneration
+      summary: Poll the current generation snapshot after a disconnected SSE stream.
+      description: |
+        Restores persisted journal entries after a server restart. Records that
+        were in flight are restored as `unknown` and are NEVER replayed automatically.
+      parameters:
+        - $ref: '#/components/parameters/requestId'
+  /api/v1/generations/{requestId}/events:
+    get:
+      operationId: streamGenerationEvents
+      summary: Subscribe to SSE events. Clients should not automatically replay a generation.
+      description: |
+        Events: accepted, stage, token, reasoning, heartbeat, plugin, message,
+        error, done, cancelled. `plugin` carries bounded headless-extension effects.
+        `afterSeq` / `Last-Event-ID` filter replayed live events.
+      parameters:
+        - $ref: '#/components/parameters/requestId'
+        - name: afterSeq
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: SSE event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  /api/v1/generations/{requestId}/cancel:
+    post:
+      operationId: cancelGeneration
+      summary: Request cancellation; terminal races return an unknown outcome.
+      parameters:
+        - $ref: '#/components/parameters/requestId'
+      responses:
+        '202':
+          description: Cancellation acknowledged.
+components:
+  securitySchemes:
+    cookieSession:
+      type: apiKey
+      in: cookie
+      name: session
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+  parameters:
+    characterId:
+      name: characterId
+      in: path
+      required: true
+      description: Character avatar filename without `.png`.
+      schema:
+        type: string
+    characterIdQuery:
+      name: characterId
+      in: query
+      required: true
+      schema:
+        type: string
+    extensionId:
+      name: extensionId
+      in: path
+      required: true
+      schema:
+        type: string
+    chatId:
+      name: chatId
+      in: path
+      required: true
+      description: Chat filename without `.jsonl`.
+      schema:
+        type: string
+    requestId:
+      name: requestId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  requestBodies:
+    GenerationInput:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GenerationInput'
+  schemas:
+    GenerationInput:
+      type: object
+      required: [characterId, chatId, clientRequestId]
+      properties:
+        characterId:
+          type: string
+        chatId:
+          type: string
+        clientRequestId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        type:
+          type: string
+          enum: [normal, quiet, regenerate, continue]
+          default: normal
+        input:
+          type: string
+        stream:
+          type: boolean
+          default: true
+        overrides:
+          type: object
+          description: Per-request sampling overrides. Never exposes credentials or base URLs.
+          properties:
+            model:
+              type: string
+            temperature:
+              type: number
+            maxTokens:
+              type: integer
+            frequencyPenalty:
+              type: number
+            presencePenalty:
+              type: number
+            topP:
+              type: number
+            stop:
+              type: array
+              maxItems: 4
+              items:
+                type: string
+    GenerationAccepted:
+      type: object
+      required: [requestId, status, seq, idempotent, snapshotUrl, eventUrl, cancelUrl]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        status:
+          type: string
+        seq:
+          type: integer
+        idempotent:
+          type: boolean
+        snapshotUrl:
+          type: string
+        eventUrl:
+          type: string
+        cancelUrl:
+          type: string
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, retryable, requestId]
+          properties:
+            code:
+              type: string
+              enum: [validation, not_found, unsupported, conflict, provider, internal, disabled]
+            message:
+              type: string
+            retryable:
+              type: boolean
+            requestId:
+              type: string
+            details: {}

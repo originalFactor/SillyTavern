@@ -1,0 +1,30 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://sillytavern.local/schemas/api-v1/generation.json",
+    "title": "SillyTavern API v1 Generation Request",
+    "type": "object",
+    "required": ["characterId", "chatId", "clientRequestId"],
+    "properties": {
+        "characterId": { "type": "string", "minLength": 1 },
+        "chatId": { "type": "string", "minLength": 1 },
+        "clientRequestId": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "type": { "type": "string", "enum": ["normal", "quiet", "regenerate", "continue"], "default": "normal" },
+        "input": { "type": "string" },
+        "stream": { "type": "boolean", "default": true },
+        "overrides": {
+            "type": "object",
+            "description": "Per-request sampling overrides. Credentials and base URLs are never accepted here.",
+            "properties": {
+                "model": { "type": "string" },
+                "temperature": { "type": "number" },
+                "maxTokens": { "type": "integer" },
+                "frequencyPenalty": { "type": "number" },
+                "presencePenalty": { "type": "number" },
+                "topP": { "type": "number" },
+                "stop": { "type": "array", "maxItems": 4, "items": { "type": "string" } }
+            },
+            "additionalProperties": false
+        }
+    },
+    "additionalProperties": false
+}
