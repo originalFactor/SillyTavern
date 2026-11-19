@@ -48,7 +48,11 @@ router.get('/capabilities', (_request, response) => {
     response.json({
         version: API_V1_VERSION,
         enabled: true,
-        auth: { cookieSession: true, csrf: true, bearerToken: false },
+        auth: {
+            cookieSession: !process.env.SILLYTAVERN_COMPANION_MODE,
+            csrf: !process.env.SILLYTAVERN_COMPANION_MODE,
+            bearerToken: !!process.env.SILLYTAVERN_COMPANION_MODE,
+        },
         resources: {
             session: true,
             settingsRead: true,
