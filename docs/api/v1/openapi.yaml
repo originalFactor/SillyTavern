@@ -439,7 +439,9 @@ paths:
                   type: string
                 firstMessage:
                   type: string
-                  description: Overrides the card greeting; omitted uses the card's first_mes.
+                  description: Overrides the card greeting; omitted uses the card's first_mes. Expanded once by the saved upstream macro engine; variable effects occur before publication. An existing chat ID is rejected before evaluation.
+                nativeContext:
+                  $ref: '#/components/schemas/GenerationInput/properties/nativeContext'
       responses:
         '201':
           description: Chat created.

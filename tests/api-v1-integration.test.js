@@ -161,6 +161,24 @@ describe('API v1 routes', () => {
         expect(providerRequests.length).toBe(before);
     });
 
+    test('chat creation expands greeting macros once and rejects duplicate IDs before effects', async () => {
+        const before = providerRequests.length;
+        const userName = readSettings(directories).username;
+        const headers = { 'Content-Type': 'application/json' };
+        const first = await fetch(`${baseUrl}/api/v1/characters/Aria/chats`, { method: 'POST', headers,
+            body: JSON.stringify({ chatId: 'Macro greeting', firstMessage: '{{if true}}Hi {{user}} {{incvar::greeted}}{{/if}}', nativeContext: { locale: 'en-US', timeZone: 'UTC', isMobile: false } }) });
+        expect(first.status).toBe(201);
+        const chat = await (await fetch(`${baseUrl}/api/v1/chats/Macro%20greeting?characterId=Aria`)).json();
+        expect(chat.messages.at(-1).mes).toBe(`Hi ${userName} 1`);
+        expect(chat.messages[0].chat_metadata.variables.greeted).toBe(1);
+        const duplicate = await fetch(`${baseUrl}/api/v1/characters/Aria/chats`, { method: 'POST', headers,
+            body: JSON.stringify({ chatId: 'Macro greeting', firstMessage: '{{setglobalvar::mustNotRun::bad}}' }) });
+        expect(duplicate.status).toBe(409);
+        expect(readSettings(directories).extension_settings.variables?.global?.mustNotRun).toBeUndefined();
+        expect(providerRequests.length).toBe(before);
+        expect((await fetch(`${baseUrl}/api/v1/chats/Macro%20greeting?characterId=Aria`, { method: 'DELETE' })).status).toBe(200);
+    });
+
     test.each([
         { now: 0 }, { extensionPrompts: {} }, { locale: 'not_a_locale' }, { timeZone: 'Missing/Zone' },
         { firstDisplayedMessageId: -1 }, { isMobile: 'true' }, { input: 42 }, { lastGenerationType: 'invalid' },

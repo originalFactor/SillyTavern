@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, test } from '@jest/globals';
 import { generateHeadlessMacros } from '../scripts/generate-headless-macros.mjs';
-import { createMacroContext, persistMacroEffects } from '../src/headless/macros.js';
+import { createMacroChat, createMacroContext, persistMacroEffects } from '../src/headless/macros.js';
 import { buildPrompt } from '../src/headless/prompt.js';
 import { readChat, readSettings, writeChat, writeSettings } from '../src/headless/session.js';
 
@@ -120,5 +120,50 @@ describe('source-derived native macro runtime', () => {
         expect(() => context.expand('{{roll::1000000000d6}}')).toThrow('limit');
         expect(() => fixture().context.expand('{{space::1000000000}}')).toThrow('limit');
         expect(() => fixture().context.expand('{{setvarkey::sparse::1000000000::value}}')).toThrow('limit');
+    });
+    test('variable allocation quota includes names, not just stored values', () => {
+        const { context } = fixture();
+        const name = 'k'.repeat(524288);
+        for (let index = 0; index < 15; index++) context.frame.metadata.variables[name + index] = 'v';
+        expect(() => { context.frame.metadata.variables[name + 15] = 'v'; }).toThrow('state exceeded its size limit');
+    });
+    test.each([true, false])('new chat greeting and local variables commit together; duplicate IDs have no effects (engine=%s)', engine => {
+        const { session, character } = fixture(engine);
+        session.directories.chats = path.join(session.directories.root, 'chats');
+        const result = createMacroChat(session, character, 'Aria', 'New', 'Hi {{user}}: {{incvar::greetings}}{{setglobalvar::shared::greeted}}');
+        const saved = readChat(path.join(session.directories.chats, 'Aria', 'New.jsonl'));
+        expect(saved[0].chat_metadata.variables.greetings).toBe(1);
+        expect(saved[1].mes).toBe('Hi 读者🙂: 1');
+        expect(result.warnings.macroStateChanges).toEqual({ local: true, global: true });
+        expect(readSettings(session.directories).extension_settings.variables.global.shared).toBe('greeted');
+        expect(() => createMacroChat(session, character, 'Aria', 'New', '{{setglobalvar::shared::must-not-run}}')).toThrow('already exists');
+        expect(readSettings(session.directories).extension_settings.variables.global.shared).toBe('greeted');
+    });
+    test('upstream eager character-field preparation evaluates the original greeting again in a dry-run frame', () => {
+        const { session, character, options } = fixture();
+        session.directories.chats = path.join(session.directories.root, 'chats');
+        character.first_mes = 'Greeting {{incvar::greetCount}}';
+        createMacroChat(session, character, 'Aria', 'Eager', character.first_mes);
+        const chatPath = path.join(session.directories.chats, 'Aria', 'Eager.jsonl');
+        const built = buildPrompt(session, character, readChat(chatPath), { ...options, preview: true });
+        expect(built.macroEffects.metadata.variables.greetCount).toBe(2);
+        expect(readChat(chatPath)[0].chat_metadata.variables.greetCount).toBe(1);
+        expect(readChat(chatPath)[1].mes).toBe('Greeting 1');
+    });
+    test('greeting warnings remain with their stored message for native navigation/recreation', () => {
+        const { session, character } = fixture();
+        session.directories.chats = path.join(session.directories.root, 'chats');
+        const created = createMacroChat(session, character, 'Aria', 'Warning', 'Greeting {{space::invalid}}');
+        expect(created.warnings.macroWarnings.length).toBeGreaterThan(0);
+        const saved = readChat(path.join(session.directories.chats, 'Aria', 'Warning.jsonl'));
+        expect(saved[1].extra.native_macro_warnings).toEqual(created.warnings.macroWarnings);
+    });
+    test('failed greeting publication reports already-published global effects without retrying', () => {
+        const { session, character } = fixture();
+        session.directories.chats = path.join(session.directories.root, 'chats');
+        fs.mkdirSync(session.directories.chats);
+        fs.writeFileSync(path.join(session.directories.chats, 'Aria'), 'blocks chat directory');
+        expect(() => createMacroChat(session, character, 'Aria', 'Failure', '{{setglobalvar::shared::published}}Greeting')).toThrow('Global variable changes may already be saved');
+        expect(readSettings(session.directories).extension_settings.variables.global.shared).toBe('published');
     });
 });

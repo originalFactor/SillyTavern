@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ApiError } from './contract.js';
-import { readChat, readSettings, writeChat, writeSettings } from './session.js';
+import { createChat, readChat, readSettings, resolveChatPath, writeChat, writeSettings } from './session.js';
+import { applyGlobalRegex, regex_placement } from './regex.js';
 import { parseExampleIntoIndividual } from './macro-runtime/generated/instruct.js';
 import { evaluateNativeMacros, inMacroFrame, upstreamMacroScript } from './macro-runtime/index.js';
 
@@ -12,12 +13,13 @@ function variableMap(value, frame) {
     if (value == null) value = {};
     if (typeof value !== 'object' || Array.isArray(value)) throw new ApiError(422, 'validation', 'Macro variables must be a JSON object.');
     const target = Object.assign(Object.create(null), clone(value));
-    const sizes = new Map(Object.entries(target).map(([key, entry]) => [key, Buffer.byteLength(JSON.stringify(entry) ?? '')]));
+    const sizeOf = (key, entry) => Buffer.byteLength(String(key)) + Buffer.byteLength(JSON.stringify(entry) ?? '');
+    const sizes = new Map(Object.entries(target).map(([key, entry]) => [key, sizeOf(key, entry)]));
     let bytes = [...sizes.values()].reduce((sum, size) => sum + size, 0);
     if (bytes > 8_388_608) throw new ApiError(422, 'validation', 'Macro variable state exceeds its size limit.');
     return new Proxy(target, {
         set(object, key, entry) {
-            const size = Buffer.byteLength(JSON.stringify(entry) ?? '');
+            const size = sizeOf(key, entry);
             if (bytes - (sizes.get(key) ?? 0) + size > 8_388_608) { frame.limitExceeded = true; throw new Error('Macro variable state exceeded its size limit.'); }
             bytes += size - (sizes.get(key) ?? 0); sizes.set(key, size);
             Object.defineProperty(object, key, { value: entry, writable: true, configurable: true, enumerable: true });
@@ -94,4 +96,24 @@ export function persistMacroEffects(session, chatPath, chat, effects) {
     }
     chat[0] ??= { chat_metadata: {} };
     chat[0].chat_metadata = { ...(chat[0].chat_metadata ?? {}), ...effects.metadata };
+}
+
+/** Expand once after checking identity; commit the greeting and local state together. */
+export function createMacroChat(session, character, characterId, chatId, firstMessage, nativeContext = {}, extensions = []) {
+    const chatPath = resolveChatPath(session, characterId, chatId);
+    if (fs.existsSync(chatPath)) throw new ApiError(409, 'conflict', 'Chat already exists.');
+    const chat = [{ chat_metadata: {} }];
+    const context = createMacroContext(session, character, chat, { type: '', characterId, chatId, nativeContext, extensions });
+    const greeting = applyGlobalRegex(context.expand(firstMessage), session.extensionSettings, regex_placement.AI_OUTPUT);
+    const effects = context.effects();
+    // As with generation preparation, global macro effects precede transcript
+    // publication and are not rolled back by a later filesystem failure.
+    try {
+        persistMacroEffects(session, null, chat, { ...effects, localDirty: false });
+        const created = createChat(session, characterId, chatId, greeting, character.name, { metadata: effects.metadata, macroWarnings: context.frame.warnings });
+        return { ...created, warnings: { macroWarnings: context.frame.warnings, macroStateChanges: { local: effects.localDirty, global: effects.globalDirty } } };
+    } catch (error) {
+        if (error instanceof ApiError) throw error;
+        throw new ApiError(500, 'unknown', 'Chat creation could not be confirmed after macro preparation. Global variable changes may already be saved. Inspect the chat and variables before creating again.');
+    }
 }

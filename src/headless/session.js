@@ -246,7 +246,7 @@ export function resolveChatPath(session, characterId, chatId) {
  * @param {string} [characterName] Display name for the greeting
  * @returns {{id: string, fileName: string, characterId: string}} Created chat
  */
-export function createChat(session, characterId, chatId, firstMessage = '', characterName = characterId) {
+export function createChat(session, characterId, chatId, firstMessage = '', characterName = characterId, { metadata = {}, macroWarnings = [] } = {}) {
     const filePath = resolveChatPath(session, characterId, chatId);
     if (fs.existsSync(filePath)) {
         throw new ApiError(409, 'conflict', 'Chat already exists.');
@@ -254,7 +254,8 @@ export function createChat(session, characterId, chatId, firstMessage = '', char
     const message = firstMessage
         ? [createCharacterMessage(characterName, firstMessage)]
         : [];
-    writeChat(filePath, [{ chat_metadata: {} }, ...message]);
+    if (message.length && macroWarnings.length) message[0].extra.native_macro_warnings = macroWarnings;
+    writeChat(filePath, [{ chat_metadata: metadata }, ...message]);
     return { id: chatId, fileName: path.basename(filePath), characterId };
 }
 

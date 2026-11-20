@@ -27,17 +27,6 @@ import { isValidUrl } from '../util.js';
  */
 
 /**
- * Expands the basic macros supported by the headless MVP.
- * @param {string} text Input text
- * @param {Record<string, string>} variables Macro variables
- * @returns {string} Expanded text
- */
-export function substituteBasicMacros(text, variables) {
-    const values = new Map(Object.entries(variables).map(([key, value]) => [key.toLowerCase(), value]));
-    return String(text ?? '').replace(/\{\{\s*([^{}\s]+)\s*\}\}/g, (match, key) => values.get(key.toLowerCase()) ?? match);
-}
-
-/**
  * Gets active World Info content from global books and the embedded character book.
  * @param {import('./session.js').HeadlessSession} session Headless session
  * @param {Record<string, any>} character Character data

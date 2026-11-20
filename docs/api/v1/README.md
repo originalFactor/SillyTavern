@@ -382,7 +382,22 @@ semantics. Dialogue examples use upstream named `system` messages
 card overrides consume `{{original}}`.
 
 `features.upstreamMacroEngine`, `macroVariables` and `nativeMacroContext` describe
-this execution slice. `advancedMacros` remains false: greeting expansion, group
-macro environments, full Instruct/extension prompt assembly and native variable
+this execution slice. `advancedMacros` remains false: group macro environments, full
+Instruct/extension prompt assembly and native variable
 management are not yet complete. This change does not establish full presets,
 World Info, groups, tools, media or browser-plugin parity.
+
+New-chat creation also uses the saved upstream engine and optional native device
+facts. Existing chat IDs and active generations are checked before macro
+execution. Greeting text and local variables publish together; global changes are
+preparation effects and can precede the transcript. A later filesystem failure
+reports an uncertain creation outcome and possible global changes, without an
+automatic retry. Greeting diagnostics are stored in the message's
+`extra.native_macro_warnings` for the native UI.
+
+Upstream `getCharacterCardFields` eagerly resolves first/alternate greetings
+again during later prompt preparation, even when the assembled prompt does not
+reference them. Consequently, a variable operation in a card greeting may run
+again for an actual generation. Preview only proposes this effect; it does not
+save it. This upstream field-resolution behavior is distinct from request replay,
+and is covered by source/runtime tests.

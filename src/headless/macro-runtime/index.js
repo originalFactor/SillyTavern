@@ -17,7 +17,7 @@ MacroRegistry.executeMacro = (call, options) => {
     if (frame && ++frame.operations > 10000) { frame.limitExceeded = true; throw new Error('Macro operation limit exceeded.'); }
     if (frame && ['space', 'newline'].includes(String(call.name).toLowerCase())) {
         const count = Number(call.args?.[0] ?? 1);
-        if (!Number.isSafeInteger(count) || count < 0 || count > 1_048_576) {
+        if (count > 1_048_576) {
             frame.limitExceeded = true;
             throw new Error('Macro allocation limit exceeded.');
         }

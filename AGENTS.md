@@ -64,6 +64,15 @@ Host-side tests do not prove execution of the arm64 Android Node binary.
   transcript rows; repeated observation/admission does not evaluate again.
   Native context is a strict whitelist and participates in caller-key identity.
   `upstreamMacroEngine` is separate from still-false full `advancedMacros`.
-  Greeting/group/Instruct/extension integration and variable management remain
+  Group/Instruct/extension integration and variable management remain
   unfinished. Legacy variable-category ordering and named system dialogue examples
   are intentional upstream behavior, not bugs to normalize.
+
+- New-chat greetings use the same source-derived engine. Check the chat ID and
+  generation fence before evaluating; atomically publish greeting/local variables
+  in one transcript write. Global preparation effects may precede publication;
+  report uncertainty if later filesystem publication fails, never automatically
+  retry. Store greeting warnings with the message for native navigation/recovery.
+  Upstream getCharacterCardFields eagerly evaluates original first/alternate
+  greetings again during later prompt preparation; preserve that documented
+  behavior instead of treating it as an admission replay.

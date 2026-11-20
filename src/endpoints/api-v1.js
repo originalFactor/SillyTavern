@@ -23,11 +23,11 @@ import {
     snapshot,
     subscribe,
 } from '../headless/generation-store.js';
-import { buildPrompt, listExtensions, substituteBasicMacros } from '../headless/prompt.js';
+import { buildPrompt, listExtensions } from '../headless/prompt.js';
+import { createMacroChat } from '../headless/macros.js';
 import { areHeadlessPluginHooksEnabled, HEADLESS_HOOKS } from '../headless/plugin-runtime.js';
 import { runGeneration } from '../headless/runtime.js';
 import {
-    createChat,
     createSession,
     deleteChat,
     isApiV1Enabled,
@@ -79,6 +79,7 @@ router.get('/capabilities', (_request, response) => {
             presets: true,
             chats: true,
             chatCreate: true,
+            chatGreetingMacros: true,
             chatDelete: true,
             chatMutate: true,
             chatPaging: true,
@@ -341,11 +342,11 @@ router.get('/characters/:characterId/chats', asyncHandler(async (request, respon
 router.post('/characters/:characterId/chats', asyncHandler(async (request, response) => {
     const session = createSession(request);
     const chatId = requireSafeId(request.body?.chatId, 'chatId');
-    const firstMessage = typeof request.body?.firstMessage === 'string' ? request.body.firstMessage.slice(0, 64 * 1024) : '';
+    const firstMessage = typeof request.body?.firstMessage === 'string' ? request.body.firstMessage : '';
     const character = await readCharacter(session, request.params.characterId);
-    const greeting = substituteBasicMacros(firstMessage || String(character.data.first_mes ?? ''), { user: session.userName, char: character.name });
     assertChatIdle(session.handle, request.params.characterId, chatId, session.directories);
-    const created = createChat(session, request.params.characterId, chatId, greeting, character.name);
+    const created = createMacroChat(session, character.data, request.params.characterId, chatId,
+        firstMessage || String(character.data.first_mes ?? ''), validateNativeMacroContext(request.body?.nativeContext), listExtensions(session));
     response.status(201).json(created);
 }));
 
