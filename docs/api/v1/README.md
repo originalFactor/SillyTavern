@@ -249,3 +249,34 @@ timeout does not prove the upstream operation stopped and never authorizes a
 replay. Unsupported tool calls fail visibly without execution. Usage contains
 only numeric metadata. Settings and preview responses hide credential fields
 (including custom headers) while stored values stay unchanged.
+
+### Named preset storage and selection
+
+`GET /presets/{kind}` lists built-in and user presets with individual file
+revisions, the current name and `activeRevision`. Kinds currently exposed are
+`chat-completion`, `context`, `instruct` and `sysprompt`. Built-in templates ship
+in the companion bundle; the browser SPA is not required. User files override
+same-named built-ins without modifying the bundled original.
+
+- `GET /preset-settings/{kind}` snapshots active settings using upstream preset
+  field names (for example `temperature`, not internal `temp_openai`).
+- `GET /presets/{kind}/{name}` reads portable JSON plus origin, revision,
+  credential-redaction notice and pending connection-field changes.
+- `PUT /presets/{kind}/{name}` accepts `{preset,expectedRevision?}`. Creation
+  must not overwrite an existing name; replacing an inspected user/built-in
+  preset needs its exact revision. JSON is bounded to 1 MiB. Unknown fields are
+  preserved; malformed prompt orders and credential-bearing imports are rejected.
+- `POST /presets/{kind}/{name}/activate` requires `{expectedRevision,
+  expectedActiveRevision,allowConnectionChanges?}`. Provider/model/connection
+  changes require explicit `allowConnectionChanges:true`; stale file or active
+  settings fail with 409. OpenAI and custom sources remain the supported runtime
+  providers. Legacy main/nsfw/jailbreak prompt fields migrate on selection.
+- `GET /presets/{kind}/{name}/export` returns the standard base64 JSON export
+  envelope without credentials. Dedicated provider settings retain their keys.
+- `DELETE /presets/{kind}/{name}?expectedRevision=...` deletes only an inspected,
+  inactive user preset. Removing an override reveals the bundled original.
+
+The preset/settings alias map is checked against upstream `settingsToUpdate`.
+Template selection does not enable Instruct mode. Storage/selection does not yet
+establish full macro, World Info or token-budget semantics; the full Prompt
+Manager parity capability remains false while those requirements are open.

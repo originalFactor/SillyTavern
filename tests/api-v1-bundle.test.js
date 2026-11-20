@@ -38,6 +38,8 @@ describe('companion bundle builder', () => {
             'src/headless/plugin-worker.js',
             'src/headless/plugin-context.js',
             'default/content/settings.json',
+            'default/content/presets/openai/Default.json',
+            'default/content/presets/instruct/Alpaca.json',
             'default/config.yaml',
             'package.json',
             'pnpm-lock.yaml',

@@ -35,6 +35,7 @@ const EXTRA_FILES = [
 /** Non-JS data directories referenced at runtime. */
 const DATA_DIRECTORIES = [
     'src/tokenizers',
+    'default/content/presets',
 ];
 
 const seen = new Set();

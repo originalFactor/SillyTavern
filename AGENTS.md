@@ -34,6 +34,7 @@ from the companion entry point.
   legacy position 1 maps to 0, while author-note placements 2/3 explicitly fail.
   The companion packages a default character and user avatar without the SPA.
 - `src/headless/prompt-manager.js` owns revision-checked active Chat Completion prompt edits and the shared preview/dispatch ordering. Writes are scoped to prompts and global order 100001, preserving provider settings and unrelated orders; old 100000 orders migrate with the persona marker. Support includes roles, enables, markers, generation triggers, depth/priority injection and card main/PHI overrides. Keep `promptManagerPresets` false: named preset management, token-budget packing, full macros and Instruct remain incomplete. Never publish partial ordering as full preset compatibility.
+- `src/headless/presets.js` manages revision-checked named Chat Completion/context/instruct/system templates. Presets use native ST directories and bundled defaults; portable snapshots/exports exclude credentials. Selection checks both file and active-config revisions, requires explicit consent for connection changes, and uses the upstream-checked alias table in `preset-mapping.js`. Template selection must not enable unsupported modes. Update the bundle/Gradle source inputs when changing packaged defaults.
 - Current provider scope remains OpenAI/custom Chat Completions. Advanced
   macros, full presets/instruct, group chats, tools, images, TTS and vectors
   remain incomplete; do not mark them supported without implementation and

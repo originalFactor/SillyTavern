@@ -39,6 +39,88 @@ paths:
                   headless: { type: boolean }
         '401':
           description: Missing or invalid capability.
+  /api/v1/presets/{kind}:
+    parameters:
+      - { name: kind, in: path, required: true, schema: { type: string, enum: [chat-completion, context, instruct, sysprompt] } }
+    get:
+      operationId: listNamedPresets
+      summary: List bundled/user templates, file revisions and the active configuration revision.
+      responses:
+        '200': { description: Preset catalog with activeName, activeRevision, presets and visible read warnings. }
+  /api/v1/preset-settings/{kind}:
+    parameters:
+      - { name: kind, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: snapshotActivePreset
+      summary: Snapshot active settings with upstream preset field names and no credentials.
+      responses:
+        '200': { description: Active kind, name, revision and portable preset JSON. }
+  /api/v1/presets/{kind}/{name}:
+    parameters:
+      - { name: kind, in: path, required: true, schema: { type: string } }
+      - { name: name, in: path, required: true, schema: { type: string, maxLength: 200 } }
+    get:
+      operationId: getNamedPreset
+      summary: Inspect a preset, its revision and connection changes before selection.
+      responses:
+        '200': { description: Preset document with origin, credentialsRedacted and connectionChanges. }
+        '404': { description: Preset not found. }
+    put:
+      operationId: saveNamedPreset
+      summary: Create a named preset or replace the inspected revision (maximum 1 MiB JSON).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [preset]
+              properties:
+                preset: { type: object, additionalProperties: true }
+                expectedRevision: { type: string }
+      responses:
+        '200': { description: Saved document with new revision. }
+        '400': { description: Invalid, oversized or credential-bearing preset. }
+        '409': { description: Existing name or stale revision. }
+    delete:
+      operationId: deleteNamedPreset
+      summary: Delete an inspected inactive user preset, revealing any bundled original.
+      parameters:
+        - { name: expectedRevision, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: User preset removed. }
+        '409': { description: Revision conflict, active preset or protected built-in. }
+  /api/v1/presets/{kind}/{name}/activate:
+    parameters:
+      - { name: kind, in: path, required: true, schema: { type: string } }
+      - { name: name, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: activateNamedPreset
+      summary: Select the inspected preset with active-configuration conflict checking.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, expectedActiveRevision]
+              properties:
+                expectedRevision: { type: string }
+                expectedActiveRevision: { type: string }
+                allowConnectionChanges: { type: boolean, default: false }
+      responses:
+        '200': { description: Updated preset catalog. }
+        '409': { description: Revision conflict or explicit connection-change confirmation required. }
+        '422': { description: Unsupported provider source. }
+  /api/v1/presets/{kind}/{name}/export:
+    parameters:
+      - { name: kind, in: path, required: true, schema: { type: string } }
+      - { name: name, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: exportNamedPreset
+      summary: Export portable JSON without credentials.
+      responses:
+        '200': { description: File envelope with fileName, mimeType and dataBase64. }
   /api/v1/prompt-manager:
     get:
       operationId: getPromptManager

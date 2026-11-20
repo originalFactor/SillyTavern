@@ -5,6 +5,7 @@ import express from 'express';
 
 import { API_V1_VERSION, ApiError, asyncHandler, ensureRequestId, requireObject, requireSafeId, sendApiError } from '../headless/contract.js';
 import { deleteCharacter, exportCharacter, importCharacter, saveCharacter } from '../headless/character-management.js';
+import { activePreset, activatePreset, deletePreset, exportPreset, getPreset, listPresets, savePreset } from '../headless/presets.js';
 import { publicConfiguration } from '../headless/redaction.js';
 import { readPromptManager, savePromptManager } from '../headless/prompt-manager.js';
 import { deletePersona, listPersonas, savePersona, selectPersona } from '../headless/persona-management.js';
@@ -71,6 +72,7 @@ router.get('/capabilities', (_request, response) => {
             characterExport: true,
             personas: true,
             promptManager: true,
+            presets: true,
             chats: true,
             chatCreate: true,
             chatDelete: true,
@@ -164,6 +166,28 @@ router.patch('/settings', asyncHandler(async (request, response) => {
 }));
 
 // ---- narrowly scoped provider credentials; secret values are never returned ----
+
+router.get('/presets/:kind', asyncHandler(async (request, response) => {
+    response.json(listPresets(createSession(request), request.params.kind));
+}));
+router.get('/preset-settings/:kind', asyncHandler(async (request, response) => {
+    response.json(activePreset(createSession(request), request.params.kind));
+}));
+router.get('/presets/:kind/:name', asyncHandler(async (request, response) => {
+    response.json(getPreset(createSession(request), request.params.kind, request.params.name));
+}));
+router.put('/presets/:kind/:name', asyncHandler(async (request, response) => {
+    response.json(savePreset(createSession(request), request.params.kind, request.params.name, request.body));
+}));
+router.delete('/presets/:kind/:name', asyncHandler(async (request, response) => {
+    response.json(deletePreset(createSession(request), request.params.kind, request.params.name, request.query.expectedRevision));
+}));
+router.post('/presets/:kind/:name/activate', asyncHandler(async (request, response) => {
+    response.json(activatePreset(createSession(request), request.params.kind, request.params.name, request.body));
+}));
+router.get('/presets/:kind/:name/export', asyncHandler(async (request, response) => {
+    response.json(exportPreset(createSession(request), request.params.kind, request.params.name));
+}));
 
 router.get('/prompt-manager', asyncHandler(async (request, response) => {
     response.json(readPromptManager(createSession(request)));

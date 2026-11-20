@@ -9,8 +9,23 @@ export function redactProviderText(value, secrets = []) {
 
 const PRIVATE_FIELD = /^(?:api[_-]?key|.*[_-]api[_-]?key|authorization|access[_-]?token|refresh[_-]?token|token|.*password|secret|.*[_-]secret|custom_include_headers)$/i;
 
+export const isCredentialField = key => PRIVATE_FIELD.test(key);
+
+function credentialUrl(value) {
+    if (typeof value !== 'string' || !/^https?:\/\//i.test(value)) return null;
+    try { const url = new URL(value); return url.username || url.password ? url : null; } catch { return null; }
+}
+
+export function hasCredentialValues(value) {
+    if (credentialUrl(value)) return true;
+    if (Array.isArray(value)) return value.some(hasCredentialValues);
+    return Boolean(value && typeof value === 'object' && Object.entries(value).some(([key, item]) => (isCredentialField(key) && item !== null && item !== '') || hasCredentialValues(item)));
+}
+
 /** Copy public settings; never mutate stored credentials or echo them back. */
 export function publicConfiguration(value) {
+    const url = credentialUrl(value);
+    if (url) { url.username = ''; url.password = ''; return url.toString(); }
     if (Array.isArray(value)) return value.map(publicConfiguration);
     if (value && typeof value === 'object') {
         return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, PRIVATE_FIELD.test(key) && item !== null && item !== '' ? '[redacted]' : publicConfiguration(item)]));
