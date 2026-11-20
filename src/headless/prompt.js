@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { assembleManagedPrompt } from './prompt-manager.js';
 import { ApiError } from './contract.js';
 import { applyGlobalRegex, regex_placement } from './regex.js';
 import { readWorldInfoFile } from '../endpoints/worldinfo.js';
@@ -29,12 +30,8 @@ import { isValidUrl } from '../util.js';
  * @returns {string} Expanded text
  */
 export function substituteBasicMacros(text, variables) {
-    return String(text ?? '').replace(/\{\{\s*([^{}\s]+)\s*\}\}/g, (match, key) => {
-        if (Object.hasOwn(variables, key)) {
-            return variables[key];
-        }
-        return match;
-    });
+    const values = new Map(Object.entries(variables).map(([key, value]) => [key.toLowerCase(), value]));
+    return String(text ?? '').replace(/\{\{\s*([^{}\s]+)\s*\}\}/g, (match, key) => values.get(key.toLowerCase()) ?? match);
 }
 
 /**
@@ -152,6 +149,10 @@ export function buildPrompt(session, character, chat, { type, input = '', overri
     const variables = {
         user: session.userName,
         char: characterName,
+        charIfNotGroup: characterName,
+        description: String(character.description ?? ''),
+        personality: String(character.personality ?? ''),
+        scenario: String(character.scenario ?? ''),
         persona: String(settings.power_user?.persona_description ?? ''),
     };
     const macro = text => substituteBasicMacros(text, variables);
@@ -176,7 +177,7 @@ export function buildPrompt(session, character, chat, { type, input = '', overri
     const systemPrompt = useSysprompt
         ? macro(String(mainPrompt?.content ?? settings.power_user?.sysprompt?.content ?? ''))
         : '';
-    const messages = [];
+    let messages = [];
     if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
     if (story) messages.push({ role: 'system', content: story });
 
@@ -213,7 +214,30 @@ export function buildPrompt(session, character, chat, { type, input = '', overri
         messages.push({ role: 'system', content: jailbreak });
     }
 
-    const segments = [
+    const managed = assembleManagedPrompt(oai, {
+        worldInfoBefore: macro(worldInfo.before), worldInfoAfter: macro(worldInfo.after),
+        charDescription: regexUserInput(macro(String(character.description ?? ''))),
+        charPersonality: regexUserInput(macro(oai.personality_format ? String(oai.personality_format).replaceAll('{{personality}}', String(character.personality ?? '')) : String(character.personality ?? ''))),
+        scenario: regexUserInput(macro(oai.scenario_format ? String(oai.scenario_format).replaceAll('{{scenario}}', String(character.scenario ?? '')) : String(character.scenario ?? ''))),
+        personaDescription: [0, 1].includes(personaPosition) ? regexUserInput(macro(variables.persona)) : '',
+    }, history.filter(message => typeof message?.mes === 'string').map(message => ({
+        role: message.is_user ? 'user' : 'assistant', content: regexUserInput(macro(message.mes)),
+    })), examples.flatMap(example => example.split('\n').filter(Boolean).map(rawLine => {
+        const line = macro(rawLine);
+        return { role: line.startsWith(`${session.userName}:`) || line.startsWith('User:') ? 'user' : 'assistant', content: regexUserInput(line.replace(/^[^:]+:\s*/, '')) };
+    })), character, type, (text, original) => substituteBasicMacros(text, { ...variables, original: macro(original) }),
+    personaPosition === 4 && variables.persona ? [{
+        role: ['system', 'user', 'assistant'][Number(settings.power_user?.persona_description_role ?? 0)] ?? 'system',
+        content: regexUserInput(macro(variables.persona)),
+        injection_depth: Math.max(0, Math.min(100, Number(settings.power_user?.persona_description_depth ?? 2))),
+        injection_order: 100,
+    }] : []);
+    if (managed) {
+        messages = managed.messages;
+        if (type === 'quiet' && input) messages.push({ role: 'system', content: regexUserInput(macro(input)) });
+    }
+
+    const segments = managed?.segments ?? [
         { role: 'system', name: 'systemPrompt', content: systemPrompt },
         { role: 'system', name: 'storyString', content: story },
         { role: 'system', name: 'jailbreak', content: jailbreak },
@@ -225,6 +249,7 @@ export function buildPrompt(session, character, chat, { type, input = '', overri
     const warnings = {
         worldInfoActivated: worldInfo.activated,
         promptManagerPresets: false,
+        promptManagerOrdering: Boolean(managed),
         instructMode: Boolean(settings.power_user?.instruct?.enabled),
         advancedMacros: false,
         extensionPrompts: false,

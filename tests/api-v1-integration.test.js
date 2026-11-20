@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
 
 import { router as apiV1Router } from '../src/endpoints/api-v1.js';
 import { cancel, clearGenerations, createGeneration } from '../src/headless/generation-store.js';
-import { writeSettings } from '../src/headless/session.js';
+import { readSettings, writeSettings } from '../src/headless/session.js';
 import { write as writePngMetadata } from '../src/character-card-parser.js';
 import { DEFAULT_USER, USER_DIRECTORY_TEMPLATE } from '../src/constants.js';
 import { serverDirectory } from '../src/server-directory.js';
@@ -184,6 +184,26 @@ describe('API v1 routes', () => {
         const chat = await (await fetch(`${baseUrl}/api/v1/chats/Chat?characterId=Aria`)).json();
         expect(chat.messages.at(-2).mes).toBe('Hello');
         expect(chat.messages.at(-1).mes).toBe('Mock reply');
+    });
+
+    test('native prompt edits reach preview and actual dispatch in the same order', async () => {
+        const original = readSettings(directories);
+        try {
+            const config = await (await fetch(`${baseUrl}/api/v1/prompt-manager`)).json();
+            config.prompts.push({ identifier: 'native-tail', role: 'user', content: 'TAIL {{char}}', system_prompt: false });
+            config.order.push({ identifier: 'native-tail', enabled: true });
+            const saved = await fetch(`${baseUrl}/api/v1/prompt-manager`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...config, expectedRevision: config.revision }) });
+            expect(saved.status).toBe(200);
+            const before = providerRequests.length;
+            const body = { characterId: 'Aria', chatId: 'Chat', clientRequestId: 'managed-order-generation', input: 'Managed input', type: 'normal' };
+            const preview = await (await fetch(`${baseUrl}/api/v1/generations/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+            expect(providerRequests.length).toBe(before);
+            expect(preview.messages.at(-1)).toEqual({ role: 'user', content: 'TAIL Aria' });
+            const accepted = await (await fetch(`${baseUrl}/api/v1/generations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+            expect((await waitForGeneration(accepted.requestId)).status).toBe('done');
+            expect(providerRequests).toHaveLength(before + 1);
+            expect(providerRequests.at(-1).messages).toEqual(preview.messages);
+        } finally { writeSettings(directories, original); }
     });
 
     test('duplicate clientRequestId is idempotent', async () => {

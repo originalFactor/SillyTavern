@@ -211,3 +211,25 @@ it with a pinned static-PIE Android Node executable shipped as
 Validation: `tests/api-v1-companion.test.js` (boot + auth gating + capabilities
 + settings round-trip) and `tests/api-v1-bundle.test.js` (bundle contents,
 exclusions, determinism).
+
+### Active Prompt Manager configuration
+
+`GET /api/v1/prompt-manager` returns `{revision,prompts,order}`. A scoped
+`PUT /api/v1/prompt-manager` sends `{expectedRevision,prompts,order}`; it preserves
+provider/model settings, opaque prompt fields and unrelated prompt orders, and
+rejects stale/missing revisions with HTTP 409. Limits are 128 prompts/order
+entries and 512 KiB. This is the active configuration, not named preset storage.
+
+Preview and generation share ordering, enable switches, marker insertion,
+system/user/assistant roles, generation triggers, depth/priority injections and
+character-card main/post-history overrides (`forbid_overrides`, `{{original}}`).
+Global ID 100001 takes priority; legacy 100000 migrates with the persona marker
+included. Unknown references in existing imported orders are skipped as upstream
+does; new native edits must reference existing unique prompts. Depth injections
+require an enabled chat-history marker. Quiet prompts remain last. Existing
+limited World Info/regex and message-example parsing still apply; these changes
+do not establish their full upstream semantics. Named presets, Instruct mode,
+full macro semantics and token-budget packing remain incomplete.
+
+Capabilities expose `resources.promptManager` and
+`features.promptManagerOrdering`; `features.promptManagerPresets` stays false.

@@ -32,6 +32,7 @@ from the companion entry point.
   fields. In-prompt, depth/role and excluded description placements work;
   legacy position 1 maps to 0, while author-note placements 2/3 explicitly fail.
   The companion packages a default character and user avatar without the SPA.
+- `src/headless/prompt-manager.js` owns revision-checked active Chat Completion prompt edits and the shared preview/dispatch ordering. Writes are scoped to prompts and global order 100001, preserving provider settings and unrelated orders; old 100000 orders migrate with the persona marker. Support includes roles, enables, markers, generation triggers, depth/priority injection and card main/PHI overrides. Keep `promptManagerPresets` false: named preset management, token-budget packing, full macros and Instruct remain incomplete. Never publish partial ordering as full preset compatibility.
 - Current provider scope remains OpenAI/custom Chat Completions. Advanced
   macros, full presets/instruct, group chats, tools, images, TTS and vectors
   remain incomplete; do not mark them supported without implementation and

@@ -5,6 +5,7 @@ import express from 'express';
 
 import { API_V1_VERSION, ApiError, asyncHandler, ensureRequestId, requireObject, requireSafeId, sendApiError } from '../headless/contract.js';
 import { deleteCharacter, exportCharacter, importCharacter, saveCharacter } from '../headless/character-management.js';
+import { readPromptManager, savePromptManager } from '../headless/prompt-manager.js';
 import { deletePersona, listPersonas, savePersona, selectPersona } from '../headless/persona-management.js';
 import {
     assertChatIdle,
@@ -68,6 +69,7 @@ router.get('/capabilities', (_request, response) => {
             characterImport: true,
             characterExport: true,
             personas: true,
+            promptManager: true,
             chats: true,
             chatCreate: true,
             chatDelete: true,
@@ -109,6 +111,7 @@ router.get('/capabilities', (_request, response) => {
             globalRegex: true,
             scopedRegex: false,
             promptManagerPresets: false,
+            promptManagerOrdering: true,
             instructMode: false,
             groupChats: false,
             swipes: true,
@@ -160,6 +163,14 @@ router.patch('/settings', asyncHandler(async (request, response) => {
 }));
 
 // ---- narrowly scoped provider credentials; secret values are never returned ----
+
+router.get('/prompt-manager', asyncHandler(async (request, response) => {
+    response.json(readPromptManager(createSession(request)));
+}));
+
+router.put('/prompt-manager', asyncHandler(async (request, response) => {
+    response.json(savePromptManager(createSession(request), request.body));
+}));
 
 router.get('/provider-credentials', asyncHandler(async (request, response) => {
     const session = createSession(request);

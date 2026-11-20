@@ -39,6 +39,49 @@ paths:
                   headless: { type: boolean }
         '401':
           description: Missing or invalid capability.
+  /api/v1/prompt-manager:
+    get:
+      operationId: getPromptManager
+      summary: Read the active global Chat Completion prompt configuration and revision.
+      responses:
+        '200':
+          description: Scoped configuration, with opaque upstream prompt/order fields preserved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revision, prompts, order]
+                properties:
+                  revision: { type: string }
+                  prompts: { type: array, maxItems: 128, items: { type: object, additionalProperties: true } }
+                  order: { type: array, maxItems: 128, items: { type: object, additionalProperties: true } }
+    put:
+      operationId: savePromptManager
+      summary: Replace the inspected active prompt configuration without changing provider settings.
+      description: |
+        Requires expectedRevision from GET; stale or missing revisions return 409.
+        Maximum 128 prompts/order entries and 512 KiB of configuration. Writes only
+        oai_settings.prompts and the global prompt_order (ID 100001), preserving
+        other settings and orders. Supports relative order, boolean enables,
+        roles, markers, injection_position (0/1), injection_depth (0..100),
+        injection_order (-10000..10000), injection_trigger and forbid_overrides.
+        Applies to subsequent generation snapshots. Named preset storage, full
+        macro compatibility, token budgeting and Instruct mode remain unsupported.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, prompts, order]
+              properties:
+                expectedRevision: { type: string }
+                prompts: { type: array, maxItems: 128, items: { type: object, additionalProperties: true } }
+                order: { type: array, maxItems: 128, items: { type: object, additionalProperties: true } }
+      responses:
+        '200': { description: Saved configuration with new revision. }
+        '400': { description: Malformed or oversized prompt configuration. }
+        '409': { description: Configuration changed; reload before saving. }
   /api/v1/capabilities:
     get:
       operationId: getCapabilities
