@@ -52,6 +52,25 @@ const restoredDirectories = new Set();
 const chatLocks = new Map();
 
 /**
+ * Reject transcript mutations while a detached generation may still commit.
+ * Checks admission records as well as the lock, including accepted work that
+ * has not yet acquired its chat lock. Call and mutate without an intervening
+ * await so another request cannot be admitted between the check and write.
+ * @param {string} handle User handle
+ * @param {string} characterId Character identifier
+ * @param {string} chatId Chat identifier
+ * @returns {void}
+ */
+export function assertChatIdle(handle, characterId, chatId) {
+    const userKey = getUserKey(handle);
+    for (const record of generations.values()) {
+        if (record.userKey === userKey && record.characterId === characterId && record.chatId === chatId && !isTerminal(record.status)) {
+            throw new ApiError(409, 'conflict', 'This chat has an active generation. Stop it and wait for completion before changing history.');
+        }
+    }
+}
+
+/**
  * Serializes work on one chat file so two detached generations cannot read the
  * same JSONL and clobber each other's commit.
  * @param {string} chatPath Chat file path

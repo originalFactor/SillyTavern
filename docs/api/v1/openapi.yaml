@@ -91,6 +91,41 @@ paths:
       responses:
         '200':
           description: Updated raw settings.
+  /api/v1/provider-credentials:
+    get:
+      operationId: getProviderCredentialState
+      summary: Read whether supported provider credentials are configured; never returns secret values.
+      responses:
+        '200':
+          description: Credential presence flags.
+    put:
+      operationId: saveProviderCredential
+      summary: Store one OpenAI or OpenAI-compatible API key in the server-side secrets file.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, apiKey]
+              properties:
+                provider: { type: string, enum: [openai, custom] }
+                apiKey: { type: string, minLength: 1, maxLength: 4096, writeOnly: true }
+      responses:
+        '200':
+          description: Credential stored; response contains no secret value.
+  /api/v1/provider-credentials/{provider}:
+    delete:
+      operationId: deleteProviderCredential
+      summary: Delete all stored keys for the selected OpenAI or OpenAI-compatible provider.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema: { type: string, enum: [openai, custom] }
+      responses:
+        '200':
+          description: Credential deleted.
   /api/v1/characters:
     get:
       operationId: listCharacters
@@ -170,6 +205,28 @@ paths:
           description: Chat deleted.
         '404':
           description: Chat not found.
+    patch:
+      operationId: renameChat
+      summary: Rename a chat file.
+      parameters:
+        - $ref: '#/components/parameters/chatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [characterId, newChatId]
+              properties:
+                characterId: { type: string }
+                newChatId: { type: string }
+      responses:
+        '200':
+          description: Chat renamed.
+        '404':
+          description: Chat not found.
+        '409':
+          description: Target chat already exists.
   /api/v1/chats/{chatId}/messages:
     post:
       operationId: mutateChat
@@ -188,10 +245,14 @@ paths:
                   type: string
                 action:
                   type: string
-                  enum: [append, edit, delete]
+                  enum: [append, edit, delete, swipe]
                 index:
                   type: integer
                   description: Required for edit/delete.
+                swipeId:
+                  type: integer
+                  minimum: 0
+                  description: Required with action swipe; selects a stored assistant alternative.
                 message:
                   type: object
                   description: Required for append/edit.
@@ -260,7 +321,9 @@ paths:
       description: |
         Detached from the request. The chat JSONL is written ONCE, atomically, at
         successful completion; a failure or cancellation leaves no partial user row.
-        `regenerate` drops the trailing assistant reply; `continue` appends to it.
+        `regenerate` preserves the trailing assistant reply as a swipe and selects
+        the new alternative; `continue` appends to the selected alternative.
+        Transcript management returns 409 while a generation is active.
       requestBody:
         $ref: '#/components/requestBodies/GenerationInput'
       responses:

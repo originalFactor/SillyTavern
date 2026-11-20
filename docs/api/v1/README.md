@@ -13,14 +13,21 @@ Headless plugin hooks are a **separate, additional** opt-in: set `api.v1.headles
 1. Open `/login` in a platform WebView when user accounts, Basic Auth or SSO are enabled. Reuse its persistent cookie jar for all API calls. With accounts disabled, no login WebView is required.
 2. `GET /csrf-token`; send `X-CSRF-Token` on every non-idempotent request and on the SSE fetch if the HTTP client permits custom headers.
 3. `GET /api/v1/capabilities`; show unsupported features explicitly. Do not fall back to private SPA endpoints. `features.serverPlugins` now reflects the real `enableServerPlugins` config, and `features.headlessPlugins` / `features.headlessHooks` report the plugin tier.
+   The native companion may use `/api/v1/provider-credentials` to save an OpenAI/custom key or delete all stored keys for that provider. Reads return presence flags only; key values are never returned by the API.
 4. Read `GET /api/v1/characters`, `GET /api/v1/characters/{characterId}/chats`, and `GET /api/v1/chats/{chatId}?characterId=...`. IDs are filenames without extensions; messages are ST JSONL objects with an added `index` field. Use `limit`, `before` and `after` to page; the response carries `total`, `hasMore` and `nextBefore`.
-5. Create a chat with `POST /api/v1/characters/{characterId}/chats` (`chatId`, optional `firstMessage`). Edit history with `POST /api/v1/chats/{chatId}/messages` (`append` / `edit` / `delete` by `index`) and remove a chat with `DELETE /api/v1/chats/{chatId}?characterId=...`.
+5. Create a chat with `POST /api/v1/characters/{characterId}/chats` (`chatId`, optional `firstMessage`). Rename it with `PATCH /api/v1/chats/{chatId}` (`characterId`, `newChatId`), edit history with `POST /api/v1/chats/{chatId}/messages` (`append` / `edit` / `delete` by `index`) and remove it with `DELETE /api/v1/chats/{chatId}?characterId=...`.
 6. Optionally call `POST /api/v1/generations/preview` to inspect prompt segments and the derived `providerRequest`. It never contacts a model provider.
 7. `POST /api/v1/generations` with a stable `clientRequestId`; persist the returned `requestId`. A duplicate request within five minutes returns the same generation. `overrides` supplies per-request sampling without exposing credentials or base URLs. `type` supports `normal`, `quiet`, `regenerate` and `continue`.
 8. Open `eventUrl` as SSE (`accepted`, `stage`, `token`, `reasoning`, `heartbeat`, `plugin`, `message`, `error`, `done`, `cancelled`). Pass `afterSeq` or `Last-Event-ID` to filter replayed live events. On disconnect, poll `snapshotUrl`; never resubmit automatically.
 9. `POST /api/v1/generations/{requestId}/cancel` is best-effort. A terminal race returns `outcome: "unknown"`; surface it to the user.
 
 The chat JSONL is written **once, atomically, at successful completion**. A failed or cancelled generation leaves no unanswered user row on disk. In-flight records are journalled to `api-v1-generations/` under the user root and restored as `unknown` after a server restart — they are never replayed automatically.
+
+Regenerating preserves the old assistant reply in `swipes` and selects the new
+reply with `swipe_id`. To switch, post `action: "swipe"`, the message `index`
+and a zero-based `swipeId` to the messages endpoint. Continue updates the selected
+alternative without discarding others. Chat/message mutations and rename/delete
+return 409 while a generation for that chat is active.
 
 ## Kotlin DTO sketch
 
@@ -135,7 +142,7 @@ Headless extensions are **not sandboxed against Node** — they run as ESM in a 
 
 ## MVP limitations
 
-Only `main_api=openai` with `chat_completion_source=openai` or `custom` is supported. Basic `{{char}}`/`{{user}}` macros, global World Info books, embedded character books, global regex scripts and static system/story/jailbreak prompts are assembled server-side. Advanced macros, Prompt Manager presets, scoped/preset regex, instruct mode, group chats, swipes, tools, images, TTS, vectors and chat rename return `unsupported` or are marked `false` in capabilities — check the document rather than assuming.
+Only `main_api=openai` with `chat_completion_source=openai` or `custom` is supported. Basic `{{char}}`/`{{user}}` macros, global World Info books, embedded character books, global regex scripts and static system/story/jailbreak prompts are assembled server-side. Advanced macros, Prompt Manager presets, scoped/preset regex, instruct mode, group chats, tools, images, TTS and vectors remain unsupported; chat rename and swipe alternatives are available through the versioned API.
 
 See `openapi.yaml` and `schema/*.json` for the machine-readable contract, and `tests/api-v1-plugins.test.js` for the headless plugin compat-layer tests.
 

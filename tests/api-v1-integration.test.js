@@ -5,7 +5,7 @@ import express from 'express';
 import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
 
 import { router as apiV1Router } from '../src/endpoints/api-v1.js';
-import { clearGenerations } from '../src/headless/generation-store.js';
+import { cancel, clearGenerations, createGeneration } from '../src/headless/generation-store.js';
 import { writeSettings } from '../src/headless/session.js';
 import { write as writePngMetadata } from '../src/character-card-parser.js';
 import { DEFAULT_USER, USER_DIRECTORY_TEMPLATE } from '../src/constants.js';
@@ -93,8 +93,11 @@ describe('API v1 routes', () => {
         expect(body.generation.restoreAfterRestart).toBe(true);
         expect(body.resources.chatCreate).toBe(true);
         expect(body.resources.chatPaging).toBe(true);
+        expect(body.resources.chatRename).toBe(true);
+        expect(body.resources.providerCredentials).toBe(true);
         expect(body.providers.otherChatCompletionSources).toBe(false);
         expect(body.features.serverPlugins).toBe(false);
+        expect(body.features.swipes).toBe(true);
     });
 
     test('reads and patches settings while preserving unknown fields', async () => {
@@ -108,6 +111,30 @@ describe('API v1 routes', () => {
         expect(body.raw.username).toBe('Compose User');
         expect(body.raw.futureNativeField).toEqual({ keep: true });
         expect(body.typed.oai_settings.custom_model).toBe('mock-model');
+    });
+
+    test('provider credential routes never return the stored key', async () => {
+        const initial = await (await fetch(`${baseUrl}/api/v1/provider-credentials`)).json();
+        expect(initial.customConfigured).toBe(false);
+        const key = 'contract-secret-value';
+        const savedResponse = await fetch(`${baseUrl}/api/v1/provider-credentials`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider: 'custom', apiKey: key }),
+        });
+        const savedText = await savedResponse.text();
+        expect(savedResponse.status).toBe(200);
+        expect(savedText).not.toContain(key);
+        expect((await (await fetch(`${baseUrl}/api/v1/provider-credentials`)).json()).customConfigured).toBe(true);
+        const replacement = await fetch(`${baseUrl}/api/v1/provider-credentials`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider: 'custom', apiKey: 'replacement-secret-value' }),
+        });
+        expect(replacement.status).toBe(200);
+        const deleted = await fetch(`${baseUrl}/api/v1/provider-credentials/custom`, { method: 'DELETE' });
+        expect(deleted.status).toBe(200);
+        expect((await (await fetch(`${baseUrl}/api/v1/provider-credentials`)).json()).customConfigured).toBe(false);
     });
 
     test('lists stable character and chat identifiers', async () => {
@@ -181,6 +208,7 @@ describe('API v1 routes', () => {
     });
 
     test('regenerate re-generates the last reply without leaving a partial user row', async () => {
+        const original = await (await fetch(`${baseUrl}/api/v1/chats/Chat?characterId=Aria`)).json();
         const created = await (await fetch(`${baseUrl}/api/v1/generations`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -192,6 +220,51 @@ describe('API v1 routes', () => {
         const chat = await (await fetch(`${baseUrl}/api/v1/chats/Chat?characterId=Aria`)).json();
         expect(chat.messages.at(-1).mes).toBe('Mock reply');
         expect(chat.messages.at(-2).is_user).toBe(true);
+        expect(chat.messages.length).toBe(original.messages.length);
+        expect(chat.messages.at(-1).swipes).toHaveLength(2);
+        expect(chat.messages.at(-1).swipe_id).toBe(1);
+    });
+
+    test('switching swipes persists the selected alternative and continue updates that alternative only', async () => {
+        const operation = async body => fetch(`${baseUrl}/api/v1/chats/Chat/messages`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ characterId: 'Aria', ...body }),
+        });
+        const before = await (await fetch(`${baseUrl}/api/v1/chats/Chat?characterId=Aria`)).json();
+        const index = before.messages.at(-1).index;
+        expect((await operation({ action: 'edit', index, message: { mes: 'New reply' } })).status).toBe(200);
+        expect((await operation({ action: 'swipe', index, swipeId: 0 })).status).toBe(200);
+        const accepted = await (await fetch(`${baseUrl}/api/v1/generations`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ characterId: 'Aria', chatId: 'Chat', clientRequestId: 'continue-swipe', type: 'continue', input: 'Finish the sentence.' }),
+        })).json();
+        expect((await waitForGeneration(accepted.requestId)).status).toBe('done');
+        const after = await (await fetch(`${baseUrl}/api/v1/chats/Chat?characterId=Aria`)).json();
+        expect(after.messages).toHaveLength(before.messages.length);
+        expect(after.messages.at(-1).mes).toBe('Mock replyMock reply');
+        expect(after.messages.at(-1).swipes).toEqual(['Mock replyMock reply', 'New reply']);
+        expect(after.messages.at(-1).swipe_id).toBe(0);
+        expect((await operation({ action: 'swipe', index, swipeId: 100 })).status).toBe(400);
+    });
+
+    test('accepted generations fence destructive chat management', async () => {
+        const { record } = createGeneration({ handle: 'contract-user', clientRequestId: 'pending-management', characterId: 'Aria', chatId: 'Chat', type: 'normal', directories });
+        try {
+            const removed = await fetch(`${baseUrl}/api/v1/chats/Chat?characterId=Aria`, { method: 'DELETE' });
+            expect(removed.status).toBe(409);
+            const renamed = await fetch(`${baseUrl}/api/v1/chats/Chat`, {
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ characterId: 'Aria', newChatId: 'Forbidden' }),
+            });
+            expect(renamed.status).toBe(409);
+            const edit = await fetch(`${baseUrl}/api/v1/chats/Chat/messages`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ characterId: 'Aria', action: 'delete', index: 1 }),
+            });
+            expect(edit.status).toBe(409);
+        } finally {
+            cancel(record, 'requested');
+        }
     });
 
     test('creates, pages and deletes chats', async () => {
@@ -206,6 +279,39 @@ describe('API v1 routes', () => {
         expect(page.messages).toHaveLength(1);
         const removed = await fetch(`${baseUrl}/api/v1/chats/Paged%20Chat?characterId=Aria`, { method: 'DELETE' });
         expect(removed.status).toBe(200);
+    });
+
+    test('appends, edits, deletes and renames chat content', async () => {
+        const created = await fetch(`${baseUrl}/api/v1/characters/Aria/chats`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chatId: 'Managed' }),
+        });
+        expect(created.status).toBe(201);
+        const append = await fetch(`${baseUrl}/api/v1/chats/Managed/messages`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ characterId: 'Aria', action: 'append', message: { is_user: true, mes: 'before' } }),
+        });
+        expect((await append.json()).index).toBe(2);
+        const edit = await fetch(`${baseUrl}/api/v1/chats/Managed/messages`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ characterId: 'Aria', action: 'edit', index: 2, message: { mes: 'after' } }),
+        });
+        expect((await edit.json()).action).toBe('edit');
+        const removeMessage = await fetch(`${baseUrl}/api/v1/chats/Managed/messages`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ characterId: 'Aria', action: 'delete', index: 2 }),
+        });
+        expect((await removeMessage.json()).index).toBe(-1);
+        const rename = await fetch(`${baseUrl}/api/v1/chats/Managed`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ characterId: 'Aria', newChatId: 'Managed Renamed' }),
+        });
+        expect(rename.status).toBe(200);
+        expect((await rename.json()).id).toBe('Managed Renamed');
+        const chat = await fetch(`${baseUrl}/api/v1/chats/Managed%20Renamed?characterId=Aria`);
+        expect(chat.status).toBe(200);
+        const removedChat = await fetch(`${baseUrl}/api/v1/chats/Managed%20Renamed?characterId=Aria`, { method: 'DELETE' });
+        expect(removedChat.status).toBe(200);
     });
 
     test('reads and patches extension settings when headless plugins are enabled', async () => {

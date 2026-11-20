@@ -260,6 +260,28 @@ export function deleteChat(session, characterId, chatId) {
 }
 
 /**
+ * Renames a chat file while preserving its contents.
+ * @param {import('./session.js').HeadlessSession} session Headless session
+ * @param {string} characterId Character identifier
+ * @param {string} chatId Existing chat identifier
+ * @param {string} newChatId New chat identifier
+ * @returns {{id: string, fileName: string, characterId: string}} Renamed chat
+ */
+export function renameChat(session, characterId, chatId, newChatId) {
+    const source = resolveChatPath(session, characterId, chatId);
+    const targetId = requireSafeId(newChatId, 'newChatId');
+    const target = resolveChatPath(session, characterId, targetId);
+    if (!fs.existsSync(source)) {
+        throw new ApiError(404, 'not_found', 'Chat not found.');
+    }
+    if (source !== target && fs.existsSync(target)) {
+        throw new ApiError(409, 'conflict', 'A chat with that name already exists.');
+    }
+    if (source !== target) fs.renameSync(source, target);
+    return { id: targetId, fileName: path.basename(target), characterId };
+}
+
+/**
  * Reads a page of chat messages with stable absolute indexes.
  * @param {string} filePath Chat file path
  * @param {object} [options] Paging options
@@ -278,7 +300,7 @@ export function readChatPage(filePath, { limit = 200, before = null, after = nul
     };
     const beforeIndex = parseAnchor(before);
     const afterIndex = parseAnchor(after);
-    const indexed = all.map((message, index) => ({ index, ...message }));
+    const indexed = all.map((message, index) => ({ ...message, index }));
     let page = indexed;
     if (beforeIndex !== null) page = page.filter(item => item.index < beforeIndex);
     if (afterIndex !== null) page = page.filter(item => item.index > afterIndex);
@@ -299,27 +321,46 @@ export function readChatPage(filePath, { limit = 200, before = null, after = nul
  * Appends a message to a chat, or edits/deletes an existing one by index.
  * @param {string} filePath Chat file path
  * @param {object} operation Operation descriptor
- * @param {string} operation.action `append` | `edit` | `delete`
+ * @param {string} operation.action `append` | `edit` | `delete` | `swipe`
  * @param {Record<string, any>} [operation.message] Message for append/edit
  * @param {number} [operation.index] Target index for edit/delete
+ * @param {number} [operation.swipeId] Reply alternative for swipe selection
  * @returns {number} New message index, or -1 for delete
  */
-export function mutateChat(filePath, { action, message, index }) {
+export function mutateChat(filePath, { action, message, index, swipeId }) {
+    if (!fs.existsSync(filePath)) throw new ApiError(404, 'not_found', 'Chat not found.');
     const chat = readChat(filePath);
     if (action === 'append') {
-        const entry = message && typeof message === 'object' ? message : null;
+        const entry = message && typeof message === 'object' && !Array.isArray(message) ? { ...message } : null;
         if (!entry) throw new ApiError(400, 'validation', 'A message object is required.');
+        delete entry.index;
         chat.push(entry);
         writeChat(filePath, chat);
         return chat.length - 1;
     }
-    if (!Number.isInteger(index) || index < 0 || index >= chat.length) {
+    if (!Number.isInteger(index) || index < 1 || index >= chat.length) {
         throw new ApiError(404, 'not_found', 'Message index is out of range.');
     }
     if (action === 'edit') {
-        const entry = message && typeof message === 'object' ? message : null;
+        const entry = message && typeof message === 'object' && !Array.isArray(message) ? { ...message } : null;
         if (!entry) throw new ApiError(400, 'validation', 'A message object is required.');
+        delete entry.index;
         chat[index] = { ...chat[index], ...entry };
+        if (typeof entry.mes === 'string' && Array.isArray(chat[index].swipes)) {
+            const selected = Number.isInteger(chat[index].swipe_id) ? chat[index].swipe_id : 0;
+            if (selected >= 0 && selected < chat[index].swipes.length) chat[index].swipes[selected] = entry.mes;
+        }
+        writeChat(filePath, chat);
+        return index;
+    }
+    if (action === 'swipe') {
+        const entry = chat[index];
+        if (entry.is_user || !Array.isArray(entry.swipes) || !Number.isInteger(swipeId) || swipeId < 0 || swipeId >= entry.swipes.length) {
+            throw new ApiError(400, 'validation', 'A valid assistant swipe index is required.');
+        }
+        entry.swipe_id = swipeId;
+        entry.mes = String(entry.swipes[swipeId]);
+        entry.extra = { ...(entry.swipe_info?.[swipeId]?.extra ?? {}) };
         writeChat(filePath, chat);
         return index;
     }

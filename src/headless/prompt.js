@@ -217,7 +217,7 @@ export function buildPrompt(session, character, chat, { type, input = '', overri
         advancedMacros: false,
         extensionPrompts: false,
         groupChats: false,
-        swipes: false,
+        swipes: true,
     };
     const providerRequest = buildProviderRequest(session, messages, overrides);
     return { messages, segments, providerRequest, warnings };

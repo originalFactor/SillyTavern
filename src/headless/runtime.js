@@ -57,20 +57,28 @@ export async function runGeneration(sourceRequest, session, record, input) {
                 chat = [{ chat_metadata: {} }, createCharacterMessage(character.name, character.data.first_mes ?? '')];
             }
 
-            // `regenerate` drops the trailing assistant reply and re-generates it.
+            // Preserve the selected reply until successful atomic commit, then
+            // append the regenerated alternative to its swipe history.
             // `continue` keeps the transcript intact and appends to the last reply.
-            if (input.type === 'regenerate') {
-                while (chat.length > 1 && !chat[chat.length - 1].is_user) chat.pop();
+            let previousReply = null;
+            if (['regenerate', 'continue'].includes(input.type)) {
+                const last = chat.at(-1);
+                if (chat.length <= 1 || last.is_user || typeof last.mes !== 'string') {
+                    throw new ApiError(409, 'conflict', 'The last message must be an assistant reply.');
+                }
+                if (input.type === 'regenerate') previousReply = chat.pop();
             }
             if (input.type === 'normal' && typeof input.input === 'string' && input.input.length > 0) {
                 chat.push(createUserMessage(session, input.input));
             }
-            if (input.type === 'continue' && typeof input.input === 'string' && input.input.length > 0) {
-                chat.push({ name: session.userName, is_user: true, is_system: true, mes: `[Continue] ${input.input}`, send_date: new Date().toISOString() });
-            }
 
             stage(record, 'prompt');
             let built = buildPrompt(session, character.data, chat, { type: input.type, input: input.input, overrides: input.overrides ?? {} });
+            if (input.type === 'continue' && input.input) {
+                // Continuation instructions affect the request only, never the
+                // stored transcript or which assistant message receives text.
+                built.messages.push({ role: 'system', content: String(input.input) });
+            }
             const hooked = await applyHeadlessHooks(session, built, {
                 characterId: input.characterId,
                 chatId: input.chatId,
@@ -115,7 +123,7 @@ export async function runGeneration(sourceRequest, session, record, input) {
                     pluginEffects: summarizeEffects(effects),
                 });
             } else {
-                const messageIndex = commitMessages(chatPath, chat, character.name, output, result.reasoning, input.type);
+                const messageIndex = commitMessages(chatPath, chat, character.name, output, result.reasoning, input.type, previousReply);
                 complete(record, {
                     characterId: input.characterId,
                     chatId: input.chatId,
@@ -157,13 +165,32 @@ export async function runGeneration(sourceRequest, session, record, input) {
  * @param {string} output Generated text
  * @param {string} reasoning Reasoning text
  * @param {string} type Generation type
+ * @param {Record<string, any>|null} previousReply Previous reply for regeneration
  * @returns {number} Index of the assistant message
  */
-function commitMessages(chatPath, chat, characterName, output, reasoning, type) {
+function commitMessages(chatPath, chat, characterName, output, reasoning, type, previousReply = null) {
     if (type === 'continue' && chat.length > 1 && !chat[chat.length - 1].is_user) {
         const last = chat[chat.length - 1];
+        last.swipes = Array.isArray(last.swipes) && last.swipes.length ? [...last.swipes] : [String(last.mes ?? '')];
+        last.swipe_info = Array.isArray(last.swipe_info) ? [...last.swipe_info] : [];
         last.mes = `${String(last.mes ?? '')}${output}`;
-        last.swipes = [last.mes];
+        const selected = Number.isInteger(last.swipe_id) && last.swipe_id >= 0 && last.swipe_id < last.swipes.length ? last.swipe_id : 0;
+        last.swipes[selected] = last.mes;
+        last.swipe_id = selected;
+        last.extra = { ...last.extra, reasoning: `${String(last.extra?.reasoning ?? '')}${reasoning}` };
+        last.swipe_info[selected] = { ...last.swipe_info[selected], extra: { ...last.extra } };
+    } else if (type === 'regenerate' && previousReply) {
+        const swipes = Array.isArray(previousReply.swipes) && previousReply.swipes.length
+            ? [...previousReply.swipes] : [String(previousReply.mes)];
+        const selected = Number.isInteger(previousReply.swipe_id) && previousReply.swipe_id >= 0 && previousReply.swipe_id < swipes.length
+            ? previousReply.swipe_id : 0;
+        swipes[selected] = String(previousReply.mes);
+        const swipeInfo = Array.from({ length: swipes.length }, (_, i) => previousReply.swipe_info?.[i] ?? { extra: {} });
+        swipeInfo[selected] = { ...swipeInfo[selected], extra: { ...previousReply.extra } };
+        swipes.push(output);
+        const extra = { ...previousReply.extra, reasoning: reasoning || '' };
+        swipeInfo.push({ extra });
+        chat.push({ ...previousReply, mes: output, swipes, swipe_info: swipeInfo, swipe_id: swipes.length - 1, extra });
     } else {
         chat.push(createCharacterMessage(characterName, output, reasoning));
     }

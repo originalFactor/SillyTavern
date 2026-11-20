@@ -24,7 +24,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 /** Files with no JS import edge but required at runtime. */
 const EXTRA_FILES = [
     'package.json',
-    'package-lock.json',
+    'pnpm-lock.yaml',
     'default/content/settings.json',
     'default/config.yaml',
     // Loaded via `new URL('./plugin-worker.js', import.meta.url)`, not an import

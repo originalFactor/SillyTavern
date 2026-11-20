@@ -5,6 +5,7 @@ import express from 'express';
 
 import { API_V1_VERSION, ApiError, asyncHandler, ensureRequestId, requireSafeId, sendApiError } from '../headless/contract.js';
 import {
+    assertChatIdle,
     cancel,
     createGeneration,
     generationUrls,
@@ -24,6 +25,7 @@ import {
     listCharacters,
     listChats,
     mutateChat,
+    renameChat,
     patchSettings,
     readCharacter,
     readChatPage,
@@ -63,10 +65,11 @@ router.get('/capabilities', (_request, response) => {
             chatDelete: true,
             chatMutate: true,
             chatPaging: true,
-            chatRename: false,
+            chatRename: true,
             extensions: true,
             extensionSettings: headlessPlugins,
             serverPlugins: !!getConfigValue('enableServerPlugins', false, 'boolean'),
+            providerCredentials: true,
         },
         generation: {
             preview: true,
@@ -100,7 +103,7 @@ router.get('/capabilities', (_request, response) => {
             promptManagerPresets: false,
             instructMode: false,
             groupChats: false,
-            swipes: false,
+            swipes: true,
             toolCalling: false,
             images: false,
             tts: false,
@@ -146,6 +149,48 @@ router.patch('/settings', asyncHandler(async (request, response) => {
     const session = createSession(request);
     const settings = patchSettings(session.directories, request.body);
     response.json({ raw: settings });
+}));
+
+// ---- narrowly scoped provider credentials; secret values are never returned ----
+
+router.get('/provider-credentials', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    const { readSecret, SECRET_KEYS } = await import('./secrets.js');
+    response.json({
+        openaiConfigured: Boolean(readSecret(session.directories, SECRET_KEYS.OPENAI)),
+        customConfigured: Boolean(readSecret(session.directories, SECRET_KEYS.CUSTOM)),
+    });
+}));
+
+router.put('/provider-credentials', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    const { SECRET_KEYS, writeSecret } = await import('./secrets.js');
+    const provider = request.body?.provider;
+    const apiKey = request.body?.apiKey;
+    const key = provider === 'openai' ? SECRET_KEYS.OPENAI
+        : provider === 'custom' ? SECRET_KEYS.CUSTOM
+            : null;
+    if (!key) throw new ApiError(400, 'validation', 'provider must be "openai" or "custom".');
+    if (typeof apiKey !== 'string' || apiKey.trim().length === 0 || apiKey.length > 4096) {
+        throw new ApiError(400, 'validation', 'apiKey must be a non-empty string up to 4096 characters.');
+    }
+    writeSecret(session.directories, key, apiKey.trim());
+    response.json({ saved: true, provider });
+}));
+
+router.delete('/provider-credentials/:provider', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    const { SECRET_KEYS, SecretManager } = await import('./secrets.js');
+    const key = request.params.provider === 'openai' ? SECRET_KEYS.OPENAI
+        : request.params.provider === 'custom' ? SECRET_KEYS.CUSTOM
+            : null;
+    if (!key) throw new ApiError(400, 'validation', 'provider must be "openai" or "custom".');
+    const manager = new SecretManager(session.directories);
+    const entries = manager.getSecretState()[key];
+    if (Array.isArray(entries)) {
+        for (const entry of entries) manager.deleteSecret(key, entry.id);
+    }
+    response.json({ deleted: true, provider: request.params.provider });
 }));
 
 // ---- extension settings (scoped write, never raw settings) ----
@@ -197,6 +242,7 @@ router.post('/characters/:characterId/chats', asyncHandler(async (request, respo
     const firstMessage = typeof request.body?.firstMessage === 'string' ? request.body.firstMessage.slice(0, 64 * 1024) : '';
     const character = await readCharacter(session, request.params.characterId);
     const greeting = firstMessage || String(character.data.first_mes ?? '');
+    assertChatIdle(session.handle, request.params.characterId, chatId);
     const created = createChat(session, request.params.characterId, chatId, greeting);
     response.status(201).json(created);
 }));
@@ -220,10 +266,12 @@ router.post('/chats/:chatId/messages', asyncHandler(async (request, response) =>
     requireSafeId(characterId, 'characterId');
     const chatPath = resolveChatPath(session, characterId, request.params.chatId);
     const action = String(request.body?.action ?? 'append');
+    assertChatIdle(session.handle, characterId, request.params.chatId);
     const index = await mutateChat(chatPath, {
         action,
         message: request.body?.message,
         index: request.body?.index,
+        swipeId: request.body?.swipeId,
     });
     response.status(action === 'append' ? 201 : 200).json({ chatId: request.params.chatId, action, index });
 }));
@@ -232,10 +280,22 @@ router.delete('/chats/:chatId', asyncHandler(async (request, response) => {
     const session = createSession(request);
     const characterId = typeof request.query.characterId === 'string' ? request.query.characterId : '';
     requireSafeId(characterId, 'characterId');
+    assertChatIdle(session.handle, characterId, request.params.chatId);
     if (!deleteChat(session, characterId, request.params.chatId)) {
         throw new ApiError(404, 'not_found', 'Chat not found.');
     }
     response.json({ deleted: true, chatId: request.params.chatId, characterId });
+}));
+
+router.patch('/chats/:chatId', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    const characterId = typeof request.body?.characterId === 'string' ? request.body.characterId : '';
+    const newChatId = typeof request.body?.newChatId === 'string' ? request.body.newChatId : '';
+    requireSafeId(characterId, 'characterId');
+    assertChatIdle(session.handle, characterId, request.params.chatId);
+    assertChatIdle(session.handle, characterId, newChatId);
+    const renamed = renameChat(session, characterId, request.params.chatId, newChatId);
+    response.json(renamed);
 }));
 
 router.get('/extensions', asyncHandler(async (request, response) => {

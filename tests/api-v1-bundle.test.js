@@ -40,7 +40,7 @@ describe('companion bundle builder', () => {
             'default/content/settings.json',
             'default/config.yaml',
             'package.json',
-            'package-lock.json',
+            'pnpm-lock.yaml',
         ]) {
             expect(fs.existsSync(path.join(out, file))).toBe(true);
         }
