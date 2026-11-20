@@ -20,6 +20,75 @@ security:
   # requires a 32-byte bearer capability instead of cookie/CSRF auth.
   - bearerCapability: []
 paths:
+  /api/v1/macro-variables/global:
+    get:
+      operationId: getGlobalMacroVariables
+      summary: Read global variables and the saved upstream macro-engine choice.
+      responses:
+        '200':
+          description: Scoped variable document; never includes provider settings or vault credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MacroVariableState' }
+        '422':
+          description: Stored state is invalid or exceeds the 7 MiB native document limit; no truncation.
+    put:
+      operationId: saveGlobalMacroVariables
+      summary: Replace global variables and engine choice with revision checking.
+      description: Merges the latest unrelated settings. Engine selection affects new admissions; global variables are read at preparation. No automatic retry.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GlobalMacroVariableEdit' }
+      responses:
+        '200':
+          description: Saved document with its new revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MacroVariableState' }
+        '409':
+          description: Variables or engine changed; explicitly reload before another save.
+        '422':
+          description: Stored state is invalid or the variable document exceeds its limit.
+  /api/v1/chats/{chatId}/variables:
+    parameters:
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+      - { name: characterId, in: query, required: true, schema: { type: string } }
+    get:
+      operationId: getChatMacroVariables
+      summary: Read this chat's variables and revision without evaluating macros.
+      responses:
+        '200':
+          description: Local variable document; no engine or global settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MacroVariableState' }
+        '404':
+          description: Chat does not exist; reading does not create it.
+        '422':
+          description: Invalid transcript/UTF-8/header/state or oversized variable document.
+    put:
+      operationId: saveChatMacroVariables
+      summary: Replace only local variables, preserving transcript and other metadata.
+      description: Rejects active or unresolved generation admissions and unreadable transcript lines. Omitting a variable key deletes it. The engine/global fields are not accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LocalMacroVariableEdit' }
+      responses:
+        '200':
+          description: Saved local document with its new revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MacroVariableState' }
+        '409':
+          description: Variables changed or a generation admission blocks editing.
+        '404':
+          description: Chat does not exist.
+        '422':
+          description: Invalid transcript/UTF-8/header/state or oversized variable document; no partial replacement.
   /api/v1/companion/health:
     get:
       operationId: getCompanionHealth
@@ -809,6 +878,33 @@ components:
           schema:
             $ref: '#/components/schemas/GenerationInput'
   schemas:
+    MacroVariableState:
+      type: object
+      required: [revision, variables]
+      properties:
+        revision: { type: string, description: SHA-256 of the inspected scoped document. }
+        variables:
+          type: object
+          additionalProperties: true
+          description: Complete JSON variable object, at most 7340032 serialized UTF-8 bytes.
+        experimental:
+          type: boolean
+          description: Present only in global state; true selects the upstream experimental engine.
+    GlobalMacroVariableEdit:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, variables, experimental]
+      properties:
+        expectedRevision: { type: string }
+        variables: { type: object, additionalProperties: true }
+        experimental: { type: boolean }
+    LocalMacroVariableEdit:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, variables]
+      properties:
+        expectedRevision: { type: string }
+        variables: { type: object, additionalProperties: true }
     GenerationInput:
       type: object
       required: [characterId, chatId, clientRequestId]

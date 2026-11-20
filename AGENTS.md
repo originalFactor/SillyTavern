@@ -47,7 +47,7 @@ from the companion entry point.
 Focused verification from this checkout:
 
 ```sh
-NODE_OPTIONS=--experimental-vm-modules pnpm --dir tests exec jest --config jest.config.json --runInBand api-v1-generation-owner.test.js api-v1-generation-journal.test.js api-v1-generation-lifecycle.test.js api-v1-presets.test.js api-v1-provider.test.js api-v1-prompt-manager.test.js api-v1-character-management.test.js api-v1-integration.test.js api-v1-headless.test.js api-v1-companion.test.js api-v1-bundle.test.js api-v1-plugins.test.js
+NODE_OPTIONS=--experimental-vm-modules pnpm --dir tests exec jest --config jest.config.json --runInBand api-v1-generation-owner.test.js api-v1-generation-journal.test.js api-v1-generation-lifecycle.test.js api-v1-presets.test.js api-v1-provider.test.js api-v1-prompt-manager.test.js api-v1-character-management.test.js api-v1-integration.test.js api-v1-headless.test.js api-v1-companion.test.js api-v1-bundle.test.js api-v1-plugins.test.js api-v1-macros.test.js api-v1-macro-management.test.js
 pnpm exec eslint src/endpoints/api-v1.js src/headless/session.js src/headless/runtime.js src/headless/prompt.js src/headless/generation-store.js
 ```
 
@@ -64,8 +64,7 @@ Host-side tests do not prove execution of the arm64 Android Node binary.
   transcript rows; repeated observation/admission does not evaluate again.
   Native context is a strict whitelist and participates in caller-key identity.
   `upstreamMacroEngine` is separate from still-false full `advancedMacros`.
-  Group/Instruct/extension integration and variable management remain
-  unfinished. Legacy variable-category ordering and named system dialogue examples
+  Group/Instruct/extension integration remains unfinished. Legacy variable-category ordering and named system dialogue examples
   are intentional upstream behavior, not bugs to normalize.
 
 - New-chat greetings use the same source-derived engine. Check the chat ID and
@@ -76,3 +75,13 @@ Host-side tests do not prove execution of the arm64 Android Node binary.
   Upstream getCharacterCardFields eagerly evaluates original first/alternate
   greetings again during later prompt preparation; preserve that documented
   behavior instead of treating it as an admission replay.
+
+- `macro-management.js` exposes revision-checked global variables/engine and
+  chat-local variables as separate documents. Variable objects are bounded to
+  7 MiB serialized UTF-8 for the native bulk editor; reject oversized/corrupt
+  state, never truncate it. Global saves merge unrelated settings and check
+  strict settings JSON/UTF-8. Chat saves reject active/unresolved admissions and
+  strictly validate the complete JSONL file before changing its header, so a
+  malformed row cannot silently disappear. Reads do not execute macros; neither
+  save replays generations. A scoped variable/engine conflict requires explicit
+  reload. Preserve failed native drafts and provider/vault boundaries.

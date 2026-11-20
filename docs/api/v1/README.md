@@ -382,9 +382,8 @@ semantics. Dialogue examples use upstream named `system` messages
 card overrides consume `{{original}}`.
 
 `features.upstreamMacroEngine`, `macroVariables` and `nativeMacroContext` describe
-this execution slice. `advancedMacros` remains false: group macro environments, full
-Instruct/extension prompt assembly and native variable
-management are not yet complete. This change does not establish full presets,
+this execution slice. `advancedMacros` remains false: group macro environments and full
+Instruct/extension prompt assembly are not yet complete. This change does not establish full presets,
 World Info, groups, tools, media or browser-plugin parity.
 
 New-chat creation also uses the saved upstream engine and optional native device
@@ -401,3 +400,37 @@ reference them. Consequently, a variable operation in a card greeting may run
 again for an actual generation. Preview only proposes this effect; it does not
 save it. This upstream field-resolution behavior is distinct from request replay,
 and is covered by source/runtime tests.
+
+### Native variable and engine management
+
+`GET/PUT /api/v1/macro-variables/global` reads/replaces the user-owned global
+variable object and saved `experimental` engine choice. Writes require the
+inspected `expectedRevision`, complete `variables` object and boolean
+`experimental`. The revision includes variables and engine, excluding unrelated
+provider settings. A successful save merges the latest unrelated settings and
+returns a new revision. Only the variable object is exposed; this is not an
+interface to provider credentials or the vault.
+
+`GET/PUT /api/v1/chats/{chatId}/variables?characterId=...` reads/replaces only
+that chat's local variable object, with its own inspected revision. It does not
+accept an engine/global setting. PUT preserves transcript rows and unrelated
+metadata, including independent idle message edits, and rejects active or
+unresolved generation admissions. A macro mutation invalidates an old variable
+revision. Both APIs replace the complete map; omitting a key deletes that
+variable, and `{}` clears the selected map only.
+
+Documents are bounded to 7 MiB serialized UTF-8 so the envelope fits the native
+8 MiB response/body contract. Oversized stored state is an explicit error, not a
+truncated editable map. Invalid settings JSON/UTF-8/containers and malformed
+chat JSONL lines/UTF-8/headers block edits instead of silently replacing data
+with defaults or dropping messages. Neither reading nor saving evaluates macros
+or calls a model.
+
+Messenger exposes the global editor/engine switch in SillyTavern settings and
+the local editor in each chat. A failed save retains the draft and inspected
+revision, displays the error, and never automatically retries. Reload explicitly
+discards the draft. Native unconfirmed admission receipts fence these writes.
+Engine choice affects newly admitted generations; existing admissions retain
+their engine snapshot while preparation reads the latest global variables.
+The `resources.macroManagement` flag gates these controls separately from full
+`features.advancedMacros` parity.

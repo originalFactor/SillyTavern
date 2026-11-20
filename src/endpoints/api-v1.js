@@ -25,6 +25,7 @@ import {
 } from '../headless/generation-store.js';
 import { buildPrompt, listExtensions } from '../headless/prompt.js';
 import { createMacroChat } from '../headless/macros.js';
+import { readGlobalMacros, readLocalMacros, saveGlobalMacros, saveLocalMacros } from '../headless/macro-management.js';
 import { areHeadlessPluginHooksEnabled, HEADLESS_HOOKS } from '../headless/plugin-runtime.js';
 import { runGeneration } from '../headless/runtime.js';
 import {
@@ -80,6 +81,7 @@ router.get('/capabilities', (_request, response) => {
             chats: true,
             chatCreate: true,
             chatGreetingMacros: true,
+            macroManagement: true,
             chatDelete: true,
             chatMutate: true,
             chatPaging: true,
@@ -174,6 +176,19 @@ router.patch('/settings', asyncHandler(async (request, response) => {
     const session = createSession(request);
     const settings = patchSettings(session.directories, request.body);
     response.json({ raw: publicConfiguration(settings) });
+}));
+
+router.get('/macro-variables/global', asyncHandler(async (request, response) => {
+    response.json(readGlobalMacros(createSession(request)));
+}));
+router.put('/macro-variables/global', asyncHandler(async (request, response) => {
+    response.json(saveGlobalMacros(createSession(request), request.body));
+}));
+router.get('/chats/:chatId/variables', asyncHandler(async (request, response) => {
+    response.json(readLocalMacros(createSession(request), requireSafeId(request.query.characterId, 'characterId'), request.params.chatId));
+}));
+router.put('/chats/:chatId/variables', asyncHandler(async (request, response) => {
+    response.json(saveLocalMacros(createSession(request), requireSafeId(request.query.characterId, 'characterId'), request.params.chatId, request.body));
 }));
 
 // ---- narrowly scoped provider credentials; secret values are never returned ----
