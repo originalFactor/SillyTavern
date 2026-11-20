@@ -280,3 +280,16 @@ The preset/settings alias map is checked against upstream `settingsToUpdate`.
 Template selection does not enable Instruct mode. Storage/selection does not yet
 establish full macro, World Info or token-budget semantics; the full Prompt
 Manager parity capability remains false while those requirements are open.
+
+### Cancellation through output hooks
+
+The runtime rechecks terminal state after each awaited hook and before saving
+transcripts or deferred extension settings. A cancellation observed while an
+output/completion hook is suspended cannot become a later transcript write.
+The provider may still have billed the generation; this is local commit
+exclusion, not a claim that an upstream operation was undone.
+
+Polling/journal text retains complete bounded output instead of silently slicing
+at 64 KiB. Oversized transformed text fails explicitly before commit. Quiet
+success is `status:done,committed:false`; its result is observable without
+inserting a user/assistant row into the chat.

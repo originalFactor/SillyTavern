@@ -1,5 +1,5 @@
 import { ApiError, getUserKey } from './contract.js';
-import { complete, fail, recordPluginEvents, setFinalText, setUsage, stage, withChatLock } from './generation-store.js';
+import { complete, fail, recordPluginEvents, isTerminal, setFinalText, setUsage, stage, withChatLock } from './generation-store.js';
 import { applyGlobalRegex, regex_placement } from './regex.js';
 import { buildPrompt } from './prompt.js';
 import {
@@ -38,6 +38,7 @@ import {
  * @returns {Promise<void>} Generation promise
  */
 export async function runGeneration(sourceRequest, session, record, input) {
+    if (isTerminal(record.status)) return;
     const startedAt = Date.now();
     const effects = { events: [], settingsPatch: {}, extensionPrompts: [], quietPrompts: [], warnings: [] };
     console.info('[api-v1] generation_started', JSON.stringify({
@@ -47,11 +48,14 @@ export async function runGeneration(sourceRequest, session, record, input) {
     }));
     try {
         mergeEffects(effects, await emitHeadlessEvent(session, 'generation_started', { type: input.type, requestId: record.requestId }));
+        if (isTerminal(record.status)) return;
         stage(record, 'loading');
         const character = await readCharacter(session, input.characterId);
+        if (isTerminal(record.status)) return;
         const chatPath = resolveChatPath(session, input.characterId, input.chatId);
 
         const work = async () => {
+            if (isTerminal(record.status)) return;
             let chat = readChat(chatPath);
             if (chat.length === 0) {
                 chat = [{ chat_metadata: {} }, createCharacterMessage(character.name, character.data.first_mes ?? '')];
@@ -87,6 +91,7 @@ export async function runGeneration(sourceRequest, session, record, input) {
                 chatMetadata: chat[0]?.chat_metadata ?? {},
                 generation: { requestId: record.requestId, type: input.type, phase: 'prompt' },
             });
+            if (isTerminal(record.status)) return;
             built = hooked.prompt;
             mergeEffects(effects, hooked.effects);
             recordPluginEvents(record, effects.events);
@@ -94,7 +99,7 @@ export async function runGeneration(sourceRequest, session, record, input) {
             stage(record, 'provider');
             const { runChatCompletion } = await import('./provider.js');
             const result = await runChatCompletion(sourceRequest, built.providerRequest, record);
-            if (record.status === 'cancelled') return;
+            if (isTerminal(record.status)) return;
 
             let output = applyGlobalRegex(result.text, session.extensionSettings, regex_placement.AI_OUTPUT);
             const outputHooks = await applyHeadlessOutputHooks(session, output, {
@@ -102,11 +107,13 @@ export async function runGeneration(sourceRequest, session, record, input) {
                 chatId: input.chatId,
                 generation: { requestId: record.requestId, type: input.type, phase: 'afterGeneration' },
             });
+            if (isTerminal(record.status)) return;
             output = outputHooks.text;
             mergeEffects(effects, outputHooks.effects);
             setUsage(record, result.usage);
             setFinalText(record, output);
             mergeEffects(effects, await emitHeadlessEvent(session, 'generation_completed', { requestId: record.requestId, status: 'done' }));
+            if (isTerminal(record.status)) return;
             recordPluginEvents(record, effects.events);
             // Persist plugin settings BEFORE the terminal event so a client that
             // observes `done` can immediately read back the extension settings.
@@ -121,7 +128,7 @@ export async function runGeneration(sourceRequest, session, record, input) {
                     reasoning: result.reasoning,
                     warnings: built.warnings,
                     pluginEffects: summarizeEffects(effects),
-                });
+                }, { committed: false });
             } else {
                 const messageIndex = commitMessages(chatPath, chat, character.name, output, result.reasoning, input.type, previousReply);
                 complete(record, {

@@ -15,6 +15,7 @@ from the companion entry point.
   `docs/api/v1/{README.md,openapi.yaml}` and behavior tests alongside changes.
   Capability flags describe implemented behavior, not planned compatibility.
 - Provider dispatch never follows redirects or replays a request. A bounded SSE stream needs an explicit terminal marker/reason; an interrupted or malformed stream is `unknown`, keeps partial text in its generation journal and never commits a transcript row. Provider HTTP status/detail are visible after credential redaction. Settings/preview responses redact credential fields and custom headers; secret storage remains write-only. Keep these checks when adding provider formats.
+- Generation runtime rechecks terminal/cancelled state after every awaited lifecycle/output hook and before persistence. A cancelled turn must not later write transcript rows or queued extension settings. Final observation text preserves the complete bounded output (no 64 KiB slice); quiet completion is `done` with `committed:false` because it creates no transcript row. Keep these semantics in provider/plugin changes.
 - ST owns JSONL transcripts. Generation commits atomically on success, never
   automatically replays billable requests, and preserves unknown outcomes.
   Regenerate retains swipe alternatives, continue updates the selected swipe,
@@ -43,7 +44,7 @@ from the companion entry point.
 Focused verification from this checkout:
 
 ```sh
-NODE_OPTIONS=--experimental-vm-modules pnpm --dir tests exec jest --config jest.config.json --runInBand api-v1-character-management.test.js api-v1-integration.test.js api-v1-headless.test.js api-v1-companion.test.js api-v1-bundle.test.js api-v1-plugins.test.js
+NODE_OPTIONS=--experimental-vm-modules pnpm --dir tests exec jest --config jest.config.json --runInBand api-v1-generation-lifecycle.test.js api-v1-presets.test.js api-v1-provider.test.js api-v1-prompt-manager.test.js api-v1-character-management.test.js api-v1-integration.test.js api-v1-headless.test.js api-v1-companion.test.js api-v1-bundle.test.js api-v1-plugins.test.js
 pnpm exec eslint src/endpoints/api-v1.js src/headless/session.js src/headless/runtime.js src/headless/prompt.js src/headless/generation-store.js
 ```
 

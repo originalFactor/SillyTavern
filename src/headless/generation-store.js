@@ -387,7 +387,9 @@ export function appendToken(record, token, isReasoning = false) {
  * @returns {void}
  */
 export function setFinalText(record, text) {
-    record.text = String(text ?? '').slice(0, 64 * 1024);
+    const finalText = String(text ?? '');
+    if (Buffer.byteLength(finalText) > 8_388_608) throw new ApiError(502, 'unknown', 'Transformed output exceeded its size limit; the generated text was not committed.');
+    record.text = finalText;
 }
 
 /**
@@ -452,16 +454,17 @@ export function fail(record, code, message, retryable = false) {
 }
 
 /**
- * Marks a generation complete and commits the final message snapshot.
+ * Marks a generation complete with its final message/result snapshot.
  * @param {GenerationRecord} record Generation record
  * @param {Record<string, any>} snapshot Final snapshot
+ * @param {{committed?: boolean}} [options] Whether a transcript row was committed
  * @returns {void}
  */
-export function complete(record, snapshot) {
+export function complete(record, snapshot, { committed = true } = {}) {
     if (isTerminal(record.status)) return;
     record.status = 'done';
     record.snapshot = snapshot;
-    record.committed = true;
+    record.committed = committed;
     emit(record, 'message', snapshot);
     emit(record, 'done', { status: record.status, committed: record.committed, usage: record.usage ?? null });
     finish(record);
