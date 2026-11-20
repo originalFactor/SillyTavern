@@ -108,6 +108,18 @@ describe('cancellation admission through asynchronous hooks', () => {
         expect(record.committed).toBe(false);
         expect(readChat(path.join(directories.chats, 'Aria', 'Chat.jsonl'))).toEqual(initial);
     });
+    test('local persistence failure after provider dispatch remains unknown rather than a safely retryable error', async () => {
+        const signal = extension('afterGeneration', null);
+        start();
+        await entered(signal);
+        fs.renameSync(path.join(directories.chats, 'Aria'), path.join(directories.chats, 'preserved-Aria'));
+        fs.writeFileSync(path.join(directories.chats, 'Aria'), 'blocked parent');
+        await work;
+        expect(record.status).toBe('unknown');
+        expect(record.drained).toBe(true);
+        expect(record.committed).toBe(false);
+        expect(calls).toBe(1);
+    });
     test('oversized transformed output fails explicitly instead of silently slicing the saved observation', () => {
         record.text = 'Original';
         expect(() => setFinalText(record, 'x'.repeat(8_388_609))).toThrow('exceeded its size limit');

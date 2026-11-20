@@ -218,6 +218,8 @@ describe('API v1 routes', () => {
         expect(result.error).toMatchObject({ code: 'unknown', retryable: false });
         const after = await (await fetch(`${baseUrl}/api/v1/chats/Chat?characterId=Aria`)).json();
         expect(after.messages).toEqual(before.messages);
+        const acknowledged = await fetch(`${baseUrl}/api/v1/generations/${accepted.requestId}/acknowledge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedSeq: result.seq }) });
+        expect(acknowledged.status).toBe(200);
     });
 
     test('duplicate clientRequestId is idempotent', async () => {

@@ -595,6 +595,28 @@ paths:
         '200':
           description: Prompt messages, segments, warnings and provider request.
   /api/v1/generations:
+    get:
+      operationId: listGenerations
+      summary: Discover scoped active, uncertain and historical request identities without replay.
+      parameters:
+        - { name: characterId, in: query, required: true, schema: { type: string } }
+        - { name: chatId, in: query, required: true, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: before, in: query, schema: { type: string, format: uuid } }
+        - { name: unresolvedOnly, in: query, schema: { type: boolean, default: false } }
+      responses:
+        '200':
+          description: Scoped metadata page. Canonical snapshots remain readable outside the memory cache.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [generations, hasMore, nextBefore]
+                properties:
+                  generations: { type: array, items: { $ref: '#/components/schemas/GenerationReference' } }
+                  hasMore: { type: boolean }
+                  nextBefore: { type: [string, 'null'] }
+        '503': { description: Journal integrity or synchronization could not be verified. }
     post:
       operationId: createGeneration
       summary: Start an idempotent generation.
@@ -603,7 +625,13 @@ paths:
         successful completion; a failure or cancellation leaves no partial user row.
         `regenerate` preserves the trailing assistant reply as a swipe and selects
         the new alternative; `continue` appends to the selected alternative.
-        Transcript management returns 409 while a generation is active.
+        Admission synchronizes both the canonical journal and permanent caller-key
+        index before dispatch. A duplicate never starts another worker, including
+        after process restart or memory expiry; different normalized payloads with
+        the same key return 409. The accepted connection/credential is captured in
+        memory and never serialized. Active/draining work and unacknowledged
+        uncertain outcomes block another generation. Storage failure returns 503
+        instead of a successful admission.
       requestBody:
         $ref: '#/components/requestBodies/GenerationInput'
       responses:
@@ -613,6 +641,68 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GenerationAccepted'
+  /api/v1/generations/by-client/{clientRequestId}:
+    parameters:
+      - { name: clientRequestId, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 200 } }
+    get:
+      operationId: resolveGenerationByClient
+      summary: Resolve unconfirmed acceptance through the permanent caller-key index.
+      description: A 404 is only a lookup result; reserve/stop the key before permitting a delayed POST to be forgotten.
+      responses:
+        '200':
+          description: Existing canonical snapshot; no provider is contacted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerationSnapshot' }
+        '404': { description: No admission is visible at this lookup. }
+        '503': { description: Storage could not be verified; do not infer absence or replay. }
+  /api/v1/generations/by-client/{clientRequestId}/abandon:
+    parameters:
+      - { name: clientRequestId, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 200 } }
+    post:
+      operationId: abandonUnconfirmedGeneration
+      summary: Cancel the admitted task or permanently reserve a not-yet-admitted key against late execution.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [characterId, chatId]
+              properties:
+                characterId: { type: string }
+                chatId: { type: string }
+      responses:
+        '200':
+          description: Snapshot of the original task or a no-dispatch cancelled tombstone.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerationSnapshot' }
+        '409': { description: Caller identity belongs to a different chat. }
+        '503': { description: Reservation could not be made durable. }
+  /api/v1/generations/{requestId}/acknowledge:
+    post:
+      operationId: acknowledgeGenerationOutcome
+      summary: Acknowledge the exact inspected uncertain outcome after local work drains.
+      parameters:
+        - $ref: '#/components/parameters/requestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedSeq]
+              properties:
+                expectedSeq: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: Acknowledged snapshot; the old request is never replayed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerationSnapshot' }
+        '409': { description: State changed or the local worker has not drained. }
+        '503': { description: Acknowledgement could not be synchronized. }
   /api/v1/generations/{requestId}:
     get:
       operationId: getGeneration
@@ -622,6 +712,14 @@ paths:
         were in flight are restored as `unknown` and are NEVER replayed automatically.
       parameters:
         - $ref: '#/components/parameters/requestId'
+      responses:
+        '200':
+          description: Current or restored snapshot; interrupted work is unknown and never replayed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerationSnapshot' }
+        '404': { description: Request is not owned by this authenticated user. }
+        '503': { description: Snapshot could not be verified. }
   /api/v1/generations/{requestId}/events:
     get:
       operationId: streamGenerationEvents
@@ -647,12 +745,12 @@ paths:
   /api/v1/generations/{requestId}/cancel:
     post:
       operationId: cancelGeneration
-      summary: Request cancellation; terminal races return an unknown outcome.
+      summary: Request cancellation; draining work remains cancelling and terminal races may be unknown.
       parameters:
         - $ref: '#/components/parameters/requestId'
       responses:
         '202':
-          description: Cancellation acknowledged.
+          description: Stop requested; inspect the snapshot until drained. A request is not proof that upstream billing stopped.
 components:
   securitySchemes:
     cookieSession:
@@ -751,6 +849,35 @@ components:
               maxItems: 4
               items:
                 type: string
+    GenerationReference:
+      type: object
+      required: [requestId, clientRequestId, characterId, chatId, status, seq, drained, acknowledged]
+      properties:
+        requestId: { type: string, format: uuid }
+        clientRequestId: { type: string }
+        characterId: { type: string }
+        chatId: { type: string }
+        type: { type: string }
+        status: { type: string, enum: [accepted, cancelling, done, error, unknown, cancelled] }
+        seq: { type: integer }
+        committed: { type: boolean }
+        drained: { type: boolean }
+        acknowledged: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    GenerationSnapshot:
+      allOf:
+        - $ref: '#/components/schemas/GenerationReference'
+        - type: object
+          properties:
+            text: { type: string }
+            reasoning: { type: string }
+            error: { type: [object, 'null'], additionalProperties: true }
+            cancelOutcome: { type: [string, 'null'] }
+            providerDispatched: { type: boolean }
+            restored: { type: boolean }
+            usage: { type: [object, 'null'], additionalProperties: true }
+            snapshot: { type: [object, 'null'], additionalProperties: true }
+            finishedAt: { type: [string, 'null'], format: date-time }
     GenerationAccepted:
       type: object
       required: [requestId, status, seq, idempotent, snapshotUrl, eventUrl, cancelUrl]
@@ -780,7 +907,7 @@ components:
           properties:
             code:
               type: string
-              enum: [validation, not_found, unsupported, conflict, provider, internal, disabled]
+              enum: [validation, not_found, unsupported, conflict, provider, internal, disabled, unknown, confirmation_required, storage]
             message:
               type: string
             retryable:

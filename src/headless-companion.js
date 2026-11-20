@@ -86,6 +86,8 @@ function prepareConfig(dataRoot) {
 
 async function main() {
     const { dataRoot, port, token } = parseArgs(process.argv.slice(2));
+    const { acquireGenerationOwner } = await import('./headless/generation-owner.js');
+    acquireGenerationOwner(dataRoot);
     const configPath = prepareConfig(dataRoot);
 
     // Order matters: util.js holds the config path, and users.js/secrets.js read
@@ -135,7 +137,7 @@ async function main() {
         // WebView shell's getRequestHeaders() keep working without a login flow.
         request.session ??= {};
         request.session.handle = DEFAULT_USER.handle;
-        request.session.csrfToken ??= token.slice(0, 32);
+        request.session.csrfToken ??= 'companion-bearer-auth';
         request.user = { profile: DEFAULT_USER, directories: dirs };
         next();
     });

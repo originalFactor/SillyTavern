@@ -17,9 +17,9 @@ Headless plugin hooks are a **separate, additional** opt-in: set `api.v1.headles
 4. Read `GET /api/v1/characters`, `GET /api/v1/characters/{characterId}/chats`, and `GET /api/v1/chats/{chatId}?characterId=...`. IDs are filenames without extensions; messages are ST JSONL objects with an added `index` field. Use `limit`, `before` and `after` to page; the response carries `total`, `hasMore` and `nextBefore`.
 5. Create a chat with `POST /api/v1/characters/{characterId}/chats` (`chatId`, optional `firstMessage`). Rename it with `PATCH /api/v1/chats/{chatId}` (`characterId`, `newChatId`), edit history with `POST /api/v1/chats/{chatId}/messages` (`append` / `edit` / `delete` by `index`) and remove it with `DELETE /api/v1/chats/{chatId}?characterId=...`.
 6. Optionally call `POST /api/v1/generations/preview` to inspect prompt segments and the derived `providerRequest`. It never contacts a model provider.
-7. `POST /api/v1/generations` with a stable `clientRequestId`; persist the returned `requestId`. A duplicate request within five minutes returns the same generation. `overrides` supplies per-request sampling without exposing credentials or base URLs. `type` supports `normal`, `quiet`, `regenerate` and `continue`.
+7. `POST /api/v1/generations` with a stable `clientRequestId`; persist the returned `requestId`. The caller key is permanently indexed; duplicates return the same generation even after cache expiry or process restart. Reusing a key with a different normalized payload returns 409. `overrides` supplies per-request sampling without exposing credentials or base URLs. `type` supports `normal`, `quiet`, `regenerate` and `continue`.
 8. Open `eventUrl` as SSE (`accepted`, `stage`, `token`, `reasoning`, `heartbeat`, `plugin`, `message`, `error`, `done`, `cancelled`). Pass `afterSeq` or `Last-Event-ID` to filter replayed live events. On disconnect, poll `snapshotUrl`; never resubmit automatically.
-9. `POST /api/v1/generations/{requestId}/cancel` is best-effort. A terminal race returns `outcome: "unknown"`; surface it to the user.
+9. `POST /api/v1/generations/{requestId}/cancel` requests cancellation. While local work is draining the status is `cancelling`; a terminal race or already-dispatched upstream request can have an `unknown` outcome. Inspect the snapshot and wait for `drained:true` before acknowledgement or further mutation.
 
 The chat JSONL is written **once, atomically, at successful completion**. A failed or cancelled generation leaves no unanswered user row on disk. In-flight records are journalled to `api-v1-generations/` under the user root and restored as `unknown` after a server restart — they are never replayed automatically.
 
@@ -293,3 +293,56 @@ Polling/journal text retains complete bounded output instead of silently slicing
 at 64 KiB. Oversized transformed text fails explicitly before commit. Quiet
 success is `status:done,committed:false`; its result is observable without
 inserting a user/assistant row into the chat.
+
+### Durable admission, discovery and caller receipts
+
+A new generation synchronizes its canonical journal and permanent caller-key
+index before any provider dispatch. Index/cache eviction does not authorize
+another execution. Settings and the matching credential are captured together
+for the admitted worker; the captured vault keys live in a private WeakMap, never in
+session JSON, prompts, journals, extension contexts or API responses. Later
+configuration changes affect future admissions, not the accepted connection.
+Failed journal writes are visible and fail closed. Partial output is checkpointed
+periodically while work is active, including a solitary chunk followed by a long
+pause; an interrupted process restores uncertain work as `unknown` without replay.
+Chat files and their parent directories are synchronized before reporting commit.
+
+The companion holds a cooperative process lease in its data root. A fully
+prepared nonempty directory is atomically renamed into the claim; Android does
+not permit the hard-link variant. Previous PID/start/boot identity is checked
+before stale-owner recovery. A live or unverifiable owner prevents startup.
+Interrupted lease reclamation is retained for inspection rather than guessed
+away. Stop any pre-lease legacy backend before upgrading: the lease does not
+fence a noncooperating older process or arbitrary same-UID filesystem writers.
+
+- `GET /generations?characterId=...&chatId=...&limit=1..100&before=...` returns
+  scoped metadata pages with `generations`, `hasMore` and `nextBefore`. Add
+  `unresolvedOnly=true` for active or unacknowledged uncertain requests. Older
+  snapshots remain directly addressable outside the recent in-memory cache.
+- `GET /generations/by-client/{clientRequestId}` resolves a lost POST response
+  without submitting it again. A 404 means only that no admission is visible at
+  that lookup; it does not prohibit a delayed original POST arriving afterward.
+- `POST /generations/by-client/{clientRequestId}/abandon`, with the original
+  `characterId` and `chatId`, cancels that admitted worker or permanently reserves
+  an unadmitted caller key against later execution. It never starts a provider.
+- `POST /generations/{requestId}/acknowledge` sends `{expectedSeq}` from the
+  inspected snapshot. The exact task must be terminal and locally drained.
+  This acknowledges uncertainty and permits another request; it neither replays
+  the old prompt nor claims an upstream charge was reversed.
+
+Snapshots include `clientRequestId`, `characterId`, `chatId`, `type`, `seq`,
+`drained`, `acknowledged` and `providerDispatched`. New generations, transcript
+mutation and character replacement/deletion reject unresolved uncertain outcomes
+until inspection/acknowledgement. Cancellation preserves admission until local
+hook/provider cleanup has drained. A process stopped after provider dispatch can
+still have an unknown upstream billing outcome.
+
+Messenger writes only caller IDs/chat IDs/type into synchronized device-local
+no-backup storage before POST. Navigation and activity/process recreation use
+read-only discovery/observation, not POST replay. HTTP or observation failures
+stop polling until explicit refresh. Missing/unconfirmed admissions can be
+reserved/stopped explicitly, even if their character/chat no longer exists.
+A separate request manager exposes these receipts; a corrupt local index is
+never silently treated as empty. Its explicit reset holds the receipt gate,
+verifies a stopped backend and a fresh durable-capable backend before clearing
+only local identities; chats, keys and server journals are retained.

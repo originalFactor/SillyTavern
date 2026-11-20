@@ -6,6 +6,8 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import { SETTINGS_FILE } from '../constants.js';
 import { getConfigValue, isPathUnderParent, tryParse } from '../util.js';
 import { serverDirectory } from '../server-directory.js';
+import { acquireGenerationOwner } from './generation-owner.js';
+import { syncDirectory } from './generation-journal.js';
 import { ApiError, mergePatch, requireSafeId } from './contract.js';
 
 const DEFAULT_SETTINGS_PATH = path.join(serverDirectory, 'default', 'content', 'settings.json');
@@ -71,6 +73,7 @@ export function readSettings(directories) {
  * @returns {void}
  */
 export function writeSettings(directories, settings) {
+    if (globalThis.DATA_ROOT) acquireGenerationOwner(globalThis.DATA_ROOT);
     const settingsPath = path.join(directories.root, SETTINGS_FILE);
     writeFileAtomicSync(settingsPath, JSON.stringify(settings, null, 4), 'utf8');
 }
@@ -405,8 +408,11 @@ export function readChat(filePath) {
  * @returns {void}
  */
 export function writeChat(filePath, chat) {
+    if (globalThis.DATA_ROOT) acquireGenerationOwner(globalThis.DATA_ROOT);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    writeFileAtomicSync(filePath, chat.map(message => JSON.stringify(message)).join('\n'), 'utf8');
+    syncDirectory(path.dirname(path.dirname(filePath)));
+    writeFileAtomicSync(filePath, chat.map(message => JSON.stringify(message)).join('\n'), { encoding: 'utf8', mode: 0o600, fsync: true });
+    syncDirectory(path.dirname(filePath));
 }
 
 /**

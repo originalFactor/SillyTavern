@@ -1,8 +1,29 @@
 import yaml from 'yaml';
 
+import { createSession } from './session.js';
 import { redactProviderText } from './redaction.js';
 import { ApiError } from './contract.js';
-import { appendToken, isTerminal } from './generation-store.js';
+import { appendToken, isTerminal, markProviderDispatched } from './generation-store.js';
+
+// Credentials are deliberately outside the serializable session, prompt and
+// journal. A worker keeps the exact connection authorized at admission.
+const acceptedConnections = new WeakMap();
+
+export async function prepareProviderSession(request) {
+    const { readSecret, SECRET_KEYS } = await import('../endpoints/secrets.js');
+    // No await between reading settings and the matching credential value.
+    const session = createSession(request);
+    const source = String(session.settings.oai_settings?.chat_completion_source ?? 'openai');
+    const key = readSecret(session.directories, source === 'custom' ? SECRET_KEYS.CUSTOM : SECRET_KEYS.OPENAI, null);
+    acceptedConnections.set(session, { source, key, url: String(session.settings.oai_settings?.custom_url ?? '') });
+    return session;
+}
+
+export async function runSessionChatCompletion(request, providerRequest, record, session) {
+    const connection = acceptedConnections.get(session);
+    if (connection && (connection.source !== String(providerRequest.chat_completion_source ?? 'openai') || (connection.source === 'custom' && connection.url !== String(providerRequest.custom_url ?? '')))) throw new ApiError(409, 'conflict', 'The accepted provider connection changed inside the generation.');
+    return runChatCompletion(request, providerRequest, record, connection);
+}
 
 /**
  * @typedef {object} ProviderResult
@@ -18,7 +39,7 @@ import { appendToken, isTerminal } from './generation-store.js';
  * @param {import('./generation-store.js').GenerationRecord} record Generation record
  * @returns {Promise<ProviderResult>} Provider result
  */
-export async function runChatCompletion(originalRequest, providerRequest, record) {
+export async function runChatCompletion(originalRequest, providerRequest, record, acceptedConnection = null) {
     const { default: fetch, Headers } = await import('node-fetch');
     const { readSecret, SECRET_KEYS } = await import('../endpoints/secrets.js');
     const request = structuredClone(providerRequest);
@@ -26,7 +47,7 @@ export async function runChatCompletion(originalRequest, providerRequest, record
     const url = source === 'custom'
         ? new URL('chat/completions', `${String(request.custom_url).replace(/\/?$/, '/')}`).toString()
         : 'https://api.openai.com/v1/chat/completions';
-    const apiKey = source === 'custom'
+    const apiKey = acceptedConnection ? acceptedConnection.key : source === 'custom'
         ? readSecret(originalRequest.user.directories, SECRET_KEYS.CUSTOM, null)
         : readSecret(originalRequest.user.directories, SECRET_KEYS.OPENAI, null);
     const headers = new Headers({ 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey ?? ''}` });
@@ -55,6 +76,7 @@ export async function runChatCompletion(originalRequest, providerRequest, record
     const timeout = setTimeout(abort, 300_000);
     timeout.unref?.();
     try {
+        markProviderDispatched(record);
         const response = await fetch(url, {
             method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal,
             redirect: 'manual', size: 8_388_608,

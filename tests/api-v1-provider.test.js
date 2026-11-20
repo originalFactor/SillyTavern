@@ -3,8 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, test } from '@jest/globals';
-import { runChatCompletion, ProviderSseDecoder } from '../src/headless/provider.js';
+import { runChatCompletion, ProviderSseDecoder, prepareProviderSession, runSessionChatCompletion } from '../src/headless/provider.js';
 import { clearGenerations, createGeneration } from '../src/headless/generation-store.js';
+import { writeSettings } from '../src/headless/session.js';
 import { publicConfiguration } from '../src/headless/redaction.js';
 import { setConfigFilePath } from '../src/util.js';
 import { serverDirectory } from '../src/server-directory.js';
@@ -39,6 +40,23 @@ const request = () => runChatCompletion({ user: { directories: { root } }, heade
 const token = content => `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content } }] })}\n\n`;
 
 describe('non-replaying bounded provider dispatch', () => {
+    test('accepted workers keep the captured key even if provider settings and credentials later change', async () => {
+        writeSettings({ root }, { main_api: 'openai', oai_settings: { chat_completion_source: 'custom', custom_model: 'old-model', custom_url: base } });
+        const sourceRequest = { user: { directories: { root }, profile: { handle: 'owner' } }, headers: {} };
+        const session = await prepareProviderSession(sourceRequest);
+        const newerKey = 'new-provider-credential-never-send-to-old-endpoint';
+        writeSecret({ root }, SECRET_KEYS.CUSTOM, newerKey);
+        writeSettings({ root }, { main_api: 'openai', oai_settings: { chat_completion_source: 'custom', custom_model: 'new-model', custom_url: 'https://new.invalid/v1' } });
+        let authorization;
+        route = (req, res) => { authorization = req.headers.authorization; res.type('text/event-stream').end(token('Old connection') + 'data: [DONE]\n\n'); };
+        const result = await runSessionChatCompletion(sourceRequest, { chat_completion_source: 'custom', custom_url: session.settings.oai_settings.custom_url, model: session.settings.oai_settings.custom_model, messages: [] }, record, session);
+        expect(result.text).toBe('Old connection');
+        expect(authorization).toBe(`Bearer ${secret}`);
+        expect(authorization).not.toContain(newerKey);
+        expect(JSON.stringify(session)).not.toContain(secret);
+        expect(JSON.stringify(session)).not.toContain(newerKey);
+        expect(calls).toBe(1);
+    });
     test('rejects a clean EOF with partial tokens as unknown rather than successful text', async () => {
         route = (_req, res) => { res.type('text/event-stream'); res.end(token('Partial reply')); };
         await expect(request()).rejects.toMatchObject({ code: 'unknown', retryable: false });

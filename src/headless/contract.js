@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 export const API_V1_VERSION = '1.0.0';
 
 /**
- * @typedef {'validation'|'not_found'|'unsupported'|'conflict'|'provider'|'internal'|'disabled'|'unknown'|'confirmation_required'} ApiErrorCode
+ * @typedef {'validation'|'not_found'|'unsupported'|'conflict'|'provider'|'internal'|'disabled'|'unknown'|'confirmation_required'|'storage'} ApiErrorCode
  */
 
 export class ApiError extends Error {

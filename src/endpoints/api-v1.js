@@ -11,6 +11,10 @@ import { readPromptManager, savePromptManager } from '../headless/prompt-manager
 import { deletePersona, listPersonas, savePersona, selectPersona } from '../headless/persona-management.js';
 import {
     assertChatIdle,
+    acknowledgeGeneration,
+    abandonClientGeneration,
+    getGenerationByClient,
+    listGenerations,
     cancel,
     createGeneration,
     generationUrls,
@@ -97,6 +101,9 @@ router.get('/capabilities', (_request, response) => {
             overrides: true,
             usage: true,
             restoreAfterRestart: true,
+            discovery: true,
+            durableAdmission: true,
+            acknowledgeUnknown: true,
         },
         providers: {
             chatCompletionsOpenAI: true,
@@ -334,7 +341,7 @@ router.post('/characters/:characterId/chats', asyncHandler(async (request, respo
     const firstMessage = typeof request.body?.firstMessage === 'string' ? request.body.firstMessage.slice(0, 64 * 1024) : '';
     const character = await readCharacter(session, request.params.characterId);
     const greeting = substituteBasicMacros(firstMessage || String(character.data.first_mes ?? ''), { user: session.userName, char: character.name });
-    assertChatIdle(session.handle, request.params.characterId, chatId);
+    assertChatIdle(session.handle, request.params.characterId, chatId, session.directories);
     const created = createChat(session, request.params.characterId, chatId, greeting, character.name);
     response.status(201).json(created);
 }));
@@ -358,7 +365,7 @@ router.post('/chats/:chatId/messages', asyncHandler(async (request, response) =>
     requireSafeId(characterId, 'characterId');
     const chatPath = resolveChatPath(session, characterId, request.params.chatId);
     const action = String(request.body?.action ?? 'append');
-    assertChatIdle(session.handle, characterId, request.params.chatId);
+    assertChatIdle(session.handle, characterId, request.params.chatId, session.directories);
     const index = await mutateChat(chatPath, {
         action,
         message: request.body?.message,
@@ -372,7 +379,7 @@ router.delete('/chats/:chatId', asyncHandler(async (request, response) => {
     const session = createSession(request);
     const characterId = typeof request.query.characterId === 'string' ? request.query.characterId : '';
     requireSafeId(characterId, 'characterId');
-    assertChatIdle(session.handle, characterId, request.params.chatId);
+    assertChatIdle(session.handle, characterId, request.params.chatId, session.directories);
     if (!deleteChat(session, characterId, request.params.chatId)) {
         throw new ApiError(404, 'not_found', 'Chat not found.');
     }
@@ -384,8 +391,8 @@ router.patch('/chats/:chatId', asyncHandler(async (request, response) => {
     const characterId = typeof request.body?.characterId === 'string' ? request.body.characterId : '';
     const newChatId = typeof request.body?.newChatId === 'string' ? request.body.newChatId : '';
     requireSafeId(characterId, 'characterId');
-    assertChatIdle(session.handle, characterId, request.params.chatId);
-    assertChatIdle(session.handle, characterId, newChatId);
+    assertChatIdle(session.handle, characterId, request.params.chatId, session.directories);
+    assertChatIdle(session.handle, characterId, newChatId, session.directories);
     const renamed = renameChat(session, characterId, request.params.chatId, newChatId);
     response.json(renamed);
 }));
@@ -420,14 +427,16 @@ router.post('/generations/preview', asyncHandler(async (request, response) => {
 }));
 
 router.post('/generations', asyncHandler(async (request, response) => {
-    const session = createSession(request);
     const input = validateGenerationInput(request.body, { allowUnsupportedTypes: true });
+    const { prepareProviderSession } = await import('../headless/provider.js');
+    const session = await prepareProviderSession(request);
     const created = createGeneration({
         handle: session.handle,
         clientRequestId: request.body.clientRequestId,
         characterId: input.characterId,
         chatId: input.chatId,
         type: input.type,
+        requestIdentity: input,
         directories: session.directories,
     });
     if (!created.existing) {
@@ -446,7 +455,30 @@ router.post('/generations', asyncHandler(async (request, response) => {
         idempotent: created.existing,
         ...generationUrls(created.record.requestId),
     });
-    console.info('[api-v1] generation_accepted', JSON.stringify({ requestId: created.record.requestId, clientRequestId: created.record.clientRequestId }));
+    console.info('[api-v1] generation_accepted', JSON.stringify({ requestId: created.record.requestId }));
+}));
+
+router.get('/generations', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    response.json(listGenerations(session.handle, session.directories, {
+        characterId: requireSafeId(request.query.characterId, 'characterId'),
+        chatId: requireSafeId(request.query.chatId, 'chatId'),
+        before: String(request.query.before ?? ''), limit: Number(request.query.limit ?? 20),
+        unresolvedOnly: request.query.unresolvedOnly === 'true',
+    }));
+}));
+router.get('/generations/by-client/:clientRequestId', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    response.json(snapshot(getGenerationByClient(request.params.clientRequestId, session.handle, session.directories)));
+}));
+router.post('/generations/by-client/:clientRequestId/abandon', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    response.json(abandonClientGeneration(session.handle, session.directories, request.params.clientRequestId,
+        requireSafeId(request.body?.characterId, 'characterId'), requireSafeId(request.body?.chatId, 'chatId')));
+}));
+router.post('/generations/:requestId/acknowledge', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    response.json(acknowledgeGeneration(getGeneration(request.params.requestId, session.handle, session.directories), request.body?.expectedSeq));
 }));
 
 router.get('/generations/:requestId', asyncHandler(async (request, response) => {

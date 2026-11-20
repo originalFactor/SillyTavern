@@ -1,13 +1,10 @@
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
-import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
+import { clearJournalCache, initializeJournal, journalEntries, legacyUncertain, readClientJournal, readJournal, writeJournal, storageFailure } from './generation-journal.js';
+import { acquireGenerationOwner } from './generation-owner.js';
 import { ApiError, getUserKey } from './contract.js';
 
-const IDEMPOTENCY_TTL_MS = 5 * 60 * 1000;
 const TERMINAL_TTL_MS = 5 * 60 * 1000;
-const JOURNAL_DIRECTORY = 'api-v1-generations';
 const MAX_RESTORED_RECORDS = 100;
 const MAX_PLUGIN_EVENTS = 64;
 
@@ -61,12 +58,17 @@ const chatLocks = new Map();
  * @param {string} chatId Chat identifier
  * @returns {void}
  */
-export function assertChatIdle(handle, characterId, chatId) {
+export function assertChatIdle(handle, characterId, chatId, directories = null) {
+    if (directories) restoreGenerations(directories);
     const userKey = getUserKey(handle);
     for (const record of generations.values()) {
-        if (record.userKey === userKey && record.characterId === characterId && record.chatId === chatId && !isTerminal(record.status)) {
+        if (record.userKey === userKey && record.characterId === characterId && record.chatId === chatId && (!isTerminal(record.status) || record.workerActive)) {
             throw new ApiError(409, 'conflict', 'This chat has an active generation. Stop it and wait for completion before changing history.');
         }
+    }
+    for (const entry of directories ? journalEntries(directories) : []) {
+        const record = generations.get(entry.requestId) ?? entry;
+        if (record.userKey === userKey && record.characterId === characterId && record.chatId === chatId && !record.acknowledged && (record.status === 'unknown' || (record.status === 'cancelled' && record.cancelOutcome === 'unknown'))) throw new ApiError(409, 'conflict', 'This chat has an unresolved generation outcome. Inspect and acknowledge it before changing history.');
     }
 }
 
@@ -76,12 +78,17 @@ export function assertChatIdle(handle, characterId, chatId) {
  * @param {string} characterId Character identifier
  * @returns {void}
  */
-export function assertCharacterIdle(handle, characterId) {
+export function assertCharacterIdle(handle, characterId, directories = null) {
+    if (directories) restoreGenerations(directories);
     const userKey = getUserKey(handle);
     for (const record of generations.values()) {
-        if (record.userKey === userKey && record.characterId === characterId && !isTerminal(record.status)) {
+        if (record.userKey === userKey && record.characterId === characterId && (!isTerminal(record.status) || record.workerActive)) {
             throw new ApiError(409, 'conflict', 'This character has an active generation. Wait for it to finish before changing the card.');
         }
+    }
+    for (const entry of directories ? journalEntries(directories) : []) {
+        const record = generations.get(entry.requestId) ?? entry;
+        if (record.userKey === userKey && record.characterId === characterId && !record.acknowledged && (record.status === 'unknown' || (record.status === 'cancelled' && record.cancelOutcome === 'unknown'))) throw new ApiError(409, 'conflict', 'This character has an unresolved generation outcome. Inspect and acknowledge it before changing the card.');
     }
 }
 
@@ -106,191 +113,236 @@ export async function withChatLock(chatPath, work) {
     }
 }
 
-/**
- * Gets the journal directory for a user.
- * @param {Record<string, string>} directories User directories
- * @returns {string} Journal directory
- */
-function journalDirectory(directories) {
-    return path.join(directories.root, JOURNAL_DIRECTORY);
+const memoryKey = (directories, userKey, clientRequestId) => `${directories?.root ?? ''}:${userKey}:${clientRequestId}`;
+function clientId(value) {
+    if (typeof value !== 'string' || !value || value.length > 200) throw new ApiError(400, 'validation', 'clientRequestId must be a non-empty string up to 200 characters.');
+    return value;
+}
+function canonical(value) {
+    if (Array.isArray(value)) return value.map(canonical);
+    return value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
 }
 
-/**
- * Persists a terminal (or accepted) record so a client can re-attach after a
- * server restart. In-flight records are restored as `unknown` — never replayed.
- * @param {Record<string, string>} directories User directories
- * @param {GenerationRecord} record Generation record
- * @returns {void}
- */
+/** Persist synchronously; storage failure is never an admission success. */
 export function persistGeneration(directories, record) {
-    try {
-        const dir = journalDirectory(directories);
-        fs.mkdirSync(dir, { recursive: true });
-        const body = {
-            requestId: record.requestId,
-            userKey: record.userKey,
-            clientRequestId: record.clientRequestId,
-            characterId: record.characterId,
-            chatId: record.chatId,
-            type: record.type,
-            status: record.status,
-            seq: record.seq,
-            text: record.text,
-            reasoning: record.reasoning,
-            error: record.error,
-            committed: record.committed,
-            cancelOutcome: record.cancelOutcome,
-            usage: record.usage ?? null,
-            pluginEvents: record.pluginEvents ?? [],
-            createdAt: record.createdAt,
-            finishedAt: record.finishedAt ?? null,
-            snapshot: record.snapshot ?? null,
-        };
-        writeFileAtomicSync(path.join(dir, `${record.requestId}.json`), JSON.stringify(body), 'utf8');
-    } catch (error) {
-        console.warn('[api-v1] Could not persist generation journal:', error instanceof Error ? error.message : error);
-    }
+    if (globalThis.DATA_ROOT) acquireGenerationOwner(globalThis.DATA_ROOT);
+    const body = Object.fromEntries([
+        'requestId', 'userKey', 'clientRequestId', 'characterId', 'chatId', 'type',
+        'fingerprint', 'status', 'seq', 'text', 'reasoning', 'error', 'committed',
+        'cancelOutcome', 'cancelRequested', 'providerDispatched', 'drained',
+        'acknowledged', 'usage', 'pluginEvents', 'createdAt', 'finishedAt', 'snapshot',
+    ].map(key => [key, record[key] ?? null]));
+    writeJournal(directories, body);
+    record.lastPersistedAt = Date.now();
+    record.dirty = false;
 }
 
-/**
- * Restores the persisted journal for a user directory. Terminal records are
- * readable after a restart; records that were still in flight are marked
- * `unknown` with an explicit reason and are never replayed automatically.
- * @param {Record<string, string>} directories User directories
- * @returns {number} Number of restored records
- */
-export function restoreGenerations(directories) {
-    const dir = journalDirectory(directories);
-    if (restoredDirectories.has(dir)) return 0;
-    restoredDirectories.add(dir);
-    if (!fs.existsSync(dir)) return 0;
-    let restored = 0;
-    const files = fs.readdirSync(dir).filter(name => name.endsWith('.json')).slice(-MAX_RESTORED_RECORDS * 2);
-    for (const file of files) {
-        try {
-            const body = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
-            if (!body?.requestId || generations.has(body.requestId)) continue;
-            const inFlight = !['done', 'error', 'unknown', 'cancelled'].includes(body.status);
-            /** @type {GenerationRecord} */
-            const record = {
-                requestId: body.requestId,
-                userKey: body.userKey,
-                clientRequestId: body.clientRequestId,
-                characterId: body.characterId,
-                chatId: body.chatId,
-                type: body.type,
-                status: inFlight ? 'unknown' : body.status,
-                seq: Number(body.seq ?? 0),
-                text: String(body.text ?? ''),
-                reasoning: String(body.reasoning ?? ''),
-                events: [],
-                subscribers: new Set(),
-                controller: new AbortController(),
-                heartbeat: setInterval(() => {}, 0x7fffffff),
-                createdAt: Number(body.createdAt ?? Date.now()),
-                finishedAt: body.finishedAt ?? Date.now(),
-                error: inFlight
-                    ? { code: 'unknown', message: 'Generation was interrupted by a server restart.', retryable: false }
-                    : body.error,
-                cancelOutcome: body.cancelOutcome ?? (inFlight ? 'unknown' : null),
-                committed: Boolean(body.committed),
-                snapshot: body.snapshot ?? null,
-                usage: body.usage ?? null,
-                pluginEvents: Array.isArray(body.pluginEvents) ? body.pluginEvents : [],
-                restored: true,
-            };
-            record.heartbeat.unref?.();
-            clearInterval(record.heartbeat);
-            generations.set(record.requestId, record);
-            idempotency.set(`${record.userKey}:${record.clientRequestId}`, record.requestId);
-            restored++;
-        } catch (error) {
-            console.warn('[api-v1] Ignoring corrupt generation journal entry:', file, error instanceof Error ? error.message : error);
-        }
-    }
-    return restored;
-}
-
-/**
- * Creates or returns an idempotent generation record.
- * @param {object} options Creation options
- * @param {string} options.handle User handle
- * @param {string} options.clientRequestId Client idempotency key
- * @param {string} options.characterId Character identifier
- * @param {string} options.chatId Chat identifier
- * @param {string} options.type Generation type
- * @returns {{record: GenerationRecord, existing: boolean}} Generation record
- */
-export function createGeneration({ handle, clientRequestId, characterId, chatId, type, directories }) {
-    if (directories) restoreGenerations(directories);
-    if (typeof clientRequestId !== 'string' || clientRequestId.length === 0 || clientRequestId.length > 200) {
-        throw new ApiError(400, 'validation', 'clientRequestId must be a non-empty string up to 200 characters.');
-    }
-    const userKey = getUserKey(handle);
-    const key = `${userKey}:${clientRequestId}`;
-    const existingId = idempotency.get(key);
-    const existing = existingId ? generations.get(existingId) : null;
-    if (existing && existing.createdAt + IDEMPOTENCY_TTL_MS > Date.now()) {
-        if (existing.characterId !== characterId || existing.chatId !== chatId || existing.type !== type) {
-            throw new ApiError(409, 'conflict', 'clientRequestId was already used for a different generation.');
-        }
-        return { record: existing, existing: true };
-    }
-    /** @type {GenerationRecord} */
+function hydrate(body, directories) {
+    const existing = generations.get(body.requestId);
+    if (existing) return existing;
+    const inFlight = !isTerminal(body.status);
+    const legacyAmbiguous = legacyUncertain(body);
+    const storedFullText = body.type === 'quiet' ? body.snapshot?.text : body.snapshot?.message?.mes;
+    const repairedText = typeof storedFullText === 'string' && typeof body.text === 'string' && body.text.length === 64 * 1024 && storedFullText.length > body.text.length && storedFullText.startsWith(body.text) ? storedFullText : String(body.text ?? '');
+    const quietCommitFix = body.type === 'quiet' && body.status === 'done' && body.committed;
     const record = {
-        requestId: crypto.randomUUID(),
-        userKey,
-        clientRequestId,
-        characterId,
-        chatId,
-        type,
-        status: 'accepted',
-        seq: 0,
-        text: '',
-        reasoning: '',
-        events: [],
-        subscribers: new Set(),
-        controller: new AbortController(),
-        heartbeat: setInterval(() => emit(record, 'heartbeat', {}), 15_000),
-        createdAt: Date.now(),
-        error: null,
-        cancelOutcome: null,
-        committed: false,
-        usage: null,
-        pluginEvents: [],
-        restored: false,
-        directories: directories ?? null,
+        ...body, text: repairedText, reasoning: String(body.reasoning ?? ''),
+        status: inFlight || (legacyAmbiguous && body.status === 'error') ? 'unknown' : body.status,
+        error: inFlight || (legacyAmbiguous && body.status === 'error') ? { code: 'unknown', message: 'Generation was interrupted by a server restart or an incomplete admission. Inspect the chat and acknowledge the outcome; it was not replayed.', retryable: false } : body.error,
+        cancelOutcome: inFlight || legacyAmbiguous ? 'unknown' : body.cancelOutcome,
+        committed: quietCommitFix ? false : Boolean(body.committed),
+        providerDispatched: body.providerDispatched ?? (inFlight || legacyAmbiguous || body.status === 'done'),
+        events: [], subscribers: new Set(), controller: new AbortController(),
+        heartbeat: null, directories, workerActive: false, drained: true,
+        acknowledged: inFlight || legacyAmbiguous ? false : body.acknowledged === true || (body.acknowledged == null && body.status === 'done'),
+        restored: true, lastPersistedAt: 0,
     };
-    record.heartbeat.unref?.();
+    if (inFlight || body.drained === false || legacyAmbiguous || quietCommitFix || repairedText !== body.text) persistGeneration(directories, record);
     generations.set(record.requestId, record);
-    idempotency.set(key, record.requestId);
-    emit(record, 'accepted', { requestId: record.requestId, status: record.status });
-    persistGenerationIfPossible(record);
-    return { record, existing: false };
-}
-
-/**
- * Gets a generation visible to the given user.
- * @param {string} requestId Request identifier
- * @param {string} handle User handle
- * @returns {GenerationRecord} Generation record
- */
-export function getGeneration(requestId, handle, directories) {
-    if (directories) restoreGenerations(directories);
-    const record = generations.get(requestId);
-    if (!record || record.userKey !== getUserKey(handle)) {
-        throw new ApiError(404, 'not_found', 'Generation not found.');
-    }
+    idempotency.set(memoryKey(directories, record.userKey, record.clientRequestId), record.requestId);
     return record;
 }
 
-/**
- * Persists a record if its owning user directories are known.
- * @param {GenerationRecord} record Generation record
- * @returns {void}
- */
+export function restoreGenerations(directories) {
+    if (globalThis.DATA_ROOT) acquireGenerationOwner(globalThis.DATA_ROOT);
+    const key = directories.root;
+    if (restoredDirectories.has(key)) return 0;
+    initializeJournal(directories);
+    const entries = journalEntries(directories);
+    // Cache recent terminal results, but restore every interrupted admission.
+    // Older results remain directly addressable through their durable index.
+    const recent = entries.filter((entry, index) => index < MAX_RESTORED_RECORDS || !isTerminal(entry.status));
+    let restored = 0;
+    for (const entry of recent) {
+        if (generations.has(entry.requestId)) continue;
+        const body = readJournal(directories, entry.requestId);
+        if (!body) throw storageFailure();
+        hydrate(body, directories);
+        restored++;
+    }
+    restoredDirectories.add(key);
+    return restored;
+}
+
+export function createGeneration({ handle, clientRequestId, characterId, chatId, type, directories, requestIdentity, reservationOnly = false }) {
+    clientId(clientRequestId);
+    if (directories) restoreGenerations(directories);
+    const userKey = getUserKey(handle);
+    const key = memoryKey(directories, userKey, clientRequestId);
+    const fingerprint = crypto.createHash('sha256').update(JSON.stringify(canonical(requestIdentity ?? { characterId, chatId, type }))).digest('hex');
+    const existingId = idempotency.get(key);
+    let existing = existingId ? generations.get(existingId) : null;
+    if (!existing && directories) {
+        const body = readClientJournal(directories, userKey, clientRequestId);
+        if (body) existing = hydrate(body, directories);
+    }
+    if (existing) {
+        if (!existing.fingerprint) throw new ApiError(409, 'conflict', 'A legacy request identity already exists. Inspect it with a read-only lookup instead of submitting another payload.');
+        if (existing.characterId !== characterId || existing.chatId !== chatId || existing.type !== type || (existing.fingerprint && existing.fingerprint !== fingerprint)) throw new ApiError(409, 'conflict', 'clientRequestId was already used for a different generation payload.');
+        return { record: existing, existing: true };
+    }
+    if (!reservationOnly) assertChatIdle(handle, characterId, chatId);
+    for (const entry of reservationOnly ? [] : directories ? journalEntries(directories) : generations.values()) {
+        if (entry.userKey !== userKey || entry.characterId !== characterId || entry.chatId !== chatId) continue;
+        if (isTerminal(entry.status) && !['unknown', 'cancelled'].includes(entry.status)) continue;
+        const record = generations.get(entry.requestId) ?? (directories ? hydrate(readJournal(directories, entry.requestId) ?? (() => { throw storageFailure(); })(), directories) : entry);
+        if (!record.acknowledged && (record.status === 'unknown' || (record.status === 'cancelled' && record.cancelOutcome === 'unknown'))) throw new ApiError(409, 'conflict', 'This chat has an unresolved generation outcome. Inspect the saved result and acknowledge it before sending again.');
+    }
+    const record = {
+        requestId: crypto.randomUUID(), userKey, clientRequestId, characterId, chatId, type, fingerprint,
+        status: 'accepted', seq: 0, text: '', reasoning: '', events: [], subscribers: new Set(),
+        controller: new AbortController(), heartbeat: null, createdAt: Date.now(), error: null,
+        cancelOutcome: null, cancelRequested: false, providerDispatched: false,
+        workerActive: false, drained: true, acknowledged: false,
+        committed: false, usage: null, pluginEvents: [], restored: false, directories: directories ?? null,
+    };
+    // Neither the record nor a billable worker is published before the snapshot
+    // and permanent client-key index are both synchronized.
+    persistGenerationIfPossible(record);
+    generations.set(record.requestId, record);
+    idempotency.set(key, record.requestId);
+    record.heartbeat = setInterval(() => emit(record, 'heartbeat', {}), 15_000);
+    record.heartbeat.unref?.();
+    emit(record, 'accepted', { requestId: record.requestId, status: record.status });
+    return { record, existing: false };
+}
+
+export function getGeneration(requestId, handle, directories) {
+    if (directories) restoreGenerations(directories);
+    let record = generations.get(requestId);
+    if (!record && directories) {
+        const body = readJournal(directories, requestId);
+        if (body?.userKey === getUserKey(handle)) record = hydrate(body, directories);
+    }
+    if (!record || record.userKey !== getUserKey(handle) || (record.directories && directories && record.directories.root !== directories.root)) throw new ApiError(404, 'not_found', 'Generation not found.');
+    return record;
+}
+
+export function getGenerationByClient(clientRequestId, handle, directories) {
+    clientId(clientRequestId);
+    restoreGenerations(directories);
+    const userKey = getUserKey(handle);
+    const cached = idempotency.get(memoryKey(directories, userKey, clientRequestId));
+    if (cached) return getGeneration(cached, handle, directories);
+    const body = readClientJournal(directories, userKey, clientRequestId);
+    if (!body) throw new ApiError(404, 'not_found', 'Generation has not been admitted at this lookup. Reserve or stop this caller key before sending another request.');
+    return hydrate(body, directories);
+}
+
+export function listGenerations(handle, directories, { characterId, chatId, before = '', limit = 20, unresolvedOnly = false }) {
+    restoreGenerations(directories);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new ApiError(400, 'validation', 'Generation page limit must be 1..100.');
+    const userKey = getUserKey(handle);
+    let entries = journalEntries(directories).filter(entry => entry.userKey === userKey && entry.characterId === characterId && entry.chatId === chatId);
+    if (before) {
+        const offset = entries.findIndex(entry => entry.requestId === before);
+        if (offset < 0) throw new ApiError(400, 'validation', 'Generation cursor is not in this chat.');
+        entries = entries.slice(offset + 1);
+    }
+    if (unresolvedOnly) entries = entries.filter(entry => {
+        const item = generations.get(entry.requestId) ?? entry;
+        return !isTerminal(item.status) || item.drained === false || (!item.acknowledged && (item.status === 'unknown' || (item.status === 'cancelled' && item.cancelOutcome === 'unknown')));
+    });
+    const page = entries.slice(0, limit).map(entry => {
+        const record = generations.get(entry.requestId) ?? (!isTerminal(entry.status) ? getGeneration(entry.requestId, handle, directories) : entry);
+        return { requestId: entry.requestId, clientRequestId: entry.clientRequestId, characterId, chatId,
+            type: entry.type, status: record.status, seq: record.seq ?? 0, committed: Boolean(record.committed),
+            drained: record.drained !== false, acknowledged: record.acknowledged === true,
+            createdAt: new Date(entry.createdAt).toISOString() };
+    });
+    return { generations: page, hasMore: entries.length > limit, nextBefore: entries.length > limit ? page.at(-1).requestId : null };
+}
+
+export function abandonClientGeneration(handle, directories, clientRequestId, characterId, chatId) {
+    clientId(clientRequestId);
+    let existing;
+    try { existing = getGenerationByClient(clientRequestId, handle, directories); } catch (error) { if (!(error instanceof ApiError) || error.status !== 404) throw error; }
+    if (existing) {
+        if (existing.characterId !== characterId || existing.chatId !== chatId) throw new ApiError(409, 'conflict', 'Request identity belongs to a different chat.');
+        cancel(existing);
+        return snapshot(existing);
+    }
+    // This synchronous durable reservation wins against any not-yet-admitted
+    // delayed POST using the same caller key. It never dispatches a provider.
+    const created = createGeneration({ handle, directories, clientRequestId, characterId, chatId, type: 'abandoned', reservationOnly: true });
+    cancel(created.record);
+    return snapshot(created.record);
+}
+
 function persistGenerationIfPossible(record) {
     if (record.directories) persistGeneration(record.directories, record);
+}
+function persistOutcome(record) {
+    try { persistGenerationIfPossible(record); return true; } catch {
+        record.status = 'unknown';
+        if (record.error?.code !== 'storage') record.error = { code: 'storage', message: `The generation journal could not be synchronized. Inspect the chat and do not repeat automatically.${record.error?.message ? ' Previous result: ' + record.error.message : ''}`, retryable: false };
+        record.acknowledged = false;
+        return false;
+    }
+}
+
+export const shouldStopGeneration = record => record.cancelRequested || isTerminal(record.status);
+export function beginGeneration(record) {
+    if (shouldStopGeneration(record)) return false;
+    record.workerActive = true;
+    record.drained = false;
+    try { persistGenerationIfPossible(record); } catch (error) { record.workerActive = false; record.drained = true; fail(record, 'storage', error.message); return false; }
+    if (record.directories) {
+        record.checkpointTimer = setInterval(() => {
+            if (!record.dirty || shouldStopGeneration(record)) return;
+            try { persistGenerationIfPossible(record); } catch (error) {
+                record.controller.abort();
+                fail(record, 'unknown', error.message, false);
+            }
+        }, 500);
+        record.checkpointTimer.unref?.();
+    }
+    return true;
+}
+export function markProviderDispatched(record) {
+    if (shouldStopGeneration(record)) throw new ApiError(409, 'conflict', 'Generation was cancelled before provider dispatch.');
+    record.providerDispatched = true;
+    persistGenerationIfPossible(record);
+}
+export function endGeneration(record) {
+    record.workerActive = false;
+    record.drained = true;
+    if (record.cancelRequested && (!isTerminal(record.status) || record.workerActive)) {
+        record.status = 'cancelled';
+        record.cancelOutcome = record.providerDispatched ? 'unknown' : 'cancelled';
+        record.acknowledged = !record.providerDispatched;
+        persistOutcome(record);
+        emit(record, record.status === 'cancelled' ? 'cancelled' : 'error', { outcome: record.cancelOutcome, committed: record.committed, drained: true, ...record.error });
+        finish(record);
+    } else if (isTerminal(record.status)) persistOutcome(record);
+}
+
+export function acknowledgeGeneration(record, expectedSeq) {
+    if (!isTerminal(record.status) || record.workerActive || !record.drained) throw new ApiError(409, 'conflict', 'Wait for the local generation worker to stop before acknowledging its outcome.');
+    if (expectedSeq !== record.seq) throw new ApiError(409, 'conflict', 'Generation state changed. Refresh before acknowledging.');
+    record.acknowledged = true;
+    try { persistGenerationIfPossible(record); } catch (error) { record.acknowledged = false; throw error; }
+    return snapshot(record);
 }
 
 /**
@@ -376,6 +428,8 @@ export function appendToken(record, token, isReasoning = false) {
         record.text += token;
         emit(record, 'token', { text: token });
     }
+    record.dirty = true;
+    if (record.directories && Date.now() - (record.lastPersistedAt ?? 0) >= 500) persistGenerationIfPossible(record);
 }
 
 /**
@@ -428,12 +482,15 @@ export function subscribe(record, response, afterSeq = 0) {
  * @returns {boolean} Whether cancellation changed the state
  */
 export function cancel(record, outcome = 'requested') {
+    if (isTerminal(record.status)) { record.cancelOutcome = 'unknown'; return false; }
+    if (record.cancelRequested) return false;
+    record.cancelRequested = true;
     record.cancelOutcome = outcome;
-    if (isTerminal(record.status)) return false;
-    record.status = 'cancelled';
+    record.status = 'cancelling';
     record.controller.abort();
-    emit(record, 'cancelled', { outcome, committed: record.committed });
-    finish(record);
+    persistOutcome(record);
+    emit(record, 'stage', { stage: 'cancelling', outcome });
+    if (!record.workerActive) endGeneration(record);
     return true;
 }
 
@@ -449,7 +506,8 @@ export function fail(record, code, message, retryable = false) {
     if (isTerminal(record.status)) return;
     record.status = code === 'unknown' ? 'unknown' : 'error';
     record.error = { code, message, retryable };
-    emit(record, 'error', { code, message, retryable, committed: record.committed });
+    persistOutcome(record);
+    emit(record, 'error', { ...record.error, committed: record.committed });
     finish(record);
 }
 
@@ -465,6 +523,8 @@ export function complete(record, snapshot, { committed = true } = {}) {
     record.status = 'done';
     record.snapshot = snapshot;
     record.committed = committed;
+    record.acknowledged = true;
+    if (!persistOutcome(record)) { emit(record, 'error', record.error); finish(record); return; }
     emit(record, 'message', snapshot);
     emit(record, 'done', { status: record.status, committed: record.committed, usage: record.usage ?? null });
     finish(record);
@@ -477,8 +537,8 @@ export function complete(record, snapshot, { committed = true } = {}) {
  */
 function finish(record) {
     record.finishedAt = Date.now();
-    persistGenerationIfPossible(record);
     clearInterval(record.heartbeat);
+    clearInterval(record.checkpointTimer);
     for (const response of record.subscribers) {
         response.end();
     }
@@ -510,6 +570,9 @@ export function snapshot(record) {
         reasoning: record.reasoning,
         error: record.error,
         committed: record.committed,
+        drained: record.drained !== false,
+        acknowledged: record.acknowledged === true,
+        providerDispatched: record.providerDispatched === true,
         cancelOutcome: record.cancelOutcome,
         usage: record.usage ?? null,
         pluginEvents: record.pluginEvents ?? [],
@@ -547,10 +610,12 @@ export function isTerminal(status) {
 export function clearGenerations() {
     for (const record of generations.values()) {
         clearInterval(record.heartbeat);
+        clearInterval(record.checkpointTimer);
         for (const response of record.subscribers) response.end();
     }
     generations.clear();
     idempotency.clear();
     restoredDirectories.clear();
+    clearJournalCache();
     chatLocks.clear();
 }

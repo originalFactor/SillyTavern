@@ -61,7 +61,7 @@ export async function saveCharacter(session, { characterId, card, expectedRevisi
     const validated = validateCard(card);
     const { write } = await import('../character-card-parser.js');
     const file = path.join(session.directories.characters, `${id}.png`);
-    assertCharacterIdle(session.handle, id);
+    assertCharacterIdle(session.handle, id, session.directories);
     const exists = fs.existsSync(file);
     if (exists && (fs.lstatSync(file).isSymbolicLink() || !fs.statSync(file).isFile())) throw new ApiError(400, 'validation', 'Character path is not a regular file.');
     if (create && exists) throw new ApiError(409, 'conflict', 'Character ID already exists.');
@@ -127,7 +127,7 @@ export async function exportCharacter(session, characterId, format) {
  */
 export function deleteCharacter(session, characterId, expectedRevision, deleteChats) {
     const id = requireSafeId(characterId, 'characterId');
-    assertCharacterIdle(session.handle, id);
+    assertCharacterIdle(session.handle, id, session.directories);
     const file = path.join(session.directories.characters, `${id}.png`);
     if (!fs.existsSync(file)) throw new ApiError(404, 'not_found', 'Character not found.');
     if (fs.lstatSync(file).isSymbolicLink()) throw new ApiError(400, 'validation', 'Character path is not a regular file.');
