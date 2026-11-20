@@ -152,7 +152,7 @@ export function requireObject(value, name) {
  * @returns {string} Identifier
  */
 export function requireSafeId(value, name) {
-    if (typeof value !== 'string' || !/^[A-Za-z0-9_\- .()]+$/.test(value) || value.includes('..') || value.startsWith('/') || value.startsWith('\\')) {
+    if (typeof value !== 'string' || !value.trim() || Buffer.byteLength(value) > 240 || !/^[\p{L}\p{N}\p{M}_\- .()]+$/u.test(value) || value.includes('..') || value.startsWith('/') || value.startsWith('\\')) {
         throw new ApiError(400, 'validation', `${name} is not a valid identifier.`);
     }
     return value;

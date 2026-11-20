@@ -3,7 +3,9 @@ import path from 'node:path';
 
 import express from 'express';
 
-import { API_V1_VERSION, ApiError, asyncHandler, ensureRequestId, requireSafeId, sendApiError } from '../headless/contract.js';
+import { API_V1_VERSION, ApiError, asyncHandler, ensureRequestId, requireObject, requireSafeId, sendApiError } from '../headless/contract.js';
+import { deleteCharacter, exportCharacter, importCharacter, saveCharacter } from '../headless/character-management.js';
+import { deletePersona, listPersonas, savePersona, selectPersona } from '../headless/persona-management.js';
 import {
     assertChatIdle,
     cancel,
@@ -14,7 +16,7 @@ import {
     snapshot,
     subscribe,
 } from '../headless/generation-store.js';
-import { buildPrompt, listExtensions } from '../headless/prompt.js';
+import { buildPrompt, listExtensions, substituteBasicMacros } from '../headless/prompt.js';
 import { areHeadlessPluginHooksEnabled, HEADLESS_HOOKS } from '../headless/plugin-runtime.js';
 import { runGeneration } from '../headless/runtime.js';
 import {
@@ -60,6 +62,12 @@ router.get('/capabilities', (_request, response) => {
             settingsRead: true,
             settingsPatch: true,
             characters: true,
+            characterCreate: true,
+            characterEdit: true,
+            characterDelete: true,
+            characterImport: true,
+            characterExport: true,
+            personas: true,
             chats: true,
             chatCreate: true,
             chatDelete: true,
@@ -225,10 +233,58 @@ router.get('/characters', asyncHandler(async (request, response) => {
     response.json(await listCharacters(session));
 }));
 
+router.post('/characters', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    const input = requireObject(request.body, 'character input');
+    response.status(201).json(await saveCharacter(session, { characterId: input.characterId, card: input.card }));
+}));
+
+router.post('/characters/import', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    response.status(201).json(await importCharacter(session, requireObject(request.body, 'import input')));
+}));
+
 router.get('/characters/:characterId', asyncHandler(async (request, response) => {
     const session = createSession(request);
     const character = await readCharacter(session, request.params.characterId);
     response.json(character);
+}));
+
+router.put('/characters/:characterId', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    const input = requireObject(request.body, 'character input');
+    response.json(await saveCharacter(session, {
+        characterId: request.params.characterId, card: input.card,
+        expectedRevision: input.expectedRevision, create: false,
+    }));
+}));
+
+router.get('/characters/:characterId/export', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    response.json(await exportCharacter(session, request.params.characterId, String(request.query.format ?? 'json')));
+}));
+
+router.delete('/characters/:characterId', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    deleteCharacter(session, request.params.characterId, String(request.query.expectedRevision ?? ''), request.query.deleteChats === 'true');
+    response.json({ deleted: true });
+}));
+
+router.get('/personas', asyncHandler(async (request, response) => {
+    response.json(listPersonas(createSession(request)));
+}));
+
+router.put('/personas/:personaId', asyncHandler(async (request, response) => {
+    response.json(savePersona(createSession(request), request.params.personaId, requireObject(request.body, 'persona input')));
+}));
+
+router.post('/personas/:personaId/select', asyncHandler(async (request, response) => {
+    const input = requireObject(request.body, 'persona selection');
+    response.json(selectPersona(createSession(request), request.params.personaId, input.expectedRevision));
+}));
+
+router.delete('/personas/:personaId', asyncHandler(async (request, response) => {
+    response.json(deletePersona(createSession(request), request.params.personaId, String(request.query.expectedRevision ?? '')));
 }));
 
 router.get('/characters/:characterId/chats', asyncHandler(async (request, response) => {
@@ -241,9 +297,9 @@ router.post('/characters/:characterId/chats', asyncHandler(async (request, respo
     const chatId = requireSafeId(request.body?.chatId, 'chatId');
     const firstMessage = typeof request.body?.firstMessage === 'string' ? request.body.firstMessage.slice(0, 64 * 1024) : '';
     const character = await readCharacter(session, request.params.characterId);
-    const greeting = firstMessage || String(character.data.first_mes ?? '');
+    const greeting = substituteBasicMacros(firstMessage || String(character.data.first_mes ?? ''), { user: session.userName, char: character.name });
     assertChatIdle(session.handle, request.params.characterId, chatId);
-    const created = createChat(session, request.params.characterId, chatId, greeting);
+    const created = createChat(session, request.params.characterId, chatId, greeting, character.name);
     response.status(201).json(created);
 }));
 

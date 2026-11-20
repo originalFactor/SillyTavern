@@ -26,6 +26,7 @@ const EXTRA_FILES = [
     'package.json',
     'pnpm-lock.yaml',
     'default/content/settings.json',
+    'default/content/default_Seraphina.png',
     'default/config.yaml',
     // Loaded via `new URL('./plugin-worker.js', import.meta.url)`, not an import
     // specifier, so the graph walker cannot discover it.
@@ -159,6 +160,7 @@ function main() {
     for (const file of seen) copyEntry(path.relative(ROOT, file), out);
     for (const file of EXTRA_FILES) copyEntry(file, out);
     for (const directory of DATA_DIRECTORIES) copyEntry(directory, out);
+    fs.copyFileSync(path.join(ROOT, 'public/img/user-default.png'), path.join(out, 'default/content/companion-user.png'));
     const total = countFiles(out);
     writeManifest(out, total);
     console.log(JSON.stringify({ type: 'bundle_ready', out, files: total, modules: seen.size, externalPackages: [...external].sort() }));

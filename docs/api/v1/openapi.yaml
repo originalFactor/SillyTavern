@@ -130,12 +130,167 @@ paths:
     get:
       operationId: listCharacters
       summary: List characters using stable filename-based identifiers.
+    post:
+      operationId: createCharacter
+      summary: Create a V1/V2/V3 character card without rewriting its schema or unknown fields.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [characterId, card]
+              properties:
+                characterId: { type: string }
+                card: { type: object, additionalProperties: true }
+      responses:
+        '201': { description: Card created with its revision digest. }
+        '409': { description: ID already exists or an active generation fences this character. }
+  /api/v1/characters/import:
+    post:
+      operationId: importCharacter
+      summary: Import one JSON or PNG/APNG card using a caller-owned character ID.
+      description: JSON is bounded to 1 MiB, PNG/APNG to 4 MiB including metadata. No imported code is executed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [characterId, format, dataBase64]
+              properties:
+                characterId: { type: string }
+                format: { type: string, enum: [json, png] }
+                dataBase64: { type: string, contentEncoding: base64 }
+      responses:
+        '201': { description: Imported card document with revision. }
+        '413': { description: Card or image exceeds the documented size limit. }
+        '422': { description: Malformed or unsupported card format. }
   /api/v1/characters/{characterId}:
     get:
       operationId: getCharacter
       summary: Read a normalized character card.
       parameters:
         - $ref: '#/components/parameters/characterId'
+    put:
+      operationId: updateCharacter
+      summary: Replace the exact inspected card revision, preserving its existing PNG image.
+      parameters:
+        - $ref: '#/components/parameters/characterId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [card, expectedRevision]
+              properties:
+                card: { type: object, additionalProperties: true }
+                expectedRevision: { type: string }
+      responses:
+        '200': { description: Updated card document with new revision. }
+        '409': { description: Stale revision or character has an active generation. }
+    delete:
+      operationId: deleteCharacter
+      summary: Delete a revision-checked character; associated chat deletion requires an explicit flag.
+      parameters:
+        - $ref: '#/components/parameters/characterId'
+        - name: expectedRevision
+          in: query
+          required: true
+          schema: { type: string }
+        - name: deleteChats
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200': { description: Character deleted. }
+        '409': { description: Stale revision, active generation, or unconfirmed associated chat deletion. }
+  /api/v1/characters/{characterId}/export:
+    get:
+      operationId: exportCharacter
+      summary: Export the current character as JSON or a PNG containing its original card schema.
+      parameters:
+        - $ref: '#/components/parameters/characterId'
+        - name: format
+          in: query
+          schema: { type: string, enum: [json, png], default: json }
+      responses:
+        '200':
+          description: Native file-picker envelope.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [fileName, mimeType, dataBase64]
+                properties:
+                  fileName: { type: string }
+                  mimeType: { type: string, enum: [application/json, image/png] }
+                  dataBase64: { type: string, contentEncoding: base64 }
+  /api/v1/personas:
+    get:
+      operationId: listPersonas
+      summary: Read a persona-only catalog with selectedId and a revision independent of provider settings.
+      responses:
+        '200': { description: Persona catalog. No unrelated settings or credentials are returned. }
+  /api/v1/personas/{personaId}:
+    parameters:
+      - name: personaId
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      operationId: savePersona
+      summary: Save a persona using standard SillyTavern name/description/placement settings.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, name, description]
+              properties:
+                expectedRevision: { type: string }
+                name: { type: string, minLength: 1, maxLength: 200 }
+                description: { type: string, maxLength: 65536 }
+                title: { type: string, maxLength: 200 }
+                position: { type: integer, enum: [0, 4, 9] }
+                depth: { type: integer, minimum: 0, maximum: 100 }
+                role: { type: integer, enum: [0, 1, 2] }
+                select: { type: boolean, default: false }
+      responses:
+        '200': { description: Updated persona catalog. Unknown descriptor fields are preserved. }
+        '409': { description: Persona revision changed. }
+        '422': { description: Author-note persona positions are not supported by the headless prompt engine. }
+    delete:
+      operationId: deletePersona
+      summary: Remove a persona and its avatar while preserving existing chat messages.
+      parameters:
+        - name: expectedRevision
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Updated persona catalog; deleting the selected persona resets the active name to User. }
+  /api/v1/personas/{personaId}/select:
+    post:
+      operationId: selectPersona
+      summary: Select the persona for subsequent generation requests without rewriting existing history.
+      parameters:
+        - name: personaId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision]
+              properties:
+                expectedRevision: { type: string }
+      responses:
+        '200': { description: Updated persona catalog. }
   /api/v1/characters/{characterId}/chats:
     get:
       operationId: listChats

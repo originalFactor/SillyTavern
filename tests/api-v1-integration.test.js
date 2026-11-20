@@ -139,7 +139,7 @@ describe('API v1 routes', () => {
 
     test('lists stable character and chat identifiers', async () => {
         const characters = await (await fetch(`${baseUrl}/api/v1/characters`)).json();
-        expect(characters).toEqual([{ id: 'Aria', avatar: 'Aria.png', name: 'Aria', chatCount: 1 }]);
+        expect(characters).toEqual([expect.objectContaining({ id: 'Aria', avatar: 'Aria.png', name: 'Aria', chatCount: 1 })]);
         const chats = await (await fetch(`${baseUrl}/api/v1/characters/Aria/chats`)).json();
         expect(chats[0].id).toBe('Chat');
         const chat = await (await fetch(`${baseUrl}/api/v1/chats/Chat?characterId=Aria`)).json();

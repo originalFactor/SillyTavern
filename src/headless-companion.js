@@ -117,7 +117,6 @@ async function main() {
     const tokenBytes = Buffer.from(token, 'hex');
     const app = express();
     app.disable('x-powered-by');
-    app.use(express.json({ limit: '2mb' }));
 
     app.use((request, response, next) => {
         const header = request.get('authorization') ?? '';
@@ -140,6 +139,8 @@ async function main() {
         request.user = { profile: DEFAULT_USER, directories: dirs };
         next();
     });
+    // Authenticate before accepting a bounded character-image import body.
+    app.use(express.json({ limit: '8mb' }));
 
     // Non-cookie CSRF bypass for API v1 mutations. The bearer check above is
     // strictly stronger: a cross-origin page cannot read the random token.

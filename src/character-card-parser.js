@@ -7,12 +7,15 @@ import PNGtext from 'png-chunk-text';
 
 /**
  * Writes Character metadata to a PNG image buffer.
- * Writes only 'chara', 'ccv3' is not supported and removed not to create a mismatch.
+ * Preserves legacy v3-chunk synthesis by default. Native card management can
+ * request exact schema preservation with preserveSpec.
  * @param {Buffer} image PNG image buffer
  * @param {string} data Character data to write
+ * @param {object} [options] Metadata options
+ * @param {boolean} [options.preserveSpec=false] Preserve the supplied card schema instead of manufacturing a v3 chunk
  * @returns {Buffer} PNG image buffer with metadata
  */
-export const write = (image, data) => {
+export const write = (image, data, { preserveSpec = false } = {}) => {
     const chunks = extract(new Uint8Array(image));
     const tEXtChunks = chunks.filter(chunk => chunk.name === 'tEXt');
 
@@ -32,11 +35,13 @@ export const write = (image, data) => {
     try {
         //change v2 format to v3
         const v3Data = JSON.parse(data);
-        v3Data.spec = 'chara_card_v3';
-        v3Data.spec_version = '3.0';
+        if (!preserveSpec) {
+            v3Data.spec = 'chara_card_v3';
+            v3Data.spec_version = '3.0';
+        }
 
         const base64EncodedData = Buffer.from(JSON.stringify(v3Data), 'utf8').toString('base64');
-        chunks.splice(-1, 0, PNGtext.encode('ccv3', base64EncodedData));
+        if (!preserveSpec || v3Data.spec === 'chara_card_v3') chunks.splice(-1, 0, PNGtext.encode('ccv3', base64EncodedData));
     } catch (error) {
         // Ignore errors when adding v3 chunk
     }

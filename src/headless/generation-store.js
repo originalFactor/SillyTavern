@@ -71,6 +71,21 @@ export function assertChatIdle(handle, characterId, chatId) {
 }
 
 /**
+ * Reject character mutation/deletion while any of its turns can still commit.
+ * @param {string} handle User handle
+ * @param {string} characterId Character identifier
+ * @returns {void}
+ */
+export function assertCharacterIdle(handle, characterId) {
+    const userKey = getUserKey(handle);
+    for (const record of generations.values()) {
+        if (record.userKey === userKey && record.characterId === characterId && !isTerminal(record.status)) {
+            throw new ApiError(409, 'conflict', 'This character has an active generation. Wait for it to finish before changing the card.');
+        }
+    }
+}
+
+/**
  * Serializes work on one chat file so two detached generations cannot read the
  * same JSONL and clobber each other's commit.
  * @param {string} chatPath Chat file path

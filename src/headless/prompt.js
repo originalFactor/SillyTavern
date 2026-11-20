@@ -46,7 +46,9 @@ export function substituteBasicMacros(text, variables) {
  */
 export function getWorldInfo(session, character, chat) {
     const wiSettings = session.settings.world_info_settings?.world_info ?? {};
-    const selected = Array.isArray(wiSettings.globalSelect) ? wiSettings.globalSelect : [];
+    const selected = Array.isArray(wiSettings.globalSelect) ? [...wiSettings.globalSelect] : [];
+    const personaBook = session.settings.power_user?.persona_description_lorebook;
+    if (typeof personaBook === 'string' && personaBook && !selected.includes(personaBook)) selected.push(personaBook);
     const scanDepth = Math.max(1, Number(session.settings.world_info_settings?.world_info_depth ?? 2));
     const recentText = chat.slice(-scanDepth * 2).map(message => String(message.mes ?? '')).join('\n');
     const books = [];
@@ -143,6 +145,10 @@ export function buildPrompt(session, character, chat, { type, input = '', overri
     }
 
     const characterName = String(character.name || 'Character');
+    const personaPosition = Number(settings.power_user?.persona_description_position ?? 0);
+    if (![0, 1, 4, 9].includes(personaPosition) && settings.power_user?.persona_description) {
+        throw new ApiError(422, 'unsupported', 'Persona author-note placement is not yet supported in headless mode.');
+    }
     const variables = {
         user: session.userName,
         char: characterName,
@@ -159,7 +165,7 @@ export function buildPrompt(session, character, chat, { type, input = '', overri
         personality: regexUserInput(macro(String(character.personality ?? ''))),
         scenario: regexUserInput(macro(String(character.scenario ?? ''))),
         wiAfter: macro(worldInfo.after),
-        persona: regexUserInput(macro(variables.persona)),
+        persona: [0, 1].includes(personaPosition) ? regexUserInput(macro(variables.persona)) : '',
         char: characterName,
         user: session.userName,
     });
@@ -186,6 +192,7 @@ export function buildPrompt(session, character, chat, { type, input = '', overri
 
     const maxContextMessages = Math.max(1, Number(settings.oai_settings?.openai_max_context ?? settings.max_context ?? 16));
     const history = chat.slice(-Math.min(maxContextMessages, 64));
+    const historyStart = messages.length;
     for (const message of history) {
         if (!message || typeof message.mes !== 'string') continue;
         messages.push({
@@ -195,6 +202,11 @@ export function buildPrompt(session, character, chat, { type, input = '', overri
     }
     if (type === 'quiet' && input) {
         messages.push({ role: 'system', content: regexUserInput(macro(input)) });
+    }
+    if (personaPosition === 4 && variables.persona) {
+        const depth = Math.max(0, Math.min(100, Number(settings.power_user?.persona_description_depth ?? 2)));
+        const role = ['system', 'user', 'assistant'][Number(settings.power_user?.persona_description_role ?? 0)] ?? 'system';
+        messages.splice(Math.max(historyStart, messages.length - depth), 0, { role, content: regexUserInput(macro(variables.persona)) });
     }
     const jailbreak = macro(String(jailbreakPrompt?.content ?? ''));
     if (jailbreak) {

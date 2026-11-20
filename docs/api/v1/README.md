@@ -65,6 +65,33 @@ return 409 while a generation for that chat is active.
 
 Use `Content-Type: application/json` for JSON requests and `application/merge-patch+json` (or `application/json`) for `PATCH /settings`. Keep DTOs non-reflective or add R8 keep rules.
 
+## Native character cards and personas
+
+`POST /characters` accepts a caller-owned `characterId` and the opaque `card`
+object. `POST /characters/import` accepts `characterId`, `format: json|png`,
+and canonical `dataBase64` file bytes. JSON is limited to 1 MiB and PNG/APNG to
+4 MiB including metadata. V1/V2/V3 schema, unknown extension fields and embedded
+lorebooks survive editing and export. `GET /characters/{id}` returns `raw`,
+normalized `data`, and a SHA-256 `revision` of the PNG. `PUT /characters/{id}`
+requires the inspected `expectedRevision`; it preserves the existing image and
+rejects stale writes with 409. `GET /characters/{id}/export?format=json|png`
+returns `{fileName,mimeType,dataBase64}` for a native save picker. Deletion
+requires the revision and, when chats exist, explicit `deleteChats=true`.
+Admitted generations fence card replacement/deletion across all its chats.
+CHARX, WebP card imports and auxiliary asset transfer remain unimplemented.
+
+`GET /personas` returns `{personas,selectedId,revision}`. Writes to
+`PUT /personas/{id}`, `POST /personas/{id}/select` and
+`DELETE /personas/{id}?expectedRevision=...` use that persona-only revision,
+preserve unrelated provider settings, and use standard `power_user.personas`,
+`persona_descriptions`, `user_avatar` and `username` fields. New IDs end in
+`.png`; a packaged default avatar is created. Selection applies to subsequent
+requests; existing transcript names/text are not rewritten. Description
+positions 0 (story prompt), 4 (depth/role), and 9 (no automatic injection) work;
+author-note placements 2/3 explicitly reject instead of silently degrading.
+Persona-specific lorebooks join global books under the existing simplified
+World Info matcher. Full World Info and author-note parity remain separate work.
+
 ## Extensions and WebViews
 
 `GET /api/v1/extensions` classifies manifests by optional fields:

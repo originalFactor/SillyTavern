@@ -22,6 +22,16 @@ from the companion entry point.
   packaged defaults for Messenger. Android packaging materializes the pnpm
   dependency graph separately; do not require runtime package installation or
   private browser routes in companion mode.
+- `src/headless/character-management.js` owns bounded V1/V2/V3 JSON/PNG/APNG card
+  CRUD/import/export. Preserve opaque fields and the supplied card schema;
+  replacements/deletion require the inspected PNG digest. Active generation
+  admissions fence card mutation. Associated chat deletion needs an explicit
+  flag. CHARX/WebP and auxiliary asset transfer remain incomplete.
+- `src/headless/persona-management.js` uses standard ST persona settings and a
+  persona-only revision, preserving provider settings and unknown descriptor
+  fields. In-prompt, depth/role and excluded description placements work;
+  legacy position 1 maps to 0, while author-note placements 2/3 explicitly fail.
+  The companion packages a default character and user avatar without the SPA.
 - Current provider scope remains OpenAI/custom Chat Completions. Advanced
   macros, full presets/instruct, group chats, tools, images, TTS and vectors
   remain incomplete; do not mark them supported without implementation and
@@ -30,7 +40,7 @@ from the companion entry point.
 Focused verification from this checkout:
 
 ```sh
-NODE_OPTIONS=--experimental-vm-modules pnpm --dir tests exec jest --config jest.config.json --runInBand api-v1-integration.test.js api-v1-headless.test.js api-v1-companion.test.js api-v1-bundle.test.js api-v1-plugins.test.js
+NODE_OPTIONS=--experimental-vm-modules pnpm --dir tests exec jest --config jest.config.json --runInBand api-v1-character-management.test.js api-v1-integration.test.js api-v1-headless.test.js api-v1-companion.test.js api-v1-bundle.test.js api-v1-plugins.test.js
 pnpm exec eslint src/endpoints/api-v1.js src/headless/session.js src/headless/runtime.js src/headless/prompt.js src/headless/generation-store.js
 ```
 

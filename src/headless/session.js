@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { SETTINGS_FILE } from '../constants.js';
@@ -114,7 +115,7 @@ export function createSession(request) {
  * Reads a character card by its stable API v1 identifier.
  * @param {HeadlessSession} session Headless session
  * @param {string} characterId Character identifier
- * @returns {Promise<{id: string, avatar: string, name: string, data: Record<string, any>, raw: Record<string, any>}>} Character
+ * @returns {Promise<{id: string, avatar: string, name: string, data: Record<string, any>, raw: Record<string, any>, revision: string}>} Character
  */
 export async function readCharacter(session, characterId) {
     const id = requireSafeId(characterId, 'characterId');
@@ -123,10 +124,17 @@ export async function readCharacter(session, characterId) {
     if (!isPathUnderParent(session.directories.characters, filePath)) {
         throw new ApiError(400, 'validation', 'Character path is invalid.');
     }
-    const { parse } = await import('../character-card-parser.js');
-    const rawText = await parse(filePath, 'png');
+    const { read } = await import('../character-card-parser.js');
+    if (!fs.existsSync(filePath)) throw new ApiError(404, 'not_found', 'Character not found.');
+    if (fs.lstatSync(filePath).isSymbolicLink() || !fs.statSync(filePath).isFile()) {
+        throw new ApiError(400, 'validation', 'Character path is not a regular file.');
+    }
+    if (fs.statSync(filePath).size > 4 * 1024 * 1024) throw new ApiError(413, 'validation', 'Character image exceeds 4 MiB.');
+    const bytes = fs.readFileSync(filePath);
+    let rawText;
+    try { rawText = read(bytes); } catch { throw new ApiError(422, 'validation', 'Character image does not contain a valid card.'); }
     const raw = tryParse(rawText);
-    if (!raw || typeof raw !== 'object') {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
         throw new ApiError(422, 'validation', 'Character card does not contain valid JSON.');
     }
     const data = normalizeCharacterData(raw);
@@ -136,6 +144,7 @@ export async function readCharacter(session, characterId) {
         name: String(data.name || raw.name || id),
         data,
         raw,
+        revision: crypto.createHash('sha256').update(bytes).digest('hex'),
     };
 }
 
@@ -159,7 +168,7 @@ export function normalizeCharacterData(raw) {
 /**
  * Lists character identifiers.
  * @param {HeadlessSession} session Headless session
- * @returns {Promise<Array<{id: string, avatar: string, name: string, chatCount: number}>>} Characters
+ * @returns {Promise<Array<{id: string, avatar: string, name: string, chatCount: number, revision: string}>>} Characters
  */
 export async function listCharacters(session) {
     const files = fs.existsSync(session.directories.characters)
@@ -174,7 +183,7 @@ export async function listCharacters(session) {
             const chatCount = fs.existsSync(chatsPath)
                 ? fs.readdirSync(chatsPath).filter(name => name.endsWith('.jsonl')).length
                 : 0;
-            characters.push({ id, avatar: file, name: character.name, chatCount });
+            characters.push({ id, avatar: file, name: character.name, chatCount, revision: character.revision });
         } catch (error) {
             console.warn('[api-v1] Skipping unreadable character', id, error instanceof Error ? error.message : error);
         }
@@ -231,15 +240,16 @@ export function resolveChatPath(session, characterId, chatId) {
  * @param {string} characterId Character identifier
  * @param {string} chatId Chat identifier
  * @param {string} [firstMessage] Optional greeting to seed
+ * @param {string} [characterName] Display name for the greeting
  * @returns {{id: string, fileName: string, characterId: string}} Created chat
  */
-export function createChat(session, characterId, chatId, firstMessage = '') {
+export function createChat(session, characterId, chatId, firstMessage = '', characterName = characterId) {
     const filePath = resolveChatPath(session, characterId, chatId);
     if (fs.existsSync(filePath)) {
         throw new ApiError(409, 'conflict', 'Chat already exists.');
     }
     const message = firstMessage
-        ? [createCharacterMessage(characterId, firstMessage)]
+        ? [createCharacterMessage(characterName, firstMessage)]
         : [];
     writeChat(filePath, [{ chat_metadata: {} }, ...message]);
     return { id: chatId, fileName: path.basename(filePath), characterId };
