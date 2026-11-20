@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from '@jest/globals';
-import { cancel, clearGenerations, createGeneration, setFinalText } from '../src/headless/generation-store.js';
+import { cancel, clearGenerations, createGeneration, setFinalText, snapshot } from '../src/headless/generation-store.js';
 import { runGeneration } from '../src/headless/runtime.js';
 import { readChat, readSettings, writeChat, writeSettings } from '../src/headless/session.js';
 import { USER_DIRECTORY_TEMPLATE } from '../src/constants.js';
@@ -72,6 +72,20 @@ async function entered(signal) {
 }
 
 describe('cancellation admission through asynchronous hooks', () => {
+    test('actual prompt macros persist once at preparation and are not reexecuted on repeated observation', async () => {
+        session.settings.oai_settings.prompts[0].content = '{{incvar::count}} {{setglobalvar::shared::actual}} {{input}}';
+        start(); await work;
+        expect(record.status).toBe('done');
+        const saved = readChat(path.join(directories.chats, 'Aria', 'Chat.jsonl'));
+        expect(saved[0].chat_metadata.variables.count).toBe(1);
+        expect(saved.at(-2).mes).toBe('Question');
+        expect(readSettings(directories).extension_settings.variables.global.shared).toBe('actual');
+        expect(record.snapshot.warnings.macroStateChanges).toEqual({ local: true, global: true });
+        expect(snapshot(record).warnings.macroStateChanges).toEqual({ local: true, global: true });
+        await runGeneration({ user: { directories }, headers: {} }, session, record, { characterId: 'Aria', chatId: 'Chat', type: 'normal', input: 'Question' });
+        expect(calls).toBe(1);
+        expect(readChat(path.join(directories.chats, 'Aria', 'Chat.jsonl'))[0].chat_metadata.variables.count).toBe(1);
+    });
     test.each([
         ['afterGeneration', null],
         ['onGenerationEvent', 'generation_completed'],

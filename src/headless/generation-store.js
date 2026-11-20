@@ -575,6 +575,7 @@ export function snapshot(record) {
         providerDispatched: record.providerDispatched === true,
         cancelOutcome: record.cancelOutcome,
         usage: record.usage ?? null,
+        warnings: record.snapshot?.warnings ?? null,
         pluginEvents: record.pluginEvents ?? [],
         restored: Boolean(record.restored),
         createdAt: new Date(record.createdAt).toISOString(),

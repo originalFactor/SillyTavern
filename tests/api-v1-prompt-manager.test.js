@@ -80,19 +80,19 @@ describe('managed prompt assembly', () => {
         const result = buildPrompt({ ...session, settings }, { name: 'Aria', description: 'Description' }, [], { type: 'normal' });
         expect(result.messages.map(message => message.content)).toContain('Legacy Persona');
     });
-    test('macro-prefixed dialogue examples retain the user role', () => {
+    test('macro-prefixed dialogue examples use upstream named system messages', () => {
         const exampleOrder = [...order, { identifier: 'dialogueExamples', enabled: true }];
         const settings = { ...readSettings(session.directories), oai_settings: oai({ prompt_order: [{ character_id: 100001, order: exampleOrder }] }), power_user: {} };
         const result = buildPrompt({ ...session, settings }, { name: 'Aria', mes_example: '{{user}}: Hello\n{{char}}: Hi' }, [], { type: 'normal' });
-        expect(result.messages.slice(-2)).toEqual([{ role: 'user', content: 'Hello' }, { role: 'assistant', content: 'Hi' }]);
+        expect(result.messages.slice(-2)).toEqual([{ role: 'system', name: 'example_user', content: 'Hello' }, { role: 'system', name: 'example_assistant', content: 'Hi' }]);
     });
     test('100001 takes precedence over legacy order; unknown references are skipped like upstream', () => {
         expect(assemble({ prompt_order: [{ character_id: 100000, order: [] }, { character_id: 100001, order: [...order, { identifier: 'missing', enabled: true }] }] }).messages).toHaveLength(5);
     });
     test('shared preview/dispatch builder expands case-insensitive character macros and leaves unsupported macros visible', () => {
         session.settings = readSettings(session.directories);
-        const result = buildPrompt(session, { name: 'Aria', description: 'Description', system_prompt: '{{original}} / {{charIfNotGroup}} / {{getvar::unknown}}' }, [{ is_user: true, mes: 'History' }], { type: 'normal' });
-        expect(result.messages[0].content).toBe('Original Aria / Aria / {{getvar::unknown}}');
+        const result = buildPrompt(session, { name: 'Aria', description: 'Description', system_prompt: '{{original}} / {{charIfNotGroup}} / {{getvar::unknown}} / {{unregisteredFixture}}' }, [{ is_user: true, mes: 'History' }], { type: 'normal' });
+        expect(result.messages[0].content).toBe('Original Aria / Aria /  / {{unregisteredFixture}}');
         expect(result.messages.filter(item => item.content === 'Description')).toHaveLength(1);
         expect(result.warnings.promptManagerOrdering).toBe(true);
         expect(result.warnings.promptManagerPresets).toBe(false);

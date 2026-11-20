@@ -52,3 +52,18 @@ pnpm exec eslint src/endpoints/api-v1.js src/headless/session.js src/headless/ru
 ```
 
 Host-side tests do not prove execution of the arm64 Android Node binary.
+
+- Native macro execution derives both upstream engines and all builtin definition
+  groups with `scripts/generate-headless-macros.mjs`; generated source hashes and
+  bytes are checked during companion packaging. Edit the upstream source or the
+  platform adapter, then regenerate; never hand-edit generated files.
+  `macro-runtime/platform.js` provides synchronous isolated frames, device facts,
+  live variable facades and resource limits without browser globals or secrets.
+  Preview never persists macro effects. Actual preparation persists variable
+  metadata before awaited hooks/provider dispatch, without committing staged
+  transcript rows; repeated observation/admission does not evaluate again.
+  Native context is a strict whitelist and participates in caller-key identity.
+  `upstreamMacroEngine` is separate from still-false full `advancedMacros`.
+  Greeting/group/Instruct/extension integration and variable management remain
+  unfinished. Legacy variable-category ordering and named system dialogue examples
+  are intentional upstream behavior, not bugs to normalize.

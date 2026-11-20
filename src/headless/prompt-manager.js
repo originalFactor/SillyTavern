@@ -90,6 +90,11 @@ export function assembleManagedPrompt(oai, blocks, history, examples, character,
     const config = document({ oai_settings: oai });
     validatePromptManager(config);
     const prompts = new Map(config.prompts.map(prompt => [prompt.identifier, prompt]));
+    const prepared = new Map();
+    for (const entry of config.order) {
+        const prompt = prompts.get(entry.identifier);
+        if (entry.enabled && (!prompt.injection_trigger?.length || prompt.injection_trigger.includes(type))) prepared.set(entry.identifier, expand(String(prompt.content ?? '')));
+    }
     const ordered = [];
     const absolute = [...extraInjections];
     const segments = [];
@@ -98,10 +103,9 @@ export function assembleManagedPrompt(oai, blocks, history, examples, character,
         if (!entry.enabled || (prompt.injection_trigger?.length && !prompt.injection_trigger.includes(type))) continue;
         const id = prompt.identifier;
         const role = prompt.role ?? 'system';
-        const original = String(prompt.content ?? '');
+        const original = prepared.get(id) ?? '';
         const override = id === 'main' ? character.system_prompt : id === 'jailbreak' ? character.post_history_instructions : '';
-        let content = Object.hasOwn(blocks, id) ? blocks[id] : (override && !prompt.forbid_overrides ? override : original);
-        content = expand(String(content ?? ''), original);
+        const content = Object.hasOwn(blocks, id) ? expand(String(blocks[id] ?? '')) : override && !prompt.forbid_overrides ? expand(String(override), original) : original;
         const messages = id === 'chatHistory' ? history.map(message => ({ ...message }))
             : id === 'dialogueExamples' ? examples.map(message => ({ ...message })) : content ? [{ role, content }] : [];
         segments.push({ name: id, role, content: ['chatHistory', 'dialogueExamples'].includes(id) ? String(messages.length) : content });

@@ -2,6 +2,7 @@ import { ApiError, getUserKey } from './contract.js';
 import { complete, fail, recordPluginEvents, beginGeneration, endGeneration, shouldStopGeneration, setFinalText, setUsage, stage, withChatLock } from './generation-store.js';
 import { applyGlobalRegex, regex_placement } from './regex.js';
 import { buildPrompt } from './prompt.js';
+import { persistMacroEffects } from './macros.js';
 import {
     applyHeadlessHooks,
     applyHeadlessOutputHooks,
@@ -77,7 +78,16 @@ export async function runGeneration(sourceRequest, session, record, input) {
             }
 
             stage(record, 'prompt');
-            let built = buildPrompt(session, character.data, chat, { type: input.type, input: input.input, overrides: input.overrides ?? {} });
+            const macroChat = previousReply ? [...chat, { ...previousReply, swipe_id: previousReply.swipes?.length ?? 1 }] : chat;
+            let built = buildPrompt(session, character.data, chat, {
+                type: input.type, input: input.input, overrides: input.overrides ?? {},
+                characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext,
+                macroChat,
+            });
+            // Upstream variable macros run during preparation. Publish their
+            // metadata effects before the first awaited hook/provider dispatch,
+            // preserving the saved transcript until successful completion.
+            persistMacroEffects(session, chatPath, chat, built.macroEffects);
             if (input.type === 'continue' && input.input) {
                 // Continuation instructions affect the request only, never the
                 // stored transcript or which assistant message receives text.

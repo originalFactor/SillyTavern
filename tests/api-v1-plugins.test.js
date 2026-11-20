@@ -207,6 +207,11 @@ export async function afterGeneration(context) {
         expect(result.text).toBe('good good good');
     });
 
+    test('an explicit returned output takes precedence over the unchanged generation field', async () => {
+        installExtension('returned-output', 'export async function afterGeneration() { return "Returned output"; }');
+        expect((await applyHeadlessOutputHooks(makeSession(), 'Original output')).text).toBe('Returned output');
+    });
+
     test('a throwing hook degrades to a visible warning without breaking the turn', async () => {
         installExtension('broken', 'export async function beforePrompt() { throw new Error("boom"); }');
         const { prompt, effects } = await applyHeadlessHooks(makeSession(), builtPrompt(), {});

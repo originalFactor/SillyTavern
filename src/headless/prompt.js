@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { assembleManagedPrompt } from './prompt-manager.js';
+import { createMacroContext } from './macros.js';
+import { upstreamMacroScript } from './macro-runtime/index.js';
+import { Handlebars } from './macro-runtime/platform.js';
+import { assembleManagedPrompt, activePromptOrder } from './prompt-manager.js';
 import { ApiError } from './contract.js';
 import { applyGlobalRegex, regex_placement } from './regex.js';
 import { readWorldInfoFile } from '../endpoints/worldinfo.js';
@@ -104,22 +107,6 @@ export function getWorldInfo(session, character, chat) {
     };
 }
 
-function splitMessageExamples(mesExample) {
-    return String(mesExample ?? '')
-        .replace(/<START>/gi, '\n')
-        .split(/\n{2,}/)
-        .map(block => block.trim())
-        .filter(Boolean)
-        .slice(0, 8);
-}
-
-function applyStoryString(template, fields) {
-    return substituteBasicMacros(template, fields)
-        .replace(/\{\{#if\s+(\w+)\}\}([\s\S]*?)\{\{\/if\}\}/g, (_match, key, body) => fields[key] ? body : '')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-}
-
 /**
  * Builds deterministic Chat Completion messages from ST data.
  * @param {import('./session.js').HeadlessSession} session Headless session
@@ -130,7 +117,7 @@ function applyStoryString(template, fields) {
  * @param {string} [options.input] User input or quiet prompt
  * @returns {BuiltPrompt} Built prompt
  */
-export function buildPrompt(session, character, chat, { type, input = '', overrides = {} }) {
+export function buildPrompt(session, character, chat, { type, input = '', overrides = {}, ...macroOptions }) {
     const settings = session.settings;
     if (settings.main_api !== 'openai') {
         throw new ApiError(422, 'unsupported', `main_api "${settings.main_api}" is not supported by API v1 MVP.`);
@@ -146,118 +133,77 @@ export function buildPrompt(session, character, chat, { type, input = '', overri
     if (![0, 1, 4, 9].includes(personaPosition) && settings.power_user?.persona_description) {
         throw new ApiError(422, 'unsupported', 'Persona author-note placement is not yet supported in headless mode.');
     }
-    const variables = {
-        user: session.userName,
-        char: characterName,
-        charIfNotGroup: characterName,
-        description: String(character.description ?? ''),
-        personality: String(character.personality ?? ''),
-        scenario: String(character.scenario ?? ''),
-        persona: String(settings.power_user?.persona_description ?? ''),
-    };
-    const macro = text => substituteBasicMacros(text, variables);
+    const context = createMacroContext(session, character, chat, { type, input, overrides, extensions: listExtensions(session), ...macroOptions });
+    const macro = (text, original) => context.expand(text, typeof original === 'string' ? { original } : {});
     const regexUserInput = text => applyGlobalRegex(text, session.extensionSettings, regex_placement.USER_INPUT);
     const worldInfo = getWorldInfo(session, character, chat);
-    const contextTemplate = String(settings.power_user?.context?.story_string ?? '{{description}}\n{{persona}}');
-    const story = applyStoryString(contextTemplate, {
-        system: macro(String(settings.power_user?.sysprompt?.content ?? '')),
-        wiBefore: macro(worldInfo.before),
-        description: regexUserInput(macro(String(character.description ?? ''))),
-        personality: regexUserInput(macro(String(character.personality ?? ''))),
-        scenario: regexUserInput(macro(String(character.scenario ?? ''))),
-        wiAfter: macro(worldInfo.after),
-        persona: [0, 1].includes(personaPosition) ? regexUserInput(macro(variables.persona)) : '',
-        char: characterName,
-        user: session.userName,
-    });
-    const configuredPrompts = Array.isArray(oai.prompts) ? oai.prompts : [];
-    const mainPrompt = configuredPrompts.find(prompt => prompt.identifier === 'main' && prompt.enabled !== false);
-    const jailbreakPrompt = configuredPrompts.find(prompt => prompt.identifier === 'jailbreak' && prompt.enabled !== false);
-    const useSysprompt = oai.use_sysprompt !== false && settings.power_user?.sysprompt?.enabled !== false;
-    const systemPrompt = useSysprompt
-        ? macro(String(mainPrompt?.content ?? settings.power_user?.sysprompt?.content ?? ''))
-        : '';
-    let messages = [];
-    if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
-    if (story) messages.push({ role: 'system', content: story });
-
-    const examples = splitMessageExamples(character.mes_example);
-    for (const example of examples) {
-        const lines = example.split('\n').filter(Boolean);
-        for (const line of lines) {
-            const role = line.startsWith(`${session.userName}:`) || line.startsWith('User:') ? 'user' : 'assistant';
-            const content = line.replace(/^[^:]+:\s*/, '');
-            messages.push({ role, content: regexUserInput(macro(content)) });
-        }
-    }
-
-    const maxContextMessages = Math.max(1, Number(settings.oai_settings?.openai_max_context ?? settings.max_context ?? 16));
+    const fields = context.fields();
+    const maxContextMessages = Math.max(1, Number(oai.openai_max_context ?? settings.max_context ?? 16));
     const history = chat.slice(-Math.min(maxContextMessages, 64));
-    const historyStart = messages.length;
-    for (const message of history) {
-        if (!message || typeof message.mes !== 'string') continue;
-        messages.push({
-            role: message.is_user ? 'user' : 'assistant',
-            content: regexUserInput(macro(message.mes)),
-        });
+    const transcript = chat.filter(message => typeof message?.mes === 'string');
+    const firstIncluded = history.find(message => typeof message?.mes === 'string');
+    context.frame.metadata.lastInContextMessageId = Math.max(0, transcript.indexOf(firstIncluded));
+    const historyMessages = history.filter(message => typeof message?.mes === 'string').map(message => ({
+        role: message.is_system ? 'system' : message.is_user ? 'user' : 'assistant', content: regexUserInput(macro(message.mes)),
+    }));
+    if (oai.new_chat_prompt) historyMessages.unshift({ role: 'system', content: macro(String(oai.new_chat_prompt)) });
+    const examples = [];
+    for (const example of context.examples(fields.mesExamples ?? '')) {
+        const parsed = context.run(() => upstreamMacroScript.substituteParams(example));
+        const individual = context.run(() => context.frame.exampleParser(parsed));
+        if (individual.length && oai.new_example_chat_prompt) examples.push({ role: 'system', content: macro(String(oai.new_example_chat_prompt)) });
+        examples.push(...individual.map(message => ({ role: 'system', name: message.name, content: regexUserInput(message.content) })));
     }
-    if (type === 'quiet' && input) {
-        messages.push({ role: 'system', content: regexUserInput(macro(input)) });
-    }
-    if (personaPosition === 4 && variables.persona) {
-        const depth = Math.max(0, Math.min(100, Number(settings.power_user?.persona_description_depth ?? 2)));
-        const role = ['system', 'user', 'assistant'][Number(settings.power_user?.persona_description_role ?? 0)] ?? 'system';
-        messages.splice(Math.max(historyStart, messages.length - depth), 0, { role, content: regexUserInput(macro(variables.persona)) });
-    }
-    const jailbreak = macro(String(jailbreakPrompt?.content ?? ''));
-    if (jailbreak) {
-        messages.push({ role: 'system', content: jailbreak });
-    }
-
-    const managed = assembleManagedPrompt(oai, {
+    const blocks = {
         worldInfoBefore: macro(worldInfo.before), worldInfoAfter: macro(worldInfo.after),
-        charDescription: regexUserInput(macro(String(character.description ?? ''))),
-        charPersonality: regexUserInput(macro(oai.personality_format ? String(oai.personality_format).replaceAll('{{personality}}', String(character.personality ?? '')) : String(character.personality ?? ''))),
-        scenario: regexUserInput(macro(oai.scenario_format ? String(oai.scenario_format).replaceAll('{{scenario}}', String(character.scenario ?? '')) : String(character.scenario ?? ''))),
-        personaDescription: [0, 1].includes(personaPosition) ? regexUserInput(macro(variables.persona)) : '',
-    }, history.filter(message => typeof message?.mes === 'string').map(message => ({
-        role: message.is_user ? 'user' : 'assistant', content: regexUserInput(macro(message.mes)),
-    })), examples.flatMap(example => example.split('\n').filter(Boolean).map(rawLine => {
-        const line = macro(rawLine);
-        return { role: line.startsWith(`${session.userName}:`) || line.startsWith('User:') ? 'user' : 'assistant', content: regexUserInput(line.replace(/^[^:]+:\s*/, '')) };
-    })), character, type, (text, original) => substituteBasicMacros(text, { ...variables, original: macro(original) }),
-    personaPosition === 4 && variables.persona ? [{
-        role: ['system', 'user', 'assistant'][Number(settings.power_user?.persona_description_role ?? 0)] ?? 'system',
-        content: regexUserInput(macro(variables.persona)),
-        injection_depth: Math.max(0, Math.min(100, Number(settings.power_user?.persona_description_depth ?? 2))),
-        injection_order: 100,
-    }] : []);
-    if (managed) {
+        charDescription: regexUserInput(fields.description),
+        charPersonality: regexUserInput(fields.personality && oai.personality_format ? macro(String(oai.personality_format)) : fields.personality),
+        scenario: regexUserInput(fields.scenario && oai.scenario_format ? macro(String(oai.scenario_format)) : fields.scenario),
+        personaDescription: [0, 1].includes(personaPosition) ? regexUserInput(fields.persona) : '',
+    };
+    let messages, segments;
+    if (activePromptOrder(oai)) {
+        const managed = assembleManagedPrompt(oai, blocks, historyMessages, examples, {
+            ...character, system_prompt: fields.system, post_history_instructions: fields.jailbreak,
+        }, type, macro, personaPosition === 4 && fields.persona ? [{
+            role: ['system', 'user', 'assistant'][Number(settings.power_user?.persona_description_role ?? 0)] ?? 'system',
+            content: regexUserInput(fields.persona),
+            injection_depth: Math.max(0, Math.min(100, Number(settings.power_user?.persona_description_depth ?? 2))), injection_order: 100,
+        }] : []);
         messages = managed.messages;
-        if (type === 'quiet' && input) messages.push({ role: 'system', content: regexUserInput(macro(input)) });
+        segments = managed.segments;
+    } else {
+        const configured = Array.isArray(oai.prompts) ? oai.prompts : [];
+        const main = configured.find(prompt => prompt.identifier === 'main' && prompt.enabled !== false);
+        const systemPrompt = oai.use_sysprompt !== false && settings.power_user?.sysprompt?.enabled !== false ? macro(String(main?.content ?? settings.power_user?.sysprompt?.content ?? '')) : '';
+        const storyFields = { ...fields, wiBefore: blocks.worldInfoBefore, wiAfter: blocks.worldInfoAfter, persona: blocks.personaDescription, char: characterName, user: session.userName, system: systemPrompt };
+        let story = context.run(() => Handlebars.compile(String(settings.power_user?.context?.story_string ?? '{{description}}\n{{persona}}'), { noEscape: true })(storyFields));
+        story = macro(story).replace(/\n{3,}/g, '\n\n').trim();
+        messages = [];
+        if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
+        if (story) messages.push({ role: 'system', content: story });
+        messages.push(...examples);
+        const start = messages.length;
+        messages.push(...historyMessages);
+        if (personaPosition === 4 && fields.persona) {
+            const depth = Math.max(0, Math.min(100, Number(settings.power_user?.persona_description_depth ?? 2)));
+            const role = ['system', 'user', 'assistant'][Number(settings.power_user?.persona_description_role ?? 0)] ?? 'system';
+            messages.splice(Math.max(start, messages.length - depth), 0, { role, content: fields.persona });
+        }
+        const jailbreak = configured.find(prompt => prompt.identifier === 'jailbreak' && prompt.enabled !== false);
+        if (jailbreak?.content) messages.push({ role: jailbreak.role ?? 'system', content: macro(jailbreak.content) });
+        segments = [{ role: 'system', name: 'storyString', content: story }];
     }
-
-    const segments = managed?.segments ?? [
-        { role: 'system', name: 'systemPrompt', content: systemPrompt },
-        { role: 'system', name: 'storyString', content: story },
-        { role: 'system', name: 'jailbreak', content: jailbreak },
-        { role: 'system', name: 'worldInfoBefore', content: worldInfo.before },
-        { role: 'system', name: 'worldInfoAfter', content: worldInfo.after },
-        { role: 'examples', name: 'messageExamples', content: examples.join('\n\n') },
-        { role: 'chat', name: 'messages', content: String(history.length) },
-    ];
+    if (type === 'quiet' && input) messages.push({ role: 'system', content: regexUserInput(macro(input)) });
     const warnings = {
-        worldInfoActivated: worldInfo.activated,
-        promptManagerPresets: false,
-        promptManagerOrdering: Boolean(managed),
-        instructMode: Boolean(settings.power_user?.instruct?.enabled),
-        advancedMacros: false,
-        extensionPrompts: false,
-        groupChats: false,
-        swipes: true,
+        worldInfoActivated: worldInfo.activated, promptManagerPresets: false,
+        promptManagerOrdering: Boolean(activePromptOrder(oai)), instructMode: Boolean(settings.power_user?.instruct?.enabled),
+        advancedMacros: false, upstreamMacroEngine: true, macroWarnings: context.frame.warnings,
+        macroStateChanges: { local: context.frame.localDirty, global: context.frame.globalDirty },
+        extensionPrompts: false, groupChats: false, swipes: true,
     };
     const providerRequest = buildProviderRequest(session, messages, overrides);
-    return { messages, segments, providerRequest, warnings };
+    return { messages, segments, providerRequest, warnings, macroEffects: context.effects() };
 }
 
 /**

@@ -828,6 +828,33 @@ components:
         stream:
           type: boolean
           default: true
+        nativeContext:
+          type: object
+          additionalProperties: false
+          description: Device/UI facts for upstream macro evaluation, included in caller-key identity. Preview evaluates variable writes in memory only. Actual preparation saves macro variable metadata before provider dispatch; a provider failure does not roll it back. Script, extension and clock injection are rejected.
+          properties:
+            input:
+              type: string
+              maxLength: 1048576
+              description: Current composer draft, including when requesting regenerate/continue.
+            locale:
+              type: string
+              maxLength: 128
+              description: Valid BCP-47 device locale.
+            timeZone:
+              type: string
+              maxLength: 128
+              description: Valid IANA device time-zone identifier.
+            isMobile:
+              type: boolean
+            firstDisplayedMessageId:
+              type: integer
+              minimum: 0
+              description: Zero-based visible transcript message, excluding the JSONL metadata header.
+            lastGenerationType:
+              type: string
+              enum: [normal, quiet, regenerate, continue, swipe, impersonate, '']
+              description: Previously observed generation type for preview; actual dispatch uses its accepted type.
         overrides:
           type: object
           description: Per-request sampling overrides. Never exposes credentials or base URLs.

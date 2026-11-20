@@ -230,7 +230,7 @@ export async function applyHeadlessOutputHooks(session, text, extra = {}) {
         const result = await invoke(session, extension, HEADLESS_HOOKS.AFTER_GENERATION,
             { messages: [] }, { ...extra, generation }, effects);
         if (!result.ok) continue;
-        const candidate = result.generationText ?? result.returnedText;
+        const candidate = result.returnedText ?? result.generationText;
         if (typeof candidate === 'string' && candidate.length <= MAX_HOOK_TEXT) output = candidate;
     }
     return { text: output, effects };

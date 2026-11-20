@@ -117,6 +117,9 @@ router.get('/capabilities', (_request, response) => {
         features: {
             basicMacros: true,
             advancedMacros: false,
+            upstreamMacroEngine: true,
+            macroVariables: true,
+            nativeMacroContext: true,
             worldInfo: true,
             globalRegex: true,
             scopedRegex: false,
@@ -417,7 +420,10 @@ router.post('/generations/preview', asyncHandler(async (request, response) => {
     if (input.type === 'normal' && input.input) {
         chat.push({ name: session.userName, is_user: true, mes: input.input });
     }
-    const built = buildPrompt(session, character.data, chat, { type: input.type, input: input.input, overrides: input.overrides });
+    const built = buildPrompt(session, character.data, chat, {
+        type: input.type, input: input.input, overrides: input.overrides,
+        characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext, preview: true,
+    });
     response.json({
         messages: built.messages,
         segments: built.segments,
@@ -585,7 +591,36 @@ function validateGenerationInput(body, { allowUnsupportedTypes }) {
         input: typeof body.input === 'string' ? body.input : '',
         stream: body.stream !== false,
         overrides,
+        nativeContext: validateNativeMacroContext(body.nativeContext),
     };
+}
+
+/** Only device/UI facts are accepted; scripts, settings and extension grants are server-owned. */
+function validateNativeMacroContext(value) {
+    if (value == null) return {};
+    if (typeof value !== 'object' || Array.isArray(value)) throw new ApiError(400, 'validation', 'nativeContext must be an object.');
+    const allowed = new Set(['input', 'firstDisplayedMessageId', 'isMobile', 'locale', 'timeZone', 'lastGenerationType']);
+    if (Object.keys(value).some(key => !allowed.has(key))) throw new ApiError(400, 'validation', 'Unknown nativeContext field.');
+    const result = {};
+    for (const key of ['input', 'locale', 'timeZone', 'lastGenerationType']) {
+        if (value[key] === undefined) continue;
+        if (typeof value[key] !== 'string' || value[key].length > (key === 'input' ? 1_048_576 : 128)) throw new ApiError(400, 'validation', `Invalid nativeContext.${key}.`);
+        result[key] = value[key];
+    }
+    try {
+        if (result.locale) new Intl.Locale(result.locale);
+        if (result.timeZone) new Intl.DateTimeFormat('en', { timeZone: result.timeZone });
+    } catch { throw new ApiError(400, 'validation', 'Invalid native macro locale or time zone.'); }
+    if (result.lastGenerationType && !['normal', 'quiet', 'regenerate', 'continue', 'swipe', 'impersonate'].includes(result.lastGenerationType)) throw new ApiError(400, 'validation', 'Invalid native macro generation type.');
+    if (value.isMobile !== undefined) {
+        if (typeof value.isMobile !== 'boolean') throw new ApiError(400, 'validation', 'Invalid nativeContext.isMobile.');
+        result.isMobile = value.isMobile;
+    }
+    if (value.firstDisplayedMessageId !== undefined) {
+        if (!Number.isSafeInteger(value.firstDisplayedMessageId) || value.firstDisplayedMessageId < 0) throw new ApiError(400, 'validation', 'Invalid nativeContext.firstDisplayedMessageId.');
+        result.firstDisplayedMessageId = value.firstDisplayedMessageId;
+    }
+    return result;
 }
 
 /**

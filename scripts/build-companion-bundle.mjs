@@ -19,12 +19,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { generateHeadlessMacros } from './generate-headless-macros.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 /** Files with no JS import edge but required at runtime. */
 const EXTRA_FILES = [
     'package.json',
     'pnpm-lock.yaml',
+    'src/headless/macro-runtime/generated/manifest.json',
     'default/content/settings.json',
     'default/content/default_Seraphina.png',
     'default/config.yaml',
@@ -150,6 +152,7 @@ function writeManifest(out, fileCount) {
 }
 
 function main() {
+    generateHeadlessMacros({ check: true });
     const argv = process.argv.slice(2);
     const outIndex = argv.indexOf('--out');
     if (outIndex === -1 || !argv[outIndex + 1]) throw new Error('--out <dir> is required');

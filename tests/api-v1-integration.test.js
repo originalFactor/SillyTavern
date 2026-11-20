@@ -98,6 +98,8 @@ describe('API v1 routes', () => {
         expect(body.providers.otherChatCompletionSources).toBe(false);
         expect(body.features.serverPlugins).toBe(false);
         expect(body.features.swipes).toBe(true);
+        expect(body.features.upstreamMacroEngine).toBe(true);
+        expect(body.features.advancedMacros).toBe(false);
     });
 
     test('reads and patches settings while preserving unknown fields', async () => {
@@ -157,6 +159,44 @@ describe('API v1 routes', () => {
         expect(response.status).toBe(200);
         expect(body.messages.at(-1).content).toBe('Hello');
         expect(providerRequests.length).toBe(before);
+    });
+
+    test.each([
+        { now: 0 }, { extensionPrompts: {} }, { locale: 'not_a_locale' }, { timeZone: 'Missing/Zone' },
+        { firstDisplayedMessageId: -1 }, { isMobile: 'true' }, { input: 42 }, { lastGenerationType: 'invalid' },
+    ])('rejects invalid or privileged native macro context: %j', async nativeContext => {
+        const before = providerRequests.length;
+        for (const endpoint of ['preview', '']) {
+            const response = await fetch(`${baseUrl}/api/v1/generations${endpoint ? '/' + endpoint : ''}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ characterId: 'Aria', chatId: 'Chat', clientRequestId: 'invalid-context', nativeContext }),
+            });
+            expect(response.status).toBe(400);
+        }
+        expect(providerRequests.length).toBe(before);
+    });
+
+    test('native context reaches the dry-run preview and macro state is never saved by preview', async () => {
+        const original = readSettings(directories);
+        const chatPath = path.join(directories.chats, 'Aria', 'Chat.jsonl');
+        const beforeChat = fs.readFileSync(chatPath, 'utf8');
+        const before = providerRequests.length;
+        try {
+            const settings = structuredClone(original);
+            const main = settings.oai_settings.prompts.find(prompt => prompt.identifier === 'main');
+            main.content = '{{input}}/{{lastGenerationType}}/{{isMobile}}/{{incvar::previewOnly}}';
+            writeSettings(directories, settings);
+            const response = await fetch(`${baseUrl}/api/v1/generations/preview`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ characterId: 'Aria', chatId: 'Chat', nativeContext: { input: 'Visible draft', lastGenerationType: 'continue', isMobile: false, locale: 'en-US', timeZone: 'UTC' } }),
+            });
+            const body = await response.json();
+            expect(response.status).toBe(200);
+            expect(body.messages.some(message => message.content === 'Visible draft/continue/false/1')).toBe(true);
+            expect(body.warnings.macroStateChanges).toEqual({ local: true, global: false });
+            expect(fs.readFileSync(chatPath, 'utf8')).toBe(beforeChat);
+            expect(providerRequests.length).toBe(before);
+        } finally { writeSettings(directories, original); }
     });
 
     test('streams tokens, commits a message, and supports polling recovery', async () => {
