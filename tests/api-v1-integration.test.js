@@ -206,6 +206,20 @@ describe('API v1 routes', () => {
         } finally { writeSettings(directories, original); }
     });
 
+    test('interrupted provider output remains unknown and never becomes an authoritative chat row', async () => {
+        const before = await (await fetch(`${baseUrl}/api/v1/chats/Chat?characterId=Aria`)).json();
+        const response = await fetch(`${baseUrl}/api/v1/generations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ characterId: 'Aria', chatId: 'Chat', clientRequestId: 'unknown-stream-generation', type: 'normal', input: 'Truncated outcome' }) });
+        expect(response.status).toBe(202);
+        const accepted = await response.json();
+        const result = await waitForGeneration(accepted.requestId);
+        expect(result.status).toBe('unknown');
+        expect(result.text).toBe('Incomplete');
+        expect(result.committed).toBe(false);
+        expect(result.error).toMatchObject({ code: 'unknown', retryable: false });
+        const after = await (await fetch(`${baseUrl}/api/v1/chats/Chat?characterId=Aria`)).json();
+        expect(after.messages).toEqual(before.messages);
+    });
+
     test('duplicate clientRequestId is idempotent', async () => {
         const body = { characterId: 'Aria', chatId: 'Chat', clientRequestId: 'duplicate-generation', type: 'normal', input: 'Hi' };
         const first = await (await fetch(`${baseUrl}/api/v1/generations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
@@ -407,6 +421,10 @@ function startMockProvider() {
         server.use(express.json());
         server.post('/v1/chat/completions', (request, response) => {
             providerRequests.push(request.body);
+            if (request.body.messages.some(message => message.content === 'Truncated outcome')) {
+                response.type('text/event-stream').end('data: {"choices":[{"delta":{"content":"Incomplete"}}]}\n\n');
+                return;
+            }
             response.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
             response.write('data: {"choices":[{"delta":{"reasoning_content":"Think "},"index":0}]}\n\n');
             response.write('data: {"choices":[{"delta":{"content":"Mock "},"index":0}]}\n\n');

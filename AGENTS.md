@@ -14,6 +14,7 @@ from the companion entry point.
 - `src/endpoints/api-v1.js` owns the public contract. Update
   `docs/api/v1/{README.md,openapi.yaml}` and behavior tests alongside changes.
   Capability flags describe implemented behavior, not planned compatibility.
+- Provider dispatch never follows redirects or replays a request. A bounded SSE stream needs an explicit terminal marker/reason; an interrupted or malformed stream is `unknown`, keeps partial text in its generation journal and never commits a transcript row. Provider HTTP status/detail are visible after credential redaction. Settings/preview responses redact credential fields and custom headers; secret storage remains write-only. Keep these checks when adding provider formats.
 - ST owns JSONL transcripts. Generation commits atomically on success, never
   automatically replays billable requests, and preserves unknown outcomes.
   Regenerate retains swipe alternatives, continue updates the selected swipe,

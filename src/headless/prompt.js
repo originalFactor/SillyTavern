@@ -293,6 +293,7 @@ export function buildProviderRequest(session, messages, overrides = {}) {
         if (!isValidUrl(String(oai.custom_url)) || !/^https?:$/.test(new URL(String(oai.custom_url)).protocol)) {
             throw new ApiError(422, 'validation', 'Custom OpenAI-compatible URL must be an HTTP(S) URL.');
         }
+        if (new URL(String(oai.custom_url)).username || new URL(String(oai.custom_url)).password) throw new ApiError(422, 'validation', 'Custom provider URL must not contain embedded credentials.');
         request.custom_url = String(oai.custom_url);
         request.custom_include_body = String(oai.custom_include_body ?? '');
         request.custom_exclude_body = String(oai.custom_exclude_body ?? '');

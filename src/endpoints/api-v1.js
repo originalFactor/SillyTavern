@@ -5,6 +5,7 @@ import express from 'express';
 
 import { API_V1_VERSION, ApiError, asyncHandler, ensureRequestId, requireObject, requireSafeId, sendApiError } from '../headless/contract.js';
 import { deleteCharacter, exportCharacter, importCharacter, saveCharacter } from '../headless/character-management.js';
+import { publicConfiguration } from '../headless/redaction.js';
 import { readPromptManager, savePromptManager } from '../headless/prompt-manager.js';
 import { deletePersona, listPersonas, savePersona, selectPersona } from '../headless/persona-management.js';
 import {
@@ -140,7 +141,7 @@ router.get('/session', asyncHandler(async (request, response) => {
 
 router.get('/settings', asyncHandler(async (request, response) => {
     const session = createSession(request);
-    const settings = readSettings(session.directories);
+    const settings = publicConfiguration(readSettings(session.directories));
     response.json({
         raw: settings,
         typed: {
@@ -159,7 +160,7 @@ router.get('/settings', asyncHandler(async (request, response) => {
 router.patch('/settings', asyncHandler(async (request, response) => {
     const session = createSession(request);
     const settings = patchSettings(session.directories, request.body);
-    response.json({ raw: settings });
+    response.json({ raw: publicConfiguration(settings) });
 }));
 
 // ---- narrowly scoped provider credentials; secret values are never returned ----
@@ -390,7 +391,7 @@ router.post('/generations/preview', asyncHandler(async (request, response) => {
         messages: built.messages,
         segments: built.segments,
         warnings: built.warnings,
-        providerRequest: built.providerRequest,
+        providerRequest: publicConfiguration(built.providerRequest),
     });
 }));
 

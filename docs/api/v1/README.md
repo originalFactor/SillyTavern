@@ -233,3 +233,19 @@ full macro semantics and token-budget packing remain incomplete.
 
 Capabilities expose `resources.promptManager` and
 `features.promptManagerOrdering`; `features.promptManagerPresets` stays false.
+
+### Provider completion and privacy boundary
+
+Native provider dispatch follows no redirects and performs no automatic retries.
+An HTTP 200 alone or a socket EOF does not establish success: SSE must contain a
+terminal `[DONE]` or recognized completion reason. Interrupted, malformed,
+oversized or transport-ambiguous streams become `unknown`; their partial text
+stays in the observation journal and is never saved as an assistant chat row.
+Explicit provider errors retain HTTP status/detail with credentials redacted.
+
+Error detail is bounded to 8 KiB/3 seconds, events to 1 MiB, the total SSE stream
+to 16 MiB and output text/reasoning to 8 MiB. Dispatch has a five-minute deadline;
+timeout does not prove the upstream operation stopped and never authorizes a
+replay. Unsupported tool calls fail visibly without execution. Usage contains
+only numeric metadata. Settings and preview responses hide credential fields
+(including custom headers) while stored values stay unchanged.

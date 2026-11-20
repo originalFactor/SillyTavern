@@ -1,5 +1,6 @@
 import yaml from 'yaml';
 
+import { redactProviderText } from './redaction.js';
 import { ApiError } from './contract.js';
 import { appendToken, isTerminal } from './generation-store.js';
 
@@ -43,67 +44,126 @@ export async function runChatCompletion(originalRequest, providerRequest, record
     };
     mergeYamlIntoObject(body, String(request.custom_include_body ?? ''));
     excludeKeysByYaml(body, String(request.custom_exclude_body ?? ''));
-    const response = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal: record.controller.signal,
-    });
-    if (!response.ok) {
-        const detail = (await response.text()).slice(0, 1000);
-        console.warn('[api-v1]', record.requestId, 'provider_error', response.status);
-        throw new ApiError(502, 'provider', `Chat Completion provider returned ${response.status}.`, {
-            retryable: response.status === 429 || response.status >= 500,
-            details: detail ? { provider: detail } : undefined,
+    const endpoint = new URL(url);
+    if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) throw new ApiError(422, 'validation', 'Provider URL must use HTTP(S) without embedded credentials.');
+    const secrets = [apiKey, originalRequest.headers?.authorization];
+    for (const [key, value] of headers) if (/authorization|api.?key|cookie|token|secret/i.test(key)) secrets.push(value, value.replace(/^Bearer\s+/i, ''));
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    record.controller.signal.addEventListener('abort', abort, { once: true });
+    if (record.controller.signal.aborted) controller.abort();
+    const timeout = setTimeout(abort, 300_000);
+    timeout.unref?.();
+    try {
+        const response = await fetch(url, {
+            method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal,
+            redirect: 'manual', size: 8_388_608,
         });
+        if (!response.ok) {
+            let detail = '';
+            const detailTimeout = setTimeout(abort, 3_000);
+            detailTimeout.unref?.();
+            try {
+                let bytes = 0;
+                for await (const chunk of response.body ?? []) {
+                    bytes += chunk.length;
+                    detail += chunk.toString('utf8');
+                    if (bytes > 8192) { detail = detail.slice(0, 8192) + ' [truncated]'; response.body.destroy(); break; }
+                }
+            } catch { detail ||= 'Provider error details unavailable.'; } finally { clearTimeout(detailTimeout); }
+            const safe = redactProviderText(detail, secrets);
+            console.warn('[api-v1]', record.requestId, 'provider_error', response.status);
+            throw new ApiError(502, 'provider', `HTTP ${response.status}: ${safe || 'Provider rejected the request.'}`, { retryable: false });
+        }
+        if (!response.body) throw new ApiError(502, 'unknown', 'Provider returned no response body; the generation outcome is unknown. Do not replay automatically.');
+        const contentType = response.headers.get('content-type') ?? '';
+        if (!contentType.toLowerCase().includes('text/event-stream')) {
+            response.body.destroy();
+            throw new ApiError(502, 'unknown', 'Provider did not return an SSE stream; the generation outcome is unknown.');
+        }
+        const decoder = new TextDecoder('utf-8', { fatal: true });
+        const stream = new ProviderSseDecoder(record, secrets);
+        let bytes = 0;
+        for await (const chunk of response.body) {
+            if (isTerminal(record.status)) return { text: record.text, reasoning: record.reasoning, usage: stream.usage };
+            bytes += chunk.length;
+            if (bytes > 16_777_216) {
+                response.body.destroy();
+                throw new ApiError(502, 'unknown', 'Provider stream exceeded its size limit; the generation outcome is unknown.');
+            }
+            stream.push(decoder.decode(chunk, { stream: true }));
+        }
+        stream.push(decoder.decode(), true);
+        if (!stream.completed) throw new ApiError(502, 'unknown', 'Provider stream ended without a completion marker. Partial text was not saved; the generation may have been billed.');
+        if (!record.text) throw new ApiError(502, 'provider', 'Provider completed without text. The request may have been billed.');
+        return { text: record.text, reasoning: record.reasoning, usage: stream.usage };
+    } catch (error) {
+        if (error instanceof ApiError) throw error;
+        // A transport failure after dispatch cannot prove that the provider did
+        // not execute the request. Never turn this into a replayable failure.
+        throw new ApiError(502, 'unknown', `Provider connection failed; the generation outcome is unknown and may have been billed. ${redactProviderText(error?.type ?? 'transport_error', secrets)}`);
+    } finally {
+        clearTimeout(timeout);
+        record.controller.signal.removeEventListener('abort', abort);
     }
-    if (!response.body) {
-        throw new ApiError(502, 'provider', 'Chat Completion provider returned no response body.', { retryable: false });
-    }
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let usage = null;
-    for await (const chunk of response.body) {
-        if (isTerminal(record.status)) return { text: record.text, reasoning: record.reasoning, usage };
-        buffer += decoder.decode(chunk, { stream: true });
-        usage = parseSseChunks(record, buffer) ?? usage;
-        buffer = record.sseBuffer ?? '';
-    }
-    if (buffer.trim()) usage = parseSseChunks(record, `${buffer}\n\n`) ?? usage;
-    if (record.text.length === 0) {
-        throw new ApiError(502, 'provider', 'Chat Completion provider returned no text.', { retryable: false });
-    }
-    return { text: record.text, reasoning: record.reasoning, usage };
 }
 
-/**
- * Parses a chunk of OpenAI-compatible SSE data into generation events.
- * @param {import('./generation-store.js').GenerationRecord} record Generation record
- * @param {string} text Stream chunk
- * @returns {Record<string, any>|null} Usage object if present in this chunk
- */
-function parseSseChunks(record, text) {
-    let usage = null;
-    const events = text.split(/\r\n\r\n|\n\n|\r\r/);
-    record.sseBuffer = events.pop() ?? '';
-    for (const event of events) {
-        const data = event
-            .split(/\r?\n/)
-            .filter(line => line.startsWith('data:'))
-            .map(line => line.slice(5).trimStart())
-            .join('\n');
-        if (!data || data === '[DONE]') continue;
-        const json = tryParseJson(data);
-        if (!json) continue;
-        if (json.usage && typeof json.usage === 'object') usage = json.usage;
-        const choice = json.choices?.[0] ?? {};
-        const delta = choice.delta ?? choice.message ?? choice;
-        const content = extractText(delta.content ?? choice.text);
-        const reasoning = extractText(delta.reasoning_content ?? delta.reasoning ?? choice.reasoning);
-        appendToken(record, reasoning, true);
-        appendToken(record, content);
+/** Incremental bounded SSE decoder. A socket EOF alone is never success. */
+export class ProviderSseDecoder {
+    constructor(record, secrets = []) {
+        this.record = record;
+        this.secrets = secrets;
+        this.buffer = '';
+        this.usage = null;
+        this.completed = false;
+        this.done = false;
+        this.outputBytes = 0;
     }
-    return usage;
+
+    push(text, flush = false) {
+        this.buffer += text;
+        const events = this.buffer.split(/\r\n\r\n|\n\n|\r\r/);
+        this.buffer = events.pop() ?? '';
+        if (flush && this.buffer.trim()) { events.push(this.buffer); this.buffer = ''; }
+        if (this.buffer.length > 1_048_576 || events.some(event => event.length > 1_048_576)) throw new ApiError(502, 'unknown', 'Provider SSE event exceeded its size limit; the generation outcome is unknown.');
+        for (const event of events) {
+            const data = event.split(/\r\n|\r|\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
+            if (!data) continue;
+            if (data === '[DONE]') { this.completed = true; this.done = true; continue; }
+            if (this.done) throw new ApiError(502, 'unknown', 'Provider sent data after its completion marker.');
+            const json = tryParseJson(data);
+            if (!json) throw new ApiError(502, 'unknown', 'Provider returned malformed SSE data; the generation outcome is unknown.');
+            if (json.error) {
+                const detail = typeof json.error === 'string' ? json.error : String(json.error.message ?? 'Provider stream error.');
+                throw new ApiError(502, 'provider', `Provider stream error: ${redactProviderText(detail, this.secrets)}`);
+            }
+            if (json.usage && typeof json.usage === 'object' && !Array.isArray(json.usage)) this.usage = publicUsage(json.usage);
+            const choice = json.choices?.find?.(item => item.index === 0) ?? json.choices?.[0];
+            if (!choice) continue;
+            const delta = choice.delta ?? choice.message ?? choice;
+            if (delta.tool_calls?.length || delta.function_call || choice.finish_reason === 'tool_calls' || choice.finish_reason === 'function_call') throw new ApiError(422, 'unsupported', 'Provider requested tool execution, but the native tool authorization lifecycle is not configured.');
+            if (choice.finish_reason) {
+                if (!['stop', 'length', 'content_filter'].includes(choice.finish_reason)) throw new ApiError(502, 'unknown', 'Provider returned an unrecognized completion reason.');
+                this.completed = true;
+            }
+            const content = extractText(delta.content ?? choice.text);
+            const reasoning = extractText(delta.reasoning_content ?? delta.reasoning ?? choice.reasoning);
+            this.outputBytes += Buffer.byteLength(content) + Buffer.byteLength(reasoning);
+            if (this.outputBytes > 8_388_608) throw new ApiError(502, 'unknown', 'Provider output exceeded its size limit; the generation outcome is unknown.');
+            appendToken(this.record, reasoning, true);
+            appendToken(this.record, content);
+        }
+    }
+}
+
+function publicUsage(usage) {
+    // Usage is numeric metadata, never an arbitrary echo of provider fields.
+    const clean = {};
+    for (const [key, value] of Object.entries(usage)) {
+        if (typeof value === 'number' && Number.isFinite(value) && value >= 0) clean[key] = value;
+        else if (value && typeof value === 'object' && !Array.isArray(value)) clean[key] = publicUsage(value);
+    }
+    return clean;
 }
 
 /**
