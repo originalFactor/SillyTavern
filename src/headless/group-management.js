@@ -34,9 +34,12 @@ function validateGroup(group) {
     if (!group || typeof group !== 'object' || Array.isArray(group)) throw new ApiError(400, 'validation', 'A group object is required.');
     if (typeof group.name !== 'string' || !group.name.trim() || group.name.length > 200) throw new ApiError(400, 'validation', 'Group name must contain 1–200 characters.');
     if (!Array.isArray(group.members) || group.members.length === 0 || group.members.length > MAX_MEMBERS) throw new ApiError(400, 'validation', 'A group must contain 1–32 members.');
-    const members = group.members.map(member => requireSafeId(String(member).replace(/\.png$/i, ''), 'memberId'));
+    // ST stores group members as character avatar filenames. Keep that exact
+    // identifier in the descriptor because the filename is also the lookup
+    // key used by the browser group runtime.
+    const members = group.members.map(member => requireSafeId(String(member), 'memberId'));
     if (new Set(members).size !== members.length) throw new ApiError(400, 'validation', 'Group members must be unique.');
-    const disabled = Array.isArray(group.disabled_members) ? group.disabled_members.map(member => requireSafeId(String(member).replace(/\.png$/i, ''), 'disabledMemberId')) : [];
+    const disabled = Array.isArray(group.disabled_members) ? group.disabled_members.map(member => requireSafeId(String(member), 'disabledMemberId')) : [];
     if (disabled.some(member => !members.includes(member))) throw new ApiError(400, 'validation', 'Disabled members must belong to the group.');
     const activation = Number(group.activation_strategy ?? 0);
     const mode = Number(group.generation_mode ?? 0);

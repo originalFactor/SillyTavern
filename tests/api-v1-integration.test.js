@@ -113,14 +113,15 @@ describe('API v1 routes', () => {
         const created = await fetch(`${baseUrl}/api/v1/groups`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ groupId: 'contract-group', group: {
-                name: 'Contract Group', members: ['Aria'], disabled_members: [],
+                name: 'Contract Group', members: ['Aria.png'], disabled_members: ['Aria.png'],
                 activation_strategy: 1, generation_mode: 0, chats: ['contract-group-chat'],
                 chat_id: 'contract-group-chat', allow_self_responses: false,
             } }),
         });
         expect(created.status).toBe(201);
         const document = await created.json();
-        expect(document.group.members).toEqual(['Aria']);
+        expect(document.group.members).toEqual(['Aria.png']);
+        expect(document.group.disabled_members).toEqual(['Aria.png']);
         expect(document.revision).toHaveLength(64);
 
         fs.mkdirSync(directories.groupChats, { recursive: true });
