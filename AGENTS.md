@@ -166,3 +166,16 @@ Host-side tests do not prove execution of the arm64 Android Node binary.
   reasoning must match stored transformed reasoning. Native UI labels tokenizer
   estimates and backend-reported usage separately. Full dependent preset/Instruct,
   group/media/tool/plugin compatibility remains open; do not flip their flags.
+
+
+- In-progress text-completion foundation: generate-headless-text-prompt.mjs derives
+  Instruct chat/story/example/output/stop and context rendering/default helpers
+  from five sources. These are not yet a wired text-completion pipeline; keep
+  Instruct/text provider capabilities false until packing, private transport,
+  native configuration and end-to-end verification exist. The standalone format
+  contract suite is api-v1-instruct-format.test.js. Do not describe passing it as
+  completed Instruct integration.
+- encodeLocalTextTokens uses absolute packaged model paths, exact local encoder
+  IDs and no download, fallback encoder or character-count estimate. Model choice
+  is whitelisted; a missing asset is explicit failure. It correctly distinguishes
+  nerdstash_v2 from nerdstash and does not depend on the process working directory.

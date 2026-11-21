@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "sources": {
+    "public/scripts/instruct-mode.js": "f54feef66a7b9e5b62878ab0189aefa60f8f8e178d2faa338501b4bb3228baae",
+    "public/scripts/system-messages.js": "20f947763c5aeaf88cfc0ef560b0408b3875dcc64ef7d6798e78f605c72b2422",
+    "public/scripts/power-user.js": "bb62dd0116183cdc2a06a0cf98dd18496da1619c48254053bcf2c69ef97bcb7f",
+    "public/script.js": "955c603d0bad84bac5a716f0818d85c2543e44d4c43878e0d63ef1e55ca91855",
+    "public/scripts/utils.js": "2a2cfe240d5a84ce2e09ba053db6c0c71473b6406173f614f3521d89f50ada61"
+  },
+  "files": {
+    "instruct.js": "4a5ca7e9a3b03b20f3f057138a804fa3fbc1a2f1d8927169f460e8acd2e09b11",
+    "context.js": "e320bc20200c4fe27a1d232dc7e4e12815a919ff321b5fa2f151ac10de52be94",
+    "utilities.js": "5d15de34f80124b27274bbc871e91863c05a16d2a69cdb11b55d5c43efa949b7",
+    "defaults.js": "ec4e769e8d80ea0584a54d2a1465abd6827c3155babcad3d05196a0e6ba758d4"
+  }
+}

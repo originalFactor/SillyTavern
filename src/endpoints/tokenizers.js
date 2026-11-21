@@ -15,6 +15,7 @@ import tiktoken from 'tiktoken';
 import { TEXTGEN_TYPES } from '../constants.js';
 import { setAdditionalHeaders } from '../additional-headers.js';
 import { getConfigValue, isValidUrl, trimV1 } from '../util.js';
+import { serverDirectory } from '../server-directory.js';
 
 /**
  * @typedef { (req: import('express').Request, res: import('express').Response) => Promise<any> } TokenizationHandler
@@ -318,6 +319,24 @@ export function getSentencepiceTokenizer(model) {
     }
 
     return null;
+}
+
+/** Strict local text encoding for native string-prompt packing (never estimates). */
+const nativeLocalTokenizers = new Map();
+export async function encodeLocalTextTokens(text, model) {
+    if (typeof text !== 'string' || typeof model !== 'string') throw new Error('Text and tokenizer must be strings');
+    process.env.SILLYTAVERN_ENABLEDOWNLOADABLETOKENIZERS = 'false';
+    const isSentencepiece = sentencepieceTokenizers.includes(model);
+    if (isSentencepiece || webTokenizers.includes(model)) {
+        const file = path.join(serverDirectory, 'src', 'tokenizers', `${model}.${isSentencepiece ? 'model' : 'json'}`);
+        if (!fs.existsSync(file) || !fs.lstatSync(file).isFile()) throw new Error('Selected local tokenizer asset is unavailable; no fallback encoder was substituted');
+        if (!nativeLocalTokenizers.has(model)) nativeLocalTokenizers.set(model, isSentencepiece ? new SentencePieceTokenizer(file) : new WebTokenizer(file));
+        const instance = await nativeLocalTokenizers.get(model).get();
+        if (!instance) throw new Error('Selected local text encoder is unavailable');
+        return Array.from(isSentencepiece ? instance.encodeIds(text) : instance.encode(text));
+    }
+    if (['gpt2', 'gpt-3.5-turbo', 'gpt-4', 'gpt-4o'].includes(model)) return Array.from(getTiktokenTokenizer(model).encode(text));
+    throw new Error('Selected local text encoder is unsupported');
 }
 
 /**
