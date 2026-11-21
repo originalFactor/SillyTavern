@@ -64,6 +64,16 @@ describe('source regex across storage, prompt, editing and read-only display', (
         await req('/characters/Aria/chats', 'POST', { chatId: 'Disabled', firstMessage: 'greet' });
         expect(readChat(path.join(directories.chats, 'Aria/Disabled.jsonl'))[1].mes).toBe('greet');
     });
+    test('legacy global display placement is migrated without changing stored settings', async () => {
+        const legacy = script(0, '/raw/g', 'legacy view');
+        configure([legacy]);
+        const before = readSettings(directories).extension_settings.regex;
+        const rendered = await req('/chats/Chat?characterId=Aria&render=true');
+        expect(rendered.status).toBe(200);
+        expect(rendered.value.messages.at(-1).native_display).toBe('Greeting legacy view');
+        expect(readSettings(directories).extension_settings.regex).toEqual(before);
+        expect(readChat(filename()).at(-1).mes).toBe('Greeting raw');
+    });
     test('input transforms once before storage, prompt-only rules respect roles, and output/reasoning use their own placements', async () => {
         configure([script(1, '/raw/g', 'stored {{incvar::n}}'), script(1, '/stored/g', 'request', { promptOnly: true }), script(2, '/Greeting/g', 'assistantPrompt', { promptOnly: true }), script(2, '/raw/g', 'AI {{incvar::out}}'), script(6, '/trace/g', 'reasoned')]);
         const before = fs.readFileSync(filename(), 'utf8');
@@ -129,6 +139,18 @@ describe('source regex across storage, prompt, editing and read-only display', (
         configure([script(2, '/{{user}}/g', 'raw', { substituteRegex: 1 })]);
         await req('/characters/Aria/chats', 'POST', { chatId: 'RawPattern', firstMessage: 'ReaderXYZ Reader.*' });
         expect(readChat(path.join(directories.chats, 'Aria/RawPattern.jsonl'))[1].mes).toBe('raw');
+    });
+    test('legacy regex placements can be inspected and saved with upstream migration', async () => {
+        const legacy = [script(4, '/old/g', 'new'), script(0, '/raw/g', 'display')];
+        configure(legacy);
+        const original = await req('/regex-settings');
+        expect(original.status).toBe(200);
+        expect(original.value.settings.scripts[0].placement).toEqual([3]);
+        expect(original.value.settings.scripts[1]).toMatchObject({ placement: [1, 2, 3, 5, 6], markdownOnly: true, promptOnly: true });
+        expect(readSettings(directories).extension_settings.regex).toEqual(legacy);
+        const saved = await req('/regex-settings', 'PUT', { expectedRevision: original.value.revision, settings: original.value.settings });
+        expect(saved.status).toBe(200);
+        expect(readSettings(directories).extension_settings.regex).toEqual(original.value.settings.scripts);
     });
     test('regex management requires explicit scope grants, independent revisions, and preserves unrelated settings', async () => {
         const original = (await req('/regex-settings')).value;

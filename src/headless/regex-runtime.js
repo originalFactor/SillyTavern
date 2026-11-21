@@ -15,7 +15,7 @@ export function nativeRegexPreset(settings) {
 export function nativeRegex(session, context, characterId = '') {
     const extensionSettings = structuredClone(session.extensionSettings ?? {});
     extensionSettings.disabledExtensions ??= [];
-    extensionSettings.regex = (extensionSettings.regex ?? []).map(script => normalize(script));
+    extensionSettings.regex = (extensionSettings.regex ?? []).map(script => normalize(migrateGlobalRegex(script)));
     const character = context.frame.characters[0]?.data;
     if (Array.isArray(character?.extensions?.regex_scripts)) character.extensions.regex_scripts = character.extensions.regex_scripts.map(normalize);
     const frame = {
@@ -32,6 +32,20 @@ export function nativeRegex(session, context, characterId = '') {
         },
         warnings: frame.diagnostics,
     };
+}
+/** Apply the upstream global-regex placement migration without mutating stored settings. */
+export function migrateGlobalRegex(script) {
+    if (!script || typeof script !== 'object') return script;
+    const migrated = { ...script, placement: Array.isArray(script.placement) ? [...script.placement] : [] };
+    if (migrated.placement.includes(0)) {
+        migrated.placement = migrated.placement.length === 1 ? [1, 2, 3, 5, 6] : migrated.placement.filter(value => value !== 0);
+        migrated.markdownOnly = true;
+        migrated.promptOnly = true;
+    }
+    if (migrated.placement.includes(4)) {
+        migrated.placement = migrated.placement.length === 1 ? [3] : migrated.placement.filter(value => value !== 4);
+    }
+    return migrated;
 }
 function normalize(script) {
     if (!script || typeof script !== 'object') return {};

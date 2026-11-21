@@ -591,7 +591,10 @@ under its own revision, preserving the latest unrelated settings. PUT takes
 and re-enabling previously granted scopes require a separate explicit `true`
 confirmation. Importing or saving a card/preset never grants permission. A grant
 is for the named avatar/preset, including future edits; it is not a script digest.
-Revocation does not require confirmation. Limits are 1 MiB, 512 scripts and bounded
+Revocation does not require confirmation. Legacy global display and sendAs
+placements are migrated in memory using the browser rules. The editor returns
+the migrated view with a revision of the original stored settings, and saving
+publishes the migrated rules. Limits are 1 MiB, 512 scripts and bounded
 unique permission lists; malformed stored containers fail instead of becoming
 empty authority. Unknown script properties are preserved. Disable only changes
 the `regex` entry in disabledExtensions, preserving other extensions.

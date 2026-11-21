@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { ApiError, requireObject, requireSafeId } from './contract.js';
 import { editableSettings } from './macro-management.js';
+import { migrateGlobalRegex } from './regex-runtime.js';
 import { writeSettings } from './session.js';
 
 function strings(value, label, maxBytes = 240) {
@@ -33,7 +34,8 @@ function state(settings) {
     if (typeof preset !== 'object' || Array.isArray(preset) || Object.values(preset).some(value => !Array.isArray(value))) throw new ApiError(422, 'storage', 'Stored preset regex permissions are malformed.');
     const document = { enabled: !ext.disabledExtensions?.includes('regex'), scripts: ext.regex ?? [], characterAllowed: ext.character_allowed_regex ?? [], presetAllowed: ext.preset_allowed_regex ?? {} };
     if (Buffer.byteLength(JSON.stringify(document)) > 1_048_576) throw new ApiError(422, 'storage', 'Stored regex settings exceed the 1 MiB native editor bound. Nothing has been truncated.');
-    return { revision: crypto.createHash('sha256').update(JSON.stringify(document)).digest('hex'), settings: document };
+    const revision = crypto.createHash('sha256').update(JSON.stringify(document)).digest('hex');
+    return { revision, settings: { ...document, scripts: document.scripts.map(migrateGlobalRegex) } };
 }
 export const getRegexSettings = session => state(editableSettings(session));
 export function saveRegexSettings(session, body) {
