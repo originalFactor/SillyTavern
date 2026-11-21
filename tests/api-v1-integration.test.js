@@ -161,6 +161,22 @@ describe('API v1 routes', () => {
             expect(document.group.chats).toEqual([groupId]);
             expect(document.group.members).toEqual(['Aria.png']);
 
+            const saved = await fetch(`${baseUrl}/api/v1/groups/${groupId}`, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ expectedRevision: document.revision, group: { ...document.group, name: 'Migrated' } }),
+            });
+            expect(saved.status).toBe(200);
+            const migrated = JSON.parse(fs.readFileSync(file, 'utf8'));
+            expect(migrated.name).toBe('Migrated');
+            expect(migrated.members).toEqual(['Aria.png']);
+            expect(migrated.chats).toEqual([groupId]);
+
+            const unmatched = JSON.stringify({ id: groupId, name: 'Legacy', members: ['Missing character'] });
+            fs.writeFileSync(file, unmatched);
+            response = await fetch(`${baseUrl}/api/v1/groups/${groupId}`);
+            expect(response.status).toBe(422);
+            expect(fs.readFileSync(file, 'utf8')).toBe(unmatched);
+
             fs.writeFileSync(file, JSON.stringify({ id: groupId, name: 'Legacy', members: ['Aria.png'], chat_id: '', chats: [] }));
             response = await fetch(`${baseUrl}/api/v1/groups/${groupId}`);
             expect(response.status).toBe(200);
