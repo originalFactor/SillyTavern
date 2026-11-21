@@ -115,6 +115,8 @@ export function deleteGroup(session, groupId, expectedRevision, deleteChats = fa
     if (active.length && !deleteChats) throw new ApiError(409, 'confirmation_required', 'Group chats exist. Set deleteChats=true to remove them explicitly.', { details: { chatIds: active } });
     for (const chatId of active) {
         assertChatIdle(session.handle, item.id, chatId, session.directories);
+    }
+    for (const chatId of active) {
         fs.unlinkSync(chatPath(session, chatId).file);
     }
     fs.unlinkSync(groupPath(session, item.id).file);

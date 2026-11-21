@@ -149,6 +149,28 @@ describe('API v1 routes', () => {
         expect(fs.existsSync(path.join(directories.groupChats, 'contract-group-chat.jsonl'))).toBe(false);
     });
 
+    test('checks every group chat before deleting any when a generation is active', async () => {
+        const groupId = 'fenced-group';
+        const chatIds = ['fenced-first', 'fenced-second'];
+        const created = await fetch(`${baseUrl}/api/v1/groups`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ groupId, group: { name: 'Fenced', members: ['Aria.png'], chats: chatIds } }),
+        });
+        const document = await created.json();
+        for (const chatId of chatIds) fs.writeFileSync(path.join(directories.groupChats, `${chatId}.jsonl`), '{}\n');
+        const { record } = createGeneration({ handle: 'contract-user', clientRequestId: 'fenced-group-test', characterId: groupId, chatId: chatIds[1], type: 'normal' });
+        try {
+            const response = await fetch(`${baseUrl}/api/v1/groups/${groupId}?expectedRevision=${document.revision}&deleteChats=true`, { method: 'DELETE' });
+            expect(response.status).toBe(409);
+            for (const chatId of chatIds) expect(fs.existsSync(path.join(directories.groupChats, `${chatId}.jsonl`))).toBe(true);
+            expect(fs.existsSync(path.join(directories.groups, `${groupId}.json`))).toBe(true);
+        } finally {
+            cancel(record);
+            for (const chatId of chatIds) fs.rmSync(path.join(directories.groupChats, `${chatId}.jsonl`), { force: true });
+            fs.rmSync(path.join(directories.groups, `${groupId}.json`), { force: true });
+        }
+    });
+
     test('reads and patches settings while preserving unknown fields', async () => {
         await fetch(`${baseUrl}/api/v1/settings`, {
             method: 'PATCH',
