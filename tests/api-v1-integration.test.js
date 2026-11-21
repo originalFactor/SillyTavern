@@ -332,6 +332,41 @@ describe('API v1 routes', () => {
         fs.unlinkSync(groupFile);
         fs.unlinkSync(chatFile);
     });
+    test('group regeneration exposes normal generation type to extension hooks', async () => {
+        const extensionDir = path.join(directories.extensions, 'group-type-check');
+        const groupFile = path.join(directories.groups, 'group-type-check.json');
+        const chatFile = path.join(directories.groupChats, 'group-type-check-chat.jsonl');
+        fs.mkdirSync(extensionDir, { recursive: true });
+        fs.writeFileSync(path.join(extensionDir, 'manifest.json'), JSON.stringify({ display_name: 'Group type check', version: '1.0.0', runtime: 'headless', entry: 'index.mjs', hooks: { beforePrompt: 'beforePrompt', onGenerationEvent: 'onGenerationEvent', afterGeneration: 'afterGeneration' } }));
+        fs.writeFileSync(path.join(extensionDir, 'index.mjs'), `
+export async function onGenerationEvent(context) {
+    if (context.generation.event === 'generation_started') await context.eventSource.emit(context.eventTypes.MESSAGE_RECEIVED, { hook: 'started', type: context.generation.type });
+}
+export async function beforePrompt(context) {
+    await context.eventSource.emit(context.eventTypes.MESSAGE_RECEIVED, { hook: 'prompt', type: context.generation.type });
+}
+export async function afterGeneration(context) { return context.generation.type; }
+`);
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Group', members: ['Aria.png'], disabled_members: [], activation_strategy: 1, chats: ['group-type-check-chat'], chat_id: 'group-type-check-chat' }));
+        fs.writeFileSync(chatFile, [{ chat_metadata: {} }, { is_user: true, mes: 'Hello' }, { name: 'Aria', mes: 'Old reply', original_avatar: 'Aria.png', extra: { gen_id: 42 } }].map(row => JSON.stringify(row)).join('\n'));
+        const previous = process.env.SILLYTAVERN_API_V1_HEADLESSPLUGINS;
+        process.env.SILLYTAVERN_API_V1_HEADLESSPLUGINS = 'true';
+        try {
+            const request = { user: { profile: { ...DEFAULT_USER, handle: 'contract-user' }, directories }, headers: {} };
+            const session = await prepareProviderSession(request);
+            const record = createGeneration({ handle: session.handle, clientRequestId: 'group-type-check', characterId: 'group-type-check', chatId: 'group-type-check-chat', type: 'regenerate', targetKind: 'group', directories }).record;
+            await runGroupGeneration(request, session, record, { groupId: 'group-type-check', chatId: 'group-type-check-chat', type: 'regenerate', overrides: {} });
+            expect(record.status).toBe('done');
+            expect(fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse).at(-1).mes).toBe('normal');
+            expect(record.pluginEvents.filter(event => ['started', 'prompt'].includes(event.data.hook)).map(event => event.data.type)).toEqual(['normal', 'normal']);
+        } finally {
+            if (previous === undefined) delete process.env.SILLYTAVERN_API_V1_HEADLESSPLUGINS;
+            else process.env.SILLYTAVERN_API_V1_HEADLESSPLUGINS = previous;
+            fs.rmSync(extensionDir, { recursive: true, force: true });
+            fs.unlinkSync(groupFile);
+            fs.unlinkSync(chatFile);
+        }
+    });
     test('group regeneration preserves the old batch when the first provider stream fails', async () => {
         const groupFile = path.join(directories.groups, 'regen-first-failure.json');
         const chatFile = path.join(directories.groupChats, 'regen-first-failure-chat.jsonl');

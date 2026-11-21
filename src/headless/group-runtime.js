@@ -16,8 +16,9 @@ export async function runGroupGeneration(request, session, record, input) {
     try {
         const type = input.type ?? 'normal';
         if (!['normal', 'regenerate', 'continue'].includes(type)) throw new ApiError(422, 'unsupported', 'Unsupported group generation type.');
+        const generationType = type === 'regenerate' ? 'normal' : type;
         const effects = { events: [], settingsPatch: {}, extensionPrompts: [], quietPrompts: [], warnings: [] };
-        mergeEffects(effects, await emitHeadlessEvent(session, 'generation_started', { type, requestId: record.requestId }));
+        mergeEffects(effects, await emitHeadlessEvent(session, 'generation_started', { type: generationType, requestId: record.requestId }));
         if (shouldStopGeneration(record)) return;
         const initial = await resolveGroupChat(session, input.groupId, input.chatId);
         await withChatLock(initial.file, async () => {
@@ -30,7 +31,6 @@ export async function runGroupGeneration(request, session, record, input) {
             }
             const previousGenerationIds = chat.map(message => message.extra?.gen_id);
             if (type === 'regenerate') removeGroupGenerationBatch(chat);
-            const generationType = type === 'regenerate' ? 'normal' : type;
             const members = selectGroupMembers({ group, characters, chat, input: type === 'regenerate' ? '' : input.input ?? '', type: generationType });
             if (type === 'continue' && members.length !== 1) throw new ApiError(409, 'conflict', 'The last speaker is not available in this group.');
             prepareGroupProgress(record, members, previousGenerationIds);
@@ -83,7 +83,7 @@ export async function runGroupGeneration(request, session, record, input) {
                 const hooked = await applyHeadlessHooks(session, built, {
                     characterId, chatId: input.chatId, characterName: character.name, chat,
                     chatMetadata: chat[0]?.chat_metadata ?? {},
-                    generation: { requestId: record.requestId, type, phase: 'prompt' },
+                    generation: { requestId: record.requestId, type: generationType, phase: 'prompt' },
                 });
                 if (shouldStopGeneration(record)) return;
                 built = hooked.prompt;
@@ -101,7 +101,7 @@ export async function runGroupGeneration(request, session, record, input) {
                 if (shouldStopGeneration(record)) return;
                 const output = await applyHeadlessOutputHooks(session, formatted.text, {
                     characterId, chatId: input.chatId,
-                    generation: { requestId: record.requestId, type, phase: 'afterGeneration' },
+                    generation: { requestId: record.requestId, type: generationType, phase: 'afterGeneration' },
                 });
                 if (shouldStopGeneration(record)) return;
                 mergeEffects(effects, output.effects);
