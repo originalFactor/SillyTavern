@@ -3,6 +3,7 @@ import path from 'node:path';
 import { ApiError } from './contract.js';
 import { serverDirectory } from '../server-directory.js';
 import { isValidUrl } from '../util.js';
+import { buildTextProviderRequest } from './text-provider.js';
 
 /**
  * Builds a provider request from saved settings only.
@@ -11,6 +12,7 @@ import { isValidUrl } from '../util.js';
  * @returns {Record<string, any>} Provider request
  */
 export function buildProviderRequest(session, messages, overrides = {}) {
+    if (session.settings.main_api === 'textgenerationwebui') return buildTextProviderRequest(session, overrides);
     const oai = session.settings.oai_settings ?? {};
     const source = String(oai.chat_completion_source ?? 'openai');
     const model = overrides.model ?? (source === 'custom' ? oai.custom_model : oai.openai_model);

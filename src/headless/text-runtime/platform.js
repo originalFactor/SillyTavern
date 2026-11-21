@@ -2,10 +2,14 @@ import crypto from 'node:crypto';
 import { ApiError } from '../contract.js';
 import { parseExampleIntoIndividual as sourceExampleParser } from '../macro-runtime/generated/instruct.js';
 import { lastContextMessageId } from '../prompt-runtime/generated/history.js';
+import { TOKENIZER_URLS } from './generated/tokenizers.js';
+export { DYNATEMP_BLOCK } from './generated/dynamic.js';
 export { Handlebars } from '../macro-runtime/platform.js';
 
 export let power_user = {}, extension_prompts = {}, name1 = 'User', name2 = 'Character', main_api = 'textgenerationwebui', nai_settings = {}, textgen_settings = {}, extension_settings = {}, chat_metadata = {};
 export const selected_group = null;
+export const groups = [];
+export let chat = [], characters = [], max_context = 4096;
 export const this_chid = 0;
 export const getCharaFilename = () => String(frame.context.frame.characterId ?? '');
 export const IGNORE_SYMBOL = Symbol.for('ignore');
@@ -20,11 +24,19 @@ export function configureTextRuntime(value) {
     textgen_settings = value.textSettings ?? {};
     extension_settings = value.extensionSettings ?? {};
     chat_metadata = value.context.frame.metadata;
+    chat = value.context.frame.chat; characters = value.context.frame.characters; max_context = value.context.frame.maxContext;
     frame.cache = new Map(); frame.storage = new Map(); frame.warnings ??= [];
 }
 export const substituteParams = (text, options, name2Override) => frame.context.expand(String(text ?? ''), typeof options === 'string' || options === null ? { name1Override: options, name2Override } : options ?? {});
 export const parseExampleIntoIndividual = (...args) => frame.context.run(() => sourceExampleParser(...args));
 export const getRegexedString = (text, ...args) => frame.regex ? frame.regex.apply(text, ...args) : String(text ?? '');
+export const takeNativeBannedWords = () => frame.context.frame.bannedWords.splice(0);
+export async function getTextTokens(type, text) {
+    const model = /^\/api\/tokenizers\/([^/]+)\/encode$/.exec(TOKENIZER_URLS[type]?.encode ?? '')?.[1];
+    if (!model || model === 'openai') throw new ApiError(422, 'unsupported', 'This token-ID encoder is not available locally.');
+    const { encodeLocalTextTokens } = await import('../../endpoints/tokenizers.js');
+    return encodeLocalTextTokens(text, model);
+}
 export const getStringHash = text => crypto.createHash('sha256').update(String(text)).digest('hex');
 export const accountStorage = { getItem: key => frame.storage.get(key) ?? null, setItem(key, value) { if (Buffer.byteLength(String(value)) > 1_048_576) throw new ApiError(422, 'validation', 'Story validation cache exceeds its limit.'); frame.storage.set(key, String(value)); } };
 export const diagnosticConsole = {

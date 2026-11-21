@@ -6,6 +6,8 @@ import { readSettings } from './session.js';
 import { buildProviderRequest, listExtensions } from './prompt-settings.js';
 import { snapshotWorldBooks } from './world-info-runtime/snapshot.js';
 import { publicConfiguration } from './redaction.js';
+import { defaultTextSettings } from './text-runtime/generated/sampler.js';
+import { textProviderBody } from './text-provider.js';
 export { buildProviderRequest, listExtensions } from './prompt-settings.js';
 
 let worker = null, sequence = 0, active = null, pendingBytes = 0;
@@ -62,10 +64,18 @@ function execute(payload) {
     return new Promise((resolve, reject) => { pendingBytes += bytes; queue.push({ id: ++sequence, payload, bytes, resolve, reject }); drain(); });
 }
 export async function buildPrompt(session, character, chat, options) {
-    if (session.settings.main_api !== 'openai') throw new ApiError(422, 'unsupported', `main_api "${session.settings.main_api}" is not supported.`);
-    if (!['openai', 'custom'].includes(session.settings.oai_settings?.chat_completion_source ?? 'openai')) throw new ApiError(422, 'unsupported', 'This Chat Completion source is not supported.');
+    const isText = session.settings.main_api === 'textgenerationwebui';
+    if (!isText && session.settings.main_api !== 'openai') throw new ApiError(422, 'unsupported', `main_api "${session.settings.main_api}" is not supported.`);
+    if (!isText && !['openai', 'custom'].includes(session.settings.oai_settings?.chat_completion_source ?? 'openai')) throw new ApiError(422, 'unsupported', 'This Chat Completion source is not supported.');
     const request = buildProviderRequest(session, [], options.overrides ?? {});
-    const result = await execute({ session: evaluationSession(session), character, chat, options: { ...options, extensions: listExtensions(session), _books: snapshotWorldBooks(session, character, chat, options.characterId) } });
+    const result = await execute({ session: evaluationSession(session, options.overrides), character, chat, options: { ...options, _sampler: isText, extensions: listExtensions(session), _books: snapshotWorldBooks(session, character, chat, options.characterId) } });
+    if (isText) {
+        if (result.guidanceScale !== null && ['generic', 'vllm'].includes(request.api_type)) throw new ApiError(422, 'unsupported', 'This text endpoint does not accept CFG negative-prompt requests.');
+        const providerRequest = { ...result.sampler, ...request, prompt: result.prompt };
+        textProviderBody(providerRequest);
+        delete result.sampler;
+        return { ...result, providerRequest };
+    }
     return { ...result, providerRequest: { ...request, messages: result.messages } };
 }
 export function runNativeText(session, character, chat, options) {
@@ -74,14 +84,18 @@ export function runNativeText(session, character, chat, options) {
 /** Bounded string preparation, without provider admission or dispatch. */
 export function buildStringPrompt(session, character, chat, options = {}) {
     if (session.settings.main_api !== 'textgenerationwebui') throw new ApiError(422, 'unsupported', 'A text-completion profile is required for string preparation.');
-    return execute({ session: evaluationSession(session), character, chat, options: { type: 'normal', ...options, extensions: listExtensions(session), _books: snapshotWorldBooks(session, character, chat, options.characterId) } });
+    return execute({ session: evaluationSession(session, options.overrides), character, chat, options: { type: 'normal', ...options, extensions: listExtensions(session), _books: snapshotWorldBooks(session, character, chat, options.characterId) } });
 }
 export function auditPrompt(session, request) {
+    if (session.settings.main_api === 'textgenerationwebui') {
+        const body = textProviderBody(request);
+        return execute({ operation: 'auditString', session: { settings: { max_context: session.settings.max_context, amount_gen: session.settings.amount_gen, power_user: { tokenizer: session.settings.power_user?.tokenizer, token_padding: session.settings.power_user?.token_padding }, textgenerationwebui_settings: { type: request.api_type } } }, request: { prompt: body.prompt, negative_prompt: body.negative_prompt, max_tokens: body.max_tokens, max_new_tokens: body.max_new_tokens, model: body.model } });
+    }
     const oai = session.settings.oai_settings ?? {};
     const settings = { oai_settings: { chat_completion_source: oai.chat_completion_source ?? 'openai', openai_max_context: Number(oai.openai_max_context ?? session.settings.max_context ?? 4096), openai_max_tokens: Number(oai.openai_max_tokens ?? session.settings.amount_gen ?? 300) } };
     return execute({ operation: 'audit', session: { settings }, request: { model: request.model, max_tokens: request.max_tokens, max_completion_tokens: request.max_completion_tokens, messages: request.messages } });
 }
-function evaluationSession(session) {
+function evaluationSession(session, overrides = {}) {
     const live = session.directories?.root && fs.existsSync(path.join(session.directories.root, 'settings.json')) ? readSettings(session.directories) : session.settings;
     const oai = session.settings.oai_settings ?? {};
     const safeOai = Object.fromEntries(['chat_completion_source', 'openai_model', 'custom_model', 'openai_max_context', 'openai_max_tokens', 'prompts', 'prompt_order', 'new_chat_prompt', 'new_example_chat_prompt', 'personality_format', 'scenario_format', 'use_sysprompt', 'preset_settings_openai', 'new_group_chat_prompt', 'wi_format', 'group_nudge_prompt', 'impersonation_prompt', 'continue_prefill', 'continue_nudge_prompt', 'assistant_prefill', 'send_if_empty', 'names_behavior', 'squash_system_messages', 'show_thoughts', 'tool_reasoning_mode'].filter(key => key in oai).map(key => [key, oai[key]]));
@@ -99,7 +113,8 @@ function evaluationSession(session) {
     safeExtensions.variables = { global: live.extension_settings?.variables?.global ?? {} };
     const settings = { main_api: session.settings.main_api, max_context: session.settings.max_context, amount_gen: session.settings.amount_gen, oai_settings: safeOai, power_user: publicConfiguration(session.settings.power_user ?? {}), world_info_settings: session.settings.world_info_settings, extension_settings: safeExtensions, tag_map: session.settings.tag_map };
     const text = session.settings.textgenerationwebui_settings ?? {};
-    settings.textgenerationwebui_settings = Object.fromEntries(['type', 'preset', 'custom_model', 'generic_model', 'mancer_model', 'togetherai_model', 'infermaticai_model', 'dreamgen_model', 'openrouter_model', 'vllm_model', 'aphrodite_model', 'ollama_model', 'featherless_model', 'tabby_model', 'llamacpp_model'].filter(key => key in text).map(key => [key, text[key]]));
+    settings.textgenerationwebui_settings = Object.fromEntries(Object.keys(defaultTextSettings).filter(key => !['server_urls', 'extensions'].includes(key) && key in text).map(key => [key, text[key]]));
+    if (overrides.model !== undefined) for (const key of Object.keys(defaultTextSettings).filter(key => key.endsWith('_model'))) settings.textgenerationwebui_settings[key] = overrides.model;
     settings.textgenerationwebui_settings.extensions = { regex_scripts: text.extensions?.regex_scripts ?? [] };
     return { settings, extensionSettings: safeExtensions, userName: session.userName, directories: {} };
 }

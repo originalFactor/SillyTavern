@@ -157,6 +157,7 @@ export function createPluginContext(data) {
 
         // ---- mutable prompt ----
         messages,
+        prompt: typeof data.prompt === 'string' ? data.prompt : null,
         setExtensionPrompt(key, value, position = 0, depth = 0, role = 0) {
             if (effects.extensionPrompts.length >= MAX_PROMPTS) { warn('extension prompt limit reached'); return; }
             effects.extensionPrompts.push({

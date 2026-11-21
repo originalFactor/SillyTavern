@@ -7,6 +7,7 @@ import { listExtensions } from './prompt.js';
 import { serverDirectory } from '../server-directory.js';
 import { HEADLESS_EVENT_TYPES } from './plugin-context.js';
 import { readSettings, writeSettings } from './session.js';
+import { ApiError } from './contract.js';
 
 const DEFAULT_HOOK_TIMEOUT_MS = 5000;
 const MAX_HOOK_TEXT = 64 * 1024;
@@ -114,6 +115,7 @@ function buildHookData(session, prompt, extra = {}) {
         extensionId: extra.extensionId,
         extensionName: extra.extensionName,
         messages: prompt?.messages ?? [],
+        prompt: typeof prompt?.prompt === 'string' ? prompt.prompt : null,
         settings: session.settings,
         extensionSettings: session.extensionSettings ?? {},
         chat: Array.isArray(extra.chat) ? extra.chat.slice(-64) : [],
@@ -178,8 +180,19 @@ export async function applyHeadlessHooks(session, prompt, extra = {}) {
     for (const hook of [HEADLESS_HOOKS.BEFORE_PROMPT, HEADLESS_HOOKS.AFTER_PROMPT]) {
         for (const extension of eligibleExtensions(session, hook)) {
             const result = await invoke(session, extension, hook, prompt, extra, effects);
-            if (result.ok && Array.isArray(result.messages)) prompt.messages = result.messages;
+            if (typeof prompt.prompt === 'string') {
+                if (result.ok && Array.isArray(result.messages) && result.messages.length) throw new ApiError(422, 'unsupported', 'This hook returned chat messages for a string prompt. Use context.prompt for text completions.');
+                if (result.ok && typeof result.prompt === 'string') {
+                    if (!result.prompt.length || result.prompt.length > 8_388_608) throw new ApiError(422, 'validation', 'Hook string prompt exceeds its nonempty size bound.');
+                    prompt.prompt = result.prompt;
+                }
+            } else if (result.ok && Array.isArray(result.messages)) prompt.messages = result.messages;
         }
+    }
+    if (typeof prompt.prompt === 'string') {
+        if (effects.extensionPrompts.length) throw new ApiError(422, 'unsupported', 'Browser-style extension prompt placement needs the native string injection lifecycle.');
+        if (prompt.providerRequest) prompt.providerRequest.prompt = prompt.prompt;
+        return { prompt, effects };
     }
     applyExtensionPrompts(prompt, effects.extensionPrompts);
     // buildProviderRequest captured a reference to the original messages array.
@@ -295,6 +308,7 @@ async function invoke(session, extension, hook, prompt, extra, effects) {
     return {
         ok: true,
         messages: result.messages,
+        prompt: result.prompt,
         generationText: result.generationText ?? null,
         returnedText: result.returnedText ?? null,
     };

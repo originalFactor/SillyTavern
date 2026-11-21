@@ -110,9 +110,10 @@ export async function runGeneration(sourceRequest, session, record, input) {
             built.warnings.tokenBudget = await auditPrompt(session, built.providerRequest);
             if (shouldStopGeneration(record)) return;
             stage(record, 'provider');
-            const { runSessionChatCompletion } = await import('./provider.js');
-            const result = await runSessionChatCompletion(sourceRequest, built.providerRequest, record, session);
+            const { runSessionCompletion } = await import('./provider.js');
+            const result = await runSessionCompletion(sourceRequest, built.providerRequest, record, session);
             if (shouldStopGeneration(record)) return;
+            if (result.tokenBudget) built.warnings.tokenBudget = result.tokenBudget;
             setUsage(record, result.usage);
 
             let formatted;

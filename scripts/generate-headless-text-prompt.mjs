@@ -18,7 +18,7 @@ export function generateHeadlessTextPrompt({ check = false } = {}) {
         let end;
         if (kind === 'const' && text.slice(start.index, lineEnd).trimEnd().endsWith(';')) end = lineEnd;
         else {
-            const finish = (kind === 'const' ? /^};$/m : /^}$/m).exec(text.slice(start.index));
+            const finish = (kind === 'const' ? (text.slice(start.index, lineEnd).trimEnd().endsWith('[') ? /^];$/m : /^};$/m) : /^}$/m).exec(text.slice(start.index));
             if (!finish) throw new Error(`Unbounded source ${name}`);
             end = start.index + finish.index + finish[0].length;
         }
@@ -44,6 +44,7 @@ export function generateHeadlessTextPrompt({ check = false } = {}) {
     files.set('context.js', code);
     code = '';
     code += block('public/scripts/utils.js', 'onlyUnique') + '\n';
+    for (const name of ['isObject', 'arraysEqual']) code += block('public/scripts/utils.js', name) + '\n';
     for (const name of ['shiftUpByOne', 'shiftDownByOne']) code += block('public/scripts/utils.js', name, 'const') + '\n';
     code += block(power, 'collapseNewlines') + '\n';
     files.set('utilities.js', code);
@@ -115,7 +116,7 @@ return { prompt: eventData.prompt, negativePrompt: useCfgPrompt ? await getCombi
     code += block(textgen, 'getTextGenModel') + '\n';
     files.set('models.js', code);
     code = "import { main_api, nai_settings, online_status, sessionStorage, kai_flags, textgen_settings, getCurrentOpenRouterModelTokenizer, getCurrentDreamGenModelTokenizer } from '../platform.js';\nimport { textgen_types, getTextGenModel } from './models.js';\n";
-    for (const name of ['TOKENIZER_WARNING_KEY', 'TOKENIZER_SUPPORTED_KEY', 'tokenizers', 'TEXTGEN_TOKENIZERS', 'TOKENIZER_URLS']) code += block(tokenizer, name, 'const') + '\n';
+    for (const name of ['TOKENIZER_WARNING_KEY', 'TOKENIZER_SUPPORTED_KEY', 'tokenizers', 'ENCODE_TOKENIZERS', 'TEXTGEN_TOKENIZERS', 'TOKENIZER_URLS']) code += block(tokenizer, name, 'const') + '\n';
     code += block(tokenizer, 'getTokenizerBestMatch') + '\n';
     files.set('tokenizers.js', code);
     code = "import { extension_settings, chat_metadata, this_chid, selected_group, getCharaFilename, substituteParams, diagnosticConsole as console } from '../platform.js';\n";
@@ -128,6 +129,33 @@ return { prompt: eventData.prompt, negativePrompt: useCfgPrompt ? await getCombi
     code += region('    const promptReasoning = new PromptReasoning();', '    // Determine token limit');
     code += '\nreturn coreChat;\n}\n';
     files.set('reasoning.js', code);
+    code = "import { power_user, main_api, name1, name2, chat, selected_group, groups, characters, substituteParams, diagnosticConsole as console } from '../platform.js';\nimport { getInstructStoppingSequences } from './instruct.js';\nimport { onlyUnique } from './utilities.js';\nconst EPHEMERAL_STOPPING_STRINGS = [];\nexport function setNativeEphemeralStops(stops) { EPHEMERAL_STOPPING_STRINGS.splice(0, EPHEMERAL_STOPPING_STRINGS.length, ...stops); }\n";
+    code += block(power, 'getCustomStoppingStrings') + '\n';
+    code += block(script, 'getStoppingStrings') + '\n';
+    files.set('stops.js', code);
+    code = "import { power_user, max_context, textgen_settings as textgenerationwebui_settings, substituteParams, getTextTokens, takeNativeBannedWords, getCurrentOpenRouterModelTokenizer, getCurrentDreamGenModelTokenizer, diagnosticConsole as console, DYNATEMP_BLOCK } from '../platform.js';\nimport { textgen_types, getTextGenModel } from './models.js';\nimport { tokenizers, ENCODE_TOKENIZERS, TEXTGEN_TOKENIZERS, getTokenizerBestMatch } from './tokenizers.js';\nimport { getStoppingStrings } from './stops.js';\nimport { onlyUnique, isObject, arraysEqual } from './utilities.js';\nconst { GENERIC, MANCER, VLLM, APHRODITE, TABBY, TOGETHERAI, OOBA, OLLAMA, LLAMACPP, INFERMATICAI, DREAMGEN, OPENROUTER, KOBOLDCPP, HUGGINGFACE, FEATHERLESS } = textgen_types;\nconst BIAS_CACHE = new Map();\nlet textgenerationwebui_banned_in_macros = [];\nconst getTextGenServer = () => '';\n";
+    code += block(textgen, 'BIAS_KEY', 'const') + '\n';
+    for (const name of ['LLAMACPP_DEFAULT_ORDER', 'OOBA_DEFAULT_ORDER', 'APHRODITE_DEFAULT_ORDER', 'KOBOLDCPP_ORDER', 'textgenerationwebui_settings']) {
+        const raw = block(textgen, name, 'const');
+        code += name === 'textgenerationwebui_settings' ? raw.replace('textgenerationwebui_settings =', 'defaultTextSettings =') + '\n' : raw + '\n';
+    }
+    for (const name of ['getTokenizerForTokenIds', 'toIntArray', 'isDynamicTemperatureSupported', 'getLogprobsNumber', 'replaceMacrosInList']) code += block(textgen, name) + '\n';
+    // The browser's synchronous tokenizer AJAX becomes a strict async local
+    // encoder. Preserve the actual sampler/bias/ban algorithms, not estimates.
+    for (const [file, name] of [[textgen, 'getCustomTokenBans'], [textgen, 'calculateLogitBias'], ['public/scripts/logit-bias.js', 'getLogitBiasListResult'], [textgen, 'createTextGenGenerationData']]) {
+        let raw = block(file, name).replace(`function ${name}(`, `async function ${name}(`);
+        raw = raw.replaceAll('= getTextTokens(', '= await getTextTokens(').replace('    getLogitBiasListResult(', '    await getLogitBiasListResult(')
+            .replace('= getCustomTokenBans(settings);', '= await getCustomTokenBans(settings);').replace('|| calculateLogitBias(settings);', '|| await calculateLogitBias(settings);');
+        // Browser code logs and skips an unavailable ban tokenizer. Native must
+        // fail rather than dispatch with silently weakened requested controls.
+        if (name === 'getCustomTokenBans') raw = raw.replace("                console.log(`Could not tokenize raw text: ${line}`);", "                throw new Error('Selected token-ban encoder is unavailable.');");
+        code += raw + '\n';
+    }
+    code += "export async function buildNativeSampler(...args) { BIAS_CACHE.clear(); textgenerationwebui_banned_in_macros = takeNativeBannedWords(); return JSON.parse(JSON.stringify(await createTextGenGenerationData(...args))); }\n";
+    files.set('sampler.js', code);
+    const dynamic = /<div data-tg-type="([^"]+)"[^>]*id="dynatemp_block_ooba"/.exec(source('public/index.html'));
+    if (!dynamic || !/^[a-z, ]+$/.test(dynamic[1])) throw new Error('Missing source dynamic-temperature support list');
+    files.set('dynamic.js', `export const DYNATEMP_BLOCK = { dataset: { tgType: '${dynamic[1]}' } };\n`);
     const manifest = { version: 1, sources: Object.fromEntries(sources), files: {} };
     for (const [name, value] of files) {
         files.set(name, '// Generated by scripts/generate-headless-text-prompt.mjs; edit authority or adapter, then regenerate.\n' + value.trimEnd() + '\n');

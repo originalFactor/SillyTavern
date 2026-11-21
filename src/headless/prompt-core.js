@@ -50,10 +50,10 @@ export async function buildPromptInline(session, character, chat, { type, input 
     const assemblyFields = { ...fields, wiBefore: worldInfo.before, wiAfter: worldInfo.after };
     const assemblyOptions = { type, input, preview: !!options.preview, requireNewestUser: !!options.stageUserInput };
     const built = isText
-        ? await assembleTextPrompt(context, assemblyFields, history, blocks, { ...assemblyOptions, tokenizer: context.frame.textTokenizer, textSettings: settings.textgenerationwebui_settings, extensionSettings: session.extensionSettings, regex })
+        ? await assembleTextPrompt(context, assemblyFields, history, blocks, { ...assemblyOptions, tokenizer: context.frame.textTokenizer, textSettings: settings.textgenerationwebui_settings, extensionSettings: session.extensionSettings, regex, sampler: !!options._sampler, overrides })
         : await assembleSourcePrompt(session, context, assemblyFields, history, examples, regex, assemblyOptions);
     return {
-        messages: built.messages, prompt: built.prompt, stops: built.stops, negativePrompt: built.negativePrompt, guidanceScale: built.guidanceScale, segments: built.segments, stagedUserMessage,
+        messages: built.messages, prompt: built.prompt, sampler: built.sampler, stops: built.stops, negativePrompt: built.negativePrompt, guidanceScale: built.guidanceScale, segments: built.segments, stagedUserMessage,
         macroEffects: context.effects(),
         warnings: {
             worldInfoActivated: worldInfo.activated, worldInfoScanner: true, worldInfoWarnings: worldInfo.warnings,

@@ -26,6 +26,22 @@ export const tokenizers = {
     COMMAND_A: 19,
     BEST_MATCH: 99,
 };
+export const ENCODE_TOKENIZERS = [
+    tokenizers.LLAMA,
+    tokenizers.MISTRAL,
+    tokenizers.YI,
+    tokenizers.LLAMA3,
+    tokenizers.GEMMA,
+    tokenizers.JAMBA,
+    tokenizers.QWEN2,
+    tokenizers.COMMAND_R,
+    tokenizers.COMMAND_A,
+    tokenizers.NEMO,
+    tokenizers.DEEPSEEK,
+    // uncomment when NovelAI releases Kayra and Clio weights, lol
+    //tokenizers.NERD,
+    //tokenizers.NERD2,
+];
 export const TEXTGEN_TOKENIZERS = [];
 export const TOKENIZER_URLS = {
     [tokenizers.GPT2]: {

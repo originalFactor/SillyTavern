@@ -99,7 +99,7 @@ describe('source-derived string context packing', () => {
         configureTextRuntime({ context: f.context });
         expect(() => selectLocalTextTokenizer(f.context)).toThrow();
     });
-    test('worker string preparation isolates old Chat Completion budgets and does not enable dispatch', async () => {
+    test('worker string preparation isolates old Chat Completion budgets and can build an undispatched packet', async () => {
         const f = fixture(undefined, { tokenizer: 1, instruct: { enabled: true, names_behavior: 'none', output_sequence: '[OUT]' } });
         f.session.settings.oai_settings = { openai_max_context: 2, openai_max_tokens: 1, openai_model: 'old-chat-model' };
         f.session.settings.textgenerationwebui_settings = { type: 'generic', generic_model: 'OwnedTextModel', server_urls: { generic: 'https://private-connection.invalid' } };
@@ -111,7 +111,9 @@ describe('source-derived string context packing', () => {
         expect(built.warnings.tokenBudget.tokenizerModel).toBe('gpt2');
         expect(JSON.stringify(built)).not.toContain('private-connection');
         expect(JSON.stringify(f.chat)).toBe(before);
-        await expect(buildPrompt(f.session, { name: 'Aria' }, f.chat, { type: 'normal' })).rejects.toThrow('not supported');
+        const packet = await buildPrompt(f.session, { name: 'Aria' }, f.chat, { type: 'normal' });
+        expect(packet.providerRequest.provider_format).toBe('text-completions');
+        expect(packet.providerRequest.prompt).toBe(packet.prompt);
     });
     test('worker string preview scans embedded WI and expands isolated variables with its selected local tokenizer', async () => {
         const f = fixture(undefined, { tokenizer: 1, context: { story_string: '{{wiBefore}}{{description}}' } });

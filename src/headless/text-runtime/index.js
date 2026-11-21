@@ -2,7 +2,9 @@ import { ApiError } from '../contract.js';
 import { configureTextRuntime, getTokenCountAsync, setInContextMessages } from './platform.js';
 import { defaultContextSettings, defaultInstructSettings } from './generated/defaults.js';
 import { packTextPrompt } from './generated/packing.js';
-import { formatInstructModeExamples, getInstructStoppingSequences } from './generated/instruct.js';
+import { formatInstructModeExamples } from './generated/instruct.js';
+import { buildNativeSampler, defaultTextSettings } from './generated/sampler.js';
+import { getStoppingStrings, setNativeEphemeralStops } from './generated/stops.js';
 import { getTokenizerBestMatch, tokenizers, TOKENIZER_URLS } from './generated/tokenizers.js';
 import { applyPromptReasoning } from './generated/reasoning.js';
 import { collapseNewlines } from './generated/utilities.js';
@@ -18,7 +20,7 @@ export function selectLocalTextTokenizer(context) {
 
 /** Source string fitter. This adapter does not admit a provider request. */
 export async function assembleTextPrompt(context, fields, history, examples, {
-    type = 'normal', input = '', preview = false, tokenizer = null, requireNewestUser = false, textSettings = {}, extensionSettings = {}, regex = null,
+    type = 'normal', input = '', preview = false, tokenizer = null, requireNewestUser = false, textSettings = {}, extensionSettings = {}, regex = null, sampler = false, overrides = {},
 } = {}) {
     const state = context.frame;
     const power = state.powerUser;
@@ -29,8 +31,11 @@ export async function assembleTextPrompt(context, fields, history, examples, {
     power.context = { ...defaultContextSettings, ...power.context };
     power.token_padding ??= 0;
     const warnings = [];
-    const runtime = { context, tokenizer, warnings, textSettings, extensionSettings, regex };
+    const samplerSettings = { ...defaultTextSettings, ...textSettings };
+    for (const [field, override] of [['temp', 'temperature'], ['top_p', 'topP'], ['freq_pen', 'frequencyPenalty'], ['presence_pen', 'presencePenalty']]) if (overrides[override] !== undefined) samplerSettings[field] = overrides[override];
+    const runtime = { context, tokenizer, warnings, textSettings: samplerSettings, extensionSettings, regex };
     configureTextRuntime(runtime);
+    setNativeEphemeralStops(overrides.stop ?? []);
     tokenizer ??= selectLocalTextTokenizer(context);
     runtime.tokenizer = tokenizer;
     const rawExamples = examples.slice();
@@ -75,10 +80,12 @@ export async function assembleTextPrompt(context, fields, history, examples, {
     // Native dispatch must fail rather than send that inspect-only partial fit.
     if (result.effectiveContext <= 0 || Math.max(usedTokens, negativeTokens ?? 0) + state.maxResponse > state.maxContext) throw new ApiError(422, 'validation', 'Mandatory string prompts exceed the available context budget. No model request was sent.');
     if (requireNewestUser && !result.newestHistoryIncluded) throw new ApiError(422, 'validation', 'The newest input does not fit the string prompt budget. No model request was sent.');
+    const generationData = sampler ? await buildNativeSampler(samplerSettings, state.model || undefined, result.prompt, state.maxResponse, false, type === 'continue', result.guidanceScale === null ? null : { guidanceScale: { value: result.guidanceScale }, negativePrompt: result.negativePrompt }, type) : null;
     return {
         prompt: result.prompt,
         negativePrompt: result.negativePrompt, guidanceScale: result.guidanceScale,
-        stops: power.instruct.enabled ? getInstructStoppingSequences() : [],
+        sampler: generationData,
+        stops: generationData?.stop ?? getStoppingStrings(false, type === 'continue'),
         tokenBudget: {
             contextTokens: state.maxContext, responseTokens: state.maxResponse, usedTokens,
             remainingTokens: state.maxContext - state.maxResponse - Math.max(usedTokens, negativeTokens ?? 0),
@@ -86,4 +93,23 @@ export async function assembleTextPrompt(context, fields, history, examples, {
         },
         warnings,
     };
+}
+
+/** Token-only final audit: no macro expansion, scripts, vault or connection data. */
+export async function auditStringPrompt(session, request) {
+    const { encodeLocalTextTokens } = await import('../../endpoints/tokenizers.js');
+    const contextTokens = Number(session.settings.max_context), responseTokens = Number(request.max_tokens ?? request.max_new_tokens ?? session.settings.amount_gen);
+    if (!Number.isSafeInteger(contextTokens) || !Number.isSafeInteger(responseTokens) || responseTokens < 1 || responseTokens >= contextTokens) throw new ApiError(422, 'validation', 'The text response budget does not fit its context.');
+    if (typeof request.prompt !== 'string' || !request.prompt.length) throw new ApiError(422, 'validation', 'The final text prompt must be a nonempty string.');
+    const textSettings = { type: session.settings.textgenerationwebui_settings?.type };
+    for (const field of Object.keys(defaultTextSettings).filter(key => key.endsWith('_model'))) textSettings[field] = request.model ?? '';
+    const state = { powerUser: session.settings.power_user ?? {}, extensionPrompts: {}, metadata: {}, chat: [], characters: [], mainApi: 'textgenerationwebui', maxContext: contextTokens };
+    configureTextRuntime({ context: { frame: state }, textSettings, warnings: [] });
+    const tokenizer = selectLocalTextTokenizer({ frame: state });
+    const padding = state.powerUser.token_padding ?? 0;
+    if (!Number.isSafeInteger(padding) || padding < 0) throw new ApiError(422, 'validation', 'Token padding must be a nonnegative integer.');
+    const usedTokens = (await encodeLocalTextTokens(request.prompt, tokenizer)).length + padding;
+    const negativeTokens = typeof request.negative_prompt === 'string' && request.negative_prompt ? (await encodeLocalTextTokens(request.negative_prompt, tokenizer)).length + padding : null;
+    if (Math.max(usedTokens, negativeTokens ?? 0) + responseTokens > contextTokens) throw new ApiError(422, 'validation', 'The final outgoing text prompt exceeds context after request hooks. No model request was sent.');
+    return { contextTokens, responseTokens, usedTokens, negativeTokens, remainingTokens: contextTokens - responseTokens - Math.max(usedTokens, negativeTokens ?? 0), tokenizerModel: tokenizer };
 }

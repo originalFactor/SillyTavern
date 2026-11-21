@@ -21,6 +21,7 @@ async function run() {
     parentPort.postMessage({
         ok: true,
         messages: context.messages,
+        prompt: typeof context.prompt === 'string' ? context.prompt : null,
         generationText: typeof context.generation?.text === 'string' ? context.generation.text : null,
         returnedText: typeof returned === 'string' ? returned : null,
         effects,

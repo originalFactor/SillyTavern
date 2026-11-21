@@ -833,7 +833,7 @@ paths:
         $ref: '#/components/requestBodies/GenerationInput'
       responses:
         '200':
-          description: Prompt messages, segments, warnings and provider request.
+          description: Prompt messages or a text-completion prompt string, segments, warnings and provider request. Chat Completion profiles populate messages. Text-completion profiles populate prompt.
   /api/v1/generations:
     get:
       operationId: listGenerations

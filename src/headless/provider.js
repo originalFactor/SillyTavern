@@ -4,6 +4,7 @@ import { createSession } from './session.js';
 import { redactProviderText } from './redaction.js';
 import { ApiError } from './contract.js';
 import { appendToken, isTerminal, markProviderDispatched, setUsage } from './generation-store.js';
+import { textProviderConnection, textProviderBody, TEXT_COMPLETION_SOURCES } from './text-provider.js';
 
 // Credentials are deliberately outside the serializable session, prompt and
 // journal. A worker keeps the exact connection authorized at admission.
@@ -13,17 +14,27 @@ export async function prepareProviderSession(request) {
     const { readSecret, SECRET_KEYS } = await import('../endpoints/secrets.js');
     // No await between reading settings and the matching credential value.
     const session = createSession(request);
+    if (session.settings.main_api === 'textgenerationwebui') {
+        const connection = textProviderConnection(session.settings);
+        const key = readSecret(session.directories, SECRET_KEYS[connection.secretName], null);
+        acceptedConnections.set(session, { ...connection, key });
+        return session;
+    }
     const source = String(session.settings.oai_settings?.chat_completion_source ?? 'openai');
     const key = readSecret(session.directories, source === 'custom' ? SECRET_KEYS.CUSTOM : SECRET_KEYS.OPENAI, null);
-    acceptedConnections.set(session, { source, key, url: String(session.settings.oai_settings?.custom_url ?? '') });
+    acceptedConnections.set(session, { format: 'chat-completions', source, key, url: String(session.settings.oai_settings?.custom_url ?? '') });
     return session;
 }
 
-export async function runSessionChatCompletion(request, providerRequest, record, session) {
+export async function runSessionCompletion(request, providerRequest, record, session) {
     const connection = acceptedConnections.get(session);
-    if (connection && (connection.source !== String(providerRequest.chat_completion_source ?? 'openai') || (connection.source === 'custom' && connection.url !== String(providerRequest.custom_url ?? '')))) throw new ApiError(409, 'conflict', 'The accepted provider connection changed inside the generation.');
-    return runChatCompletion(request, providerRequest, record, connection);
+    const format = providerRequest.provider_format ?? 'chat-completions';
+    if (connection && (connection.format !== format || (format === 'text-completions'
+        ? connection.source !== providerRequest.api_type || connection.url !== providerRequest.api_server
+        : connection.source !== String(providerRequest.chat_completion_source ?? 'openai') || (connection.source === 'custom' && connection.url !== String(providerRequest.custom_url ?? ''))))) throw new ApiError(409, 'conflict', 'The accepted provider connection changed inside the generation.');
+    return runChatCompletion(request, providerRequest, record, connection, session);
 }
+export const runSessionChatCompletion = runSessionCompletion;
 
 /**
  * @typedef {object} ProviderResult
@@ -39,20 +50,26 @@ export async function runSessionChatCompletion(request, providerRequest, record,
  * @param {import('./generation-store.js').GenerationRecord} record Generation record
  * @returns {Promise<ProviderResult>} Provider result
  */
-export async function runChatCompletion(originalRequest, providerRequest, record, acceptedConnection = null) {
+export async function runChatCompletion(originalRequest, providerRequest, record, acceptedConnection = null, acceptedSession = null) {
     const { default: fetch, Headers } = await import('node-fetch');
     const { readSecret, SECRET_KEYS } = await import('../endpoints/secrets.js');
     const request = structuredClone(providerRequest);
+    if (request.provider_format && !['chat-completions', 'text-completions'].includes(request.provider_format)) throw new ApiError(422, 'unsupported', 'Unknown native completion wire format.');
+    const isText = request.provider_format === 'text-completions';
+    if (isText && !Object.hasOwn(TEXT_COMPLETION_SOURCES, request.api_type)) throw new ApiError(422, 'unsupported', 'Unknown native text-completion source.');
     const source = String(request.chat_completion_source ?? 'openai');
-    const url = source === 'custom'
+    const url = isText ? String(request.api_server) : source === 'custom'
         ? new URL('chat/completions', `${String(request.custom_url).replace(/\/?$/, '/')}`).toString()
         : 'https://api.openai.com/v1/chat/completions';
-    const apiKey = acceptedConnection ? acceptedConnection.key : source === 'custom'
-        ? readSecret(originalRequest.user.directories, SECRET_KEYS.CUSTOM, null)
-        : readSecret(originalRequest.user.directories, SECRET_KEYS.OPENAI, null);
+    let apiKey = acceptedConnection?.key;
+    if (apiKey === undefined) {
+        if (isText) apiKey = readSecret(originalRequest.user.directories, SECRET_KEYS[TEXT_COMPLETION_SOURCES[request.api_type]], null);
+        else if (source === 'custom') apiKey = readSecret(originalRequest.user.directories, SECRET_KEYS.CUSTOM, null);
+        else apiKey = readSecret(originalRequest.user.directories, SECRET_KEYS.OPENAI, null);
+    }
     const headers = new Headers({ 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey ?? ''}` });
-    mergeYamlIntoHeaders(headers, String(request.custom_include_headers ?? ''));
-    const body = {
+    if (!isText) mergeYamlIntoHeaders(headers, String(request.custom_include_headers ?? ''));
+    const body = isText ? textProviderBody(request) : {
         model: request.model,
         messages: request.messages,
         temperature: request.temperature,
@@ -62,11 +79,19 @@ export async function runChatCompletion(originalRequest, providerRequest, record
         presence_penalty: request.presence_penalty,
         frequency_penalty: request.frequency_penalty,
         top_p: request.top_p,
+        stop: request.stop,
     };
-    mergeYamlIntoObject(body, String(request.custom_include_body ?? ''));
-    excludeKeysByYaml(body, String(request.custom_exclude_body ?? ''));
+    if (!isText) {
+        mergeYamlIntoObject(body, String(request.custom_include_body ?? ''));
+        excludeKeysByYaml(body, String(request.custom_exclude_body ?? ''));
+    }
     const endpoint = new URL(url);
     if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) throw new ApiError(422, 'validation', 'Provider URL must use HTTP(S) without embedded credentials.');
+    let tokenBudget = null;
+    if (acceptedSession) {
+        const { auditPrompt } = await import('./prompt.js');
+        tokenBudget = await auditPrompt(acceptedSession, { ...request, ...body });
+    }
     const secrets = [apiKey, originalRequest.headers?.authorization];
     for (const [key, value] of headers) if (/authorization|api.?key|cookie|token|secret/i.test(key)) secrets.push(value, value.replace(/^Bearer\s+/i, ''));
     const controller = new AbortController();
@@ -76,6 +101,7 @@ export async function runChatCompletion(originalRequest, providerRequest, record
     const timeout = setTimeout(abort, 300_000);
     timeout.unref?.();
     try {
+        if (controller.signal.aborted || isTerminal(record.status)) return { text: record.text, reasoning: record.reasoning, usage: record.usage };
         markProviderDispatched(record);
         const response = await fetch(url, {
             method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal,
@@ -118,7 +144,7 @@ export async function runChatCompletion(originalRequest, providerRequest, record
         stream.push(decoder.decode(), true);
         if (!stream.completed) throw new ApiError(502, 'unknown', 'Provider stream ended without a completion marker. Partial text was not saved; the generation may have been billed.');
         if (!record.text) throw new ApiError(502, 'provider', 'Provider completed without text. The request may have been billed.');
-        return { text: record.text, reasoning: record.reasoning, usage: stream.usage };
+        return { text: record.text, reasoning: record.reasoning, usage: stream.usage, tokenBudget };
     } catch (error) {
         if (error instanceof ApiError) throw error;
         // A transport failure after dispatch cannot prove that the provider did

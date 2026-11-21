@@ -11,17 +11,22 @@
     "public/scripts/textgen-settings.js": "216705649b725bfaae557045a04f045d98335bf5b6f80d0609680df8bcec0e3f",
     "public/scripts/tokenizers.js": "59abb66e4d2ad0ff7171c2ec9f3009d26ed79088e78b87eb0b60638eaae4d6f9",
     "public/scripts/cfg-scale.js": "2e507b047a34edf552bcba9965c0c8f05823db5bfc44e4c7bddc5dd1e5f86df6",
-    "public/scripts/reasoning.js": "c489812f2598d1a4879b1a7287abde092741adafdf67f5b15cf18f2dd71d82d1"
+    "public/scripts/reasoning.js": "c489812f2598d1a4879b1a7287abde092741adafdf67f5b15cf18f2dd71d82d1",
+    "public/scripts/logit-bias.js": "8fb0375f35abcd0f5ea64d7253f9092de2a7218d528442ef9f1319abaa66241e",
+    "public/index.html": "647c22a47feff92148c07a0f821bbd84feea7400e543085841a95a418679419f"
   },
   "files": {
     "instruct.js": "4a5ca7e9a3b03b20f3f057138a804fa3fbc1a2f1d8927169f460e8acd2e09b11",
     "context.js": "72d9d262aa9f6c3b76431f5c6493c6eca10c5ceca21b1d28b464cbecf7542ae3",
-    "utilities.js": "9163a342dda83c75f859680703943ce31fe397a80680a8fccd6ec4181962df9f",
+    "utilities.js": "c436bc02a5302856910fff8841229fe7cf0be8ae0e17e51ef48fd9ef1150a94b",
     "packing.js": "5d2a42d020f98f962c5d8fa71891192adeaf57b3e75a5ecaf6387dd0e8108eed",
     "defaults.js": "ec4e769e8d80ea0584a54d2a1465abd6827c3155babcad3d05196a0e6ba758d4",
     "models.js": "99a32ea1e702a7ca1c44a9c9ebe3d053bce7f89a15bc03464fc602259ddd4824",
-    "tokenizers.js": "1e9ee8a8afa72e8e4d448c1d6f78eadcc12ee50b7d522c79571497ce8d65caa3",
+    "tokenizers.js": "7d0bcf206a4be1b7ce8d774739a62651a3c4cc148d9c0aa864bc19720151bd2f",
     "cfg.js": "56a37ff4400c86c27049a8cadaed95da7c56b42273af0599b5790b2ca0b332f5",
-    "reasoning.js": "da2513a2f10d897ae6ac6c29c7a1aeb96124b5b8fe5be90b8730080dc7c2d5dd"
+    "reasoning.js": "da2513a2f10d897ae6ac6c29c7a1aeb96124b5b8fe5be90b8730080dc7c2d5dd",
+    "stops.js": "04035ff49d39ff628942cbf52cc4db496fac6371fd0b7f06647926ce9b1c28e5",
+    "sampler.js": "065002b8aa1e09e1e2e38046c88809abd731206d161e27a3f9449f4e7c90cf75",
+    "dynamic.js": "a4eda221a466ee8fb26040a5910f4bbb368dbb0573d73c3bdb1c20546e039ec8"
   }
 }

@@ -7,6 +7,7 @@ import { API_V1_VERSION, ApiError, asyncHandler, ensureRequestId, requireObject,
 import { deleteCharacter, exportCharacter, importCharacter, saveCharacter } from '../headless/character-management.js';
 import { activePreset, activatePreset, deletePreset, exportPreset, getPreset, listPresets, savePreset } from '../headless/presets.js';
 import { publicConfiguration } from '../headless/redaction.js';
+import { TEXT_COMPLETION_SOURCES } from '../headless/text-provider.js';
 import { readPromptManager, savePromptManager } from '../headless/prompt-manager.js';
 import { deletePersona, listPersonas, savePersona, selectPersona } from '../headless/persona-management.js';
 import {
@@ -122,6 +123,7 @@ router.get('/capabilities', (_request, response) => {
             novelai: false,
             kobold: false,
             textgen: false,
+            textCompletionSources: Object.keys(TEXT_COMPLETION_SOURCES),
             horde: false,
         },
         features: {
@@ -141,6 +143,7 @@ router.get('/capabilities', (_request, response) => {
             sourcePromptAssembly: true,
             promptTokenBudget: true,
             instructMode: false,
+            textCompletionRequests: true,
             groupChats: false,
             swipes: true,
             toolCalling: false,
@@ -275,6 +278,7 @@ router.get('/provider-credentials', asyncHandler(async (request, response) => {
     response.json({
         openaiConfigured: Boolean(readSecret(session.directories, SECRET_KEYS.OPENAI)),
         customConfigured: Boolean(readSecret(session.directories, SECRET_KEYS.CUSTOM)),
+        textgenConfigured: Object.fromEntries(Object.entries(TEXT_COMPLETION_SOURCES).map(([source, key]) => [source, Boolean(readSecret(session.directories, SECRET_KEYS[key]))])),
     });
 }));
 
@@ -283,10 +287,8 @@ router.put('/provider-credentials', asyncHandler(async (request, response) => {
     const { SECRET_KEYS, writeSecret } = await import('./secrets.js');
     const provider = request.body?.provider;
     const apiKey = request.body?.apiKey;
-    const key = provider === 'openai' ? SECRET_KEYS.OPENAI
-        : provider === 'custom' ? SECRET_KEYS.CUSTOM
-            : null;
-    if (!key) throw new ApiError(400, 'validation', 'provider must be "openai" or "custom".');
+    const key = credentialKey(provider, SECRET_KEYS);
+    if (!key) throw new ApiError(400, 'validation', 'Choose openai, custom, or textgen:<supported source>.');
     if (typeof apiKey !== 'string' || apiKey.trim().length === 0 || apiKey.length > 4096) {
         throw new ApiError(400, 'validation', 'apiKey must be a non-empty string up to 4096 characters.');
     }
@@ -297,10 +299,8 @@ router.put('/provider-credentials', asyncHandler(async (request, response) => {
 router.delete('/provider-credentials/:provider', asyncHandler(async (request, response) => {
     const session = createSession(request);
     const { SECRET_KEYS, SecretManager } = await import('./secrets.js');
-    const key = request.params.provider === 'openai' ? SECRET_KEYS.OPENAI
-        : request.params.provider === 'custom' ? SECRET_KEYS.CUSTOM
-            : null;
-    if (!key) throw new ApiError(400, 'validation', 'provider must be "openai" or "custom".');
+    const key = credentialKey(request.params.provider, SECRET_KEYS);
+    if (!key) throw new ApiError(400, 'validation', 'Choose openai, custom, or textgen:<supported source>.');
     const manager = new SecretManager(session.directories);
     const entries = manager.getSecretState()[key];
     if (Array.isArray(entries)) {
@@ -308,6 +308,13 @@ router.delete('/provider-credentials/:provider', asyncHandler(async (request, re
     }
     response.json({ deleted: true, provider: request.params.provider });
 }));
+
+function credentialKey(provider, keys) {
+    if (provider === 'openai') return keys.OPENAI;
+    if (provider === 'custom') return keys.CUSTOM;
+    const source = typeof provider === 'string' && provider.startsWith('textgen:') ? provider.slice(8) : '';
+    return Object.hasOwn(TEXT_COMPLETION_SOURCES, source) ? keys[TEXT_COMPLETION_SOURCES[source]] : null;
+}
 
 // ---- extension settings (scoped write, never raw settings) ----
 
@@ -502,6 +509,7 @@ router.post('/generations/preview', asyncHandler(async (request, response) => {
     });
     response.json({
         messages: built.messages,
+        prompt: built.prompt,
         segments: built.segments,
         warnings: built.warnings,
         providerRequest: publicConfiguration(built.providerRequest),
