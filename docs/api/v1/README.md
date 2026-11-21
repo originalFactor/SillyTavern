@@ -106,7 +106,8 @@ and deletes require the SHA-256 revision returned by the last read. Group
 members, disabled members, activation strategy, generation mode, self-response
 setting, join prefix/suffix and attached chat identifiers are retained as
 native fields. Deleting a group with attached chat files requires the explicit
-`deleteChats=true` query parameter.
+`deleteChats=true` query parameter. Deletion returns 409 if another group
+references a chat file or its references cannot be verified.
 
 `GET /api/v1/groups/{groupId}/chats` lists attached group JSONL chats and
 `GET /api/v1/groups/{groupId}/chats/{chatId}` provides the same bounded paging

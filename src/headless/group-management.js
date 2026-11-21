@@ -142,6 +142,23 @@ export async function deleteGroup(session, groupId, expectedRevision, deleteChat
     assertCharacterIdle(session.handle, item.id, session.directories, 'group');
     const active = item.group.chats.filter(chatId => fs.existsSync(chatPath(session, chatId).file));
     if (active.length && !deleteChats) throw new ApiError(409, 'confirmation_required', 'Group chats exist. Set deleteChats=true to remove them explicitly.', { details: { chatIds: active } });
+    if (active.length) {
+        for (const entry of fs.readdirSync(session.directories.groups, { withFileTypes: true })) {
+            if (!entry.isFile() || !entry.name.endsWith('.json') || entry.name === `${item.id}.json`) continue;
+            let other;
+            try {
+                const file = path.join(session.directories.groups, entry.name);
+                if (fs.statSync(file).size > MAX_GROUP_BYTES) throw new Error('Oversized group');
+                other = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(file)));
+                if (!other || typeof other !== 'object' || Array.isArray(other) || (other.chats != null && (!Array.isArray(other.chats) || other.chats.some(chat => typeof chat !== 'string')))) throw new Error('Invalid group');
+            } catch {
+                throw new ApiError(409, 'conflict', 'Cannot verify whether another group references these chats. Inspect the group files before deleting.');
+            }
+            const otherChats = other.chat_id === undefined ? [path.parse(entry.name).name] : (other.chats ?? []);
+            const shared = active.filter(chatId => otherChats.includes(chatId));
+            if (shared.length) throw new ApiError(409, 'conflict', 'Another group references these chats. Remove the shared references before deleting them.', { details: { chatIds: shared } });
+        }
+    }
     for (const chatId of active) {
         assertChatIdle(session.handle, item.id, chatId, session.directories, 'group');
     }

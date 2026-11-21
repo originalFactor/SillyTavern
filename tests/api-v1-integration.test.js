@@ -372,6 +372,35 @@ describe('API v1 routes', () => {
         }
     });
 
+    test('deleting a group does not remove a chat referenced by another group', async () => {
+        const chatId = 'shared-delete-chat';
+        const groupIds = ['shared-delete-one', 'shared-delete-two'];
+        const chatFile = path.join(directories.groupChats, `${chatId}.jsonl`);
+        const documents = [];
+        try {
+            for (const groupId of groupIds) {
+                const response = await fetch(`${baseUrl}/api/v1/groups`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ groupId, group: { name: groupId, members: ['Aria.png'], chats: [chatId] } }),
+                });
+                expect(response.status).toBe(201);
+                documents.push(await response.json());
+            }
+            fs.writeFileSync(chatFile, '{}\n');
+            const deletion = await fetch(`${baseUrl}/api/v1/groups/${groupIds[0]}?expectedRevision=${documents[0].revision}&deleteChats=true`, { method: 'DELETE' });
+            expect(deletion.status).toBe(409);
+            expect(fs.existsSync(chatFile)).toBe(true);
+            expect(fs.existsSync(path.join(directories.groups, `${groupIds[0]}.json`))).toBe(true);
+            fs.writeFileSync(path.join(directories.groups, `${groupIds[1]}.json`), '{invalid');
+            const invalid = await fetch(`${baseUrl}/api/v1/groups/${groupIds[0]}?expectedRevision=${documents[0].revision}&deleteChats=true`, { method: 'DELETE' });
+            expect(invalid.status).toBe(409);
+            expect(fs.existsSync(chatFile)).toBe(true);
+        } finally {
+            fs.rmSync(chatFile, { force: true });
+            for (const groupId of groupIds) fs.rmSync(path.join(directories.groups, `${groupId}.json`), { force: true });
+        }
+    });
+
     test('reads and patches settings while preserving unknown fields', async () => {
         await fetch(`${baseUrl}/api/v1/settings`, {
             method: 'PATCH',
