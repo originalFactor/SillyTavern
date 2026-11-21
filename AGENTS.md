@@ -54,6 +54,9 @@ from the companion entry point.
   Group chat filenames are shared across group descriptors, so admissions,
   mutation fences and discovery use the chat ID across groups; discovery returns
   the original group ID so the blocking outcome can be inspected.
+  Group chat creation reserves a new file exclusively before updating the group
+  descriptor and removes it if the descriptor update fails. An abrupt process
+  exit between those writes can leave an unattached file for inspection.
   Group swipe selection validates the on-disk paged index, including legacy
   headerless transcripts, and checks the shared chat admission fence before writing.
   Group message deletion also checks that the displayed row matches the stored

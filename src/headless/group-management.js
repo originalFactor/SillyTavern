@@ -194,11 +194,27 @@ export async function createGroupChat(session, groupId, chatId, expectedRevision
     const attached = item.group.chats.includes(id);
     if (!attached && item.group.chats.length >= 256) throw new ApiError(400, 'validation', 'Group has too many chats.');
     fs.mkdirSync(session.directories.groupChats, { recursive: true });
-    const updated = attached ? { id: item.id, revision: item.revision, group: item.group } : saveGroup(session, {
-        groupId: item.id, group: { ...item.group, chats: [...item.group.chats, id], chat_id: id }, expectedRevision, create: false,
-    });
-    writeFileAtomicSync(file, JSON.stringify({ chat_metadata: {}, user_name: 'unused', character_name: 'unused' }) + '\n');
-    return updated;
+    let descriptor;
+    try {
+        descriptor = fs.openSync(file, 'wx', 0o600);
+    } catch (error) {
+        if (error.code === 'EEXIST') throw new ApiError(409, 'conflict', 'Group chat ID already exists.');
+        throw error;
+    }
+    try {
+        try {
+            fs.writeFileSync(descriptor, JSON.stringify({ chat_metadata: {}, user_name: 'unused', character_name: 'unused' }) + '\n');
+            fs.fsyncSync(descriptor);
+        } finally {
+            fs.closeSync(descriptor);
+        }
+        return attached ? { id: item.id, revision: item.revision, group: item.group } : saveGroup(session, {
+            groupId: item.id, group: { ...item.group, chats: [...item.group.chats, id], chat_id: id }, expectedRevision, create: false,
+        });
+    } catch (error) {
+        fs.unlinkSync(file);
+        throw error;
+    }
 }
 
 export async function readGroupChat(session, groupId, chatId, paging = {}) {

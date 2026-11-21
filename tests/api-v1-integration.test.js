@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
-import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
+import { afterAll, beforeAll, describe, expect, jest, test } from '@jest/globals';
 
 import { router as apiV1Router } from '../src/endpoints/api-v1.js';
-import { loadGroupCharacters } from '../src/headless/group-management.js';
+import { createGroupChat, getGroup, loadGroupCharacters } from '../src/headless/group-management.js';
 import { runGroupGeneration } from '../src/headless/group-runtime.js';
 import { prepareProviderSession } from '../src/headless/provider.js';
 import { cancel, clearGenerations, createGeneration, getGeneration, snapshot } from '../src/headless/generation-store.js';
@@ -87,6 +87,41 @@ afterAll(async () => {
 });
 
 describe('API v1 routes', () => {
+    test('group chat creation preserves the descriptor when either file write fails', async () => {
+        const groupFile = path.join(directories.groups, 'creation-failure.json');
+        const chatFile = path.join(directories.groupChats, 'creation-failure-chat.jsonl');
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Failure test', members: ['Aria.png'], chats: [], chat_id: '' }));
+        const session = { handle: 'contract-user', directories };
+        const original = fs.readFileSync(groupFile, 'utf8');
+        const { revision } = await getGroup(session, 'creation-failure');
+        const open = fs.openSync;
+        const openSpy = jest.spyOn(fs, 'openSync').mockImplementation((file, ...args) => {
+            if (file === chatFile) throw Object.assign(new Error('disk failure'), { code: 'EIO' });
+            return open(file, ...args);
+        });
+        try {
+            await expect(createGroupChat(session, 'creation-failure', 'creation-failure-chat', revision)).rejects.toThrow('disk failure');
+        } finally {
+            openSpy.mockRestore();
+        }
+        expect(fs.readFileSync(groupFile, 'utf8')).toBe(original);
+        expect(fs.existsSync(chatFile)).toBe(false);
+
+        const rename = fs.renameSync;
+        const renameSpy = jest.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+            if (to === groupFile) throw Object.assign(new Error('descriptor failure'), { code: 'EIO' });
+            return rename(from, to);
+        });
+        try {
+            await expect(createGroupChat(session, 'creation-failure', 'creation-failure-chat', revision)).rejects.toThrow('descriptor failure');
+        } finally {
+            renameSpy.mockRestore();
+        }
+        expect(fs.readFileSync(groupFile, 'utf8')).toBe(original);
+        expect(fs.existsSync(chatFile)).toBe(false);
+        fs.unlinkSync(groupFile);
+    });
+
     test('group generation API admits one durable request and returns its committed result', async () => {
         const groupFile = path.join(directories.groups, 'api-group.json');
         const chatFile = path.join(directories.groupChats, 'api-group-chat.jsonl');
