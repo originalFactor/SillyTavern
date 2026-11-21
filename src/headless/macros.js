@@ -6,6 +6,7 @@ import { createChat, readChat, readSettings, resolveChatPath, writeChat, writeSe
 import { assertChatIdle } from './generation-store.js';
 import { parseExampleIntoIndividual } from './macro-runtime/generated/instruct.js';
 import { evaluateNativeMacros, inMacroFrame, upstreamMacroScript } from './macro-runtime/index.js';
+import { defaultReasoningSettings } from './prompt-runtime/generated/reasoning-defaults.js';
 
 const clone = value => JSON.parse(JSON.stringify(value ?? {}));
 const digest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -55,8 +56,11 @@ export function createMacroContext(session, character, chat, { type = 'normal', 
         oai: { openai_max_context: Number(settings.oai_settings?.openai_max_context ?? 4096), openai_max_tokens: Number(overrides.maxTokens ?? settings.oai_settings?.openai_max_tokens ?? settings.amount_gen ?? 300) },
         powerUser: {
             ...clone(power), experimental_macro_engine: power.experimental_macro_engine !== false,
+            persona_description_position: Number(power.persona_description_position ?? 0) === 1 ? 0 : Number(power.persona_description_position ?? 0),
+            persona_description_depth: Number(power.persona_description_depth ?? 2), persona_description_role: Number(power.persona_description_role ?? 0),
             prefer_character_prompt: power.prefer_character_prompt !== false, prefer_character_jailbreak: power.prefer_character_jailbreak !== false,
             instruct: { enabled: false, ...clone(power.instruct) }, context: clone(power.context), sysprompt: { enabled: true, ...clone(power.sysprompt) },
+            reasoning: { ...defaultReasoningSettings, ...clone(power.reasoning) },
         },
         exampleParser: parseExampleIntoIndividual,
         characters: [{ ...clone(character), name: characterName, avatar: characterId ? `${characterId}.png` : '', data: clone(character) }],

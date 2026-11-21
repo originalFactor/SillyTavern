@@ -46,10 +46,11 @@ export async function scanWorldInfo(session, character, chat, context, fields, o
     if (previousTimed === undefined && Object.values(context.frame.metadata.timedWorldInfo ?? {}).every(value => Object.keys(value).length === 0)) delete context.frame.metadata.timedWorldInfo;
     if (!options.preview && previousTimed !== JSON.stringify(context.frame.metadata.timedWorldInfo)) context.frame.localDirty = true;
     for (const [name, value] of Object.entries(result.outletEntries)) context.frame.extensionPrompts[`customWIOutlet_${name}`] = { value: value.join('\n') };
+    for (const entry of result.WIDepthEntries) context.frame.extensionPrompts[`customDepthWI_${entry.depth}_${entry.role}`] = { value: entry.entries.join('\n'), position: 1, depth: entry.depth, scan: false, role: entry.role };
     addPersonaDescriptionExtensionPrompt();
     const roles = ['system', 'user', 'assistant'];
     const note = context.frame.extensionPrompts['2_floating_prompt'];
-    const authorNotes = note?.value ? [{ role: roles[note.role] ?? 'system', content: context.expand(note.value), ...(note.position === 1 ? { injection_depth: note.depth ?? 4, injection_order: 100 } : { relativeToMain: note.position === 2 ? 'start' : 'end' }) }] : [];
+    const authorNotes = note?.value ? [{ role: roles[note.role] ?? 'system', content: note.value, ...(note.position === 1 ? { injection_depth: note.depth ?? 4, injection_order: 100 } : { relativeToMain: note.position === 2 ? 'start' : 'end' }) }] : [];
     return {
         before: result.worldInfoBefore, after: result.worldInfoAfter,
         activated: [...result.allActivatedEntries].map(entry => `${entry.world}:${entry.uid}`),

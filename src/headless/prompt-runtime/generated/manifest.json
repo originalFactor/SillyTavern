@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "sources": {
+    "public/scripts/PromptManager.js": "b0054793b763d92b265f5f487645b68b4eca0867cb5ad6b5deb1034004b2c1cc",
+    "public/scripts/openai.js": "0b77c30282825540265d5a09e681e5ccacf6760b05111ec880ffe237a9250604",
+    "public/scripts/constants.js": "953a09a8cea181f6d82e2aafbb021e7bc3649a41a144d0e798d8e19b99cf4066",
+    "public/scripts/personas.js": "9cef6f9ad424f9c59628b039a65b8e141ffa71aa4519c7108e8c33b5d97f090c",
+    "public/script.js": "955c603d0bad84bac5a716f0818d85c2543e44d4c43878e0d63ef1e55ca91855",
+    "public/scripts/utils.js": "2a2cfe240d5a84ce2e09ba053db6c0c71473b6406173f614f3521d89f50ada61",
+    "public/scripts/system-messages.js": "20f947763c5aeaf88cfc0ef560b0408b3875dcc64ef7d6798e78f605c72b2422",
+    "public/scripts/reasoning.js": "c489812f2598d1a4879b1a7287abde092741adafdf67f5b15cf18f2dd71d82d1",
+    "public/scripts/power-user.js": "bb62dd0116183cdc2a06a0cf98dd18496da1619c48254053bcf2c69ef97bcb7f",
+    "public/scripts/tokenizers.js": "59abb66e4d2ad0ff7171c2ec9f3009d26ed79088e78b87eb0b60638eaae4d6f9"
+  },
+  "files": {
+    "manager.js": "5fa149c9cd761f2ac06b2f5a8246d50674fddced3a324082e4c125271d865227",
+    "engine.js": "6934b0c3b49c9494743bb7a8eca4c5c3f609171b4689acc4d48f20f31a5c1270",
+    "history.js": "d4505aedeea9dd228b91048d2db620f0da0dfc4a228aa567483844bf5b0b627f",
+    "reasoning-defaults.js": "27f83e43a19262754011291e377d71b98cd5c10c81f2ed39e8780f7ca2bb29e6",
+    "reasoning.js": "0b180b963586e9412015da28e741ba6e92c362e51b21a953e421239594d0776b",
+    "tokenizers.js": "7f92a36a12e68a5f8e6fc1872a9e6fee5e9b378015abc87241decd8a0f3e7ea7"
+  }
+}

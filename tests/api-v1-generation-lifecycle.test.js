@@ -101,6 +101,22 @@ describe('cancellation admission through asynchronous hooks', () => {
         expect(calls).toBe(1);
         expect(readChat(path.join(directories.chats, 'Aria', 'Chat.jsonl'))[0].chat_metadata.variables.count).toBe(1);
     });
+    test('cancellation at the final token-audit stage cannot dispatch a provider or commit history', async () => {
+        const observer = { writableEnded: false, status() {}, set() {}, write(value) { if (value.includes('"stage":"budget"')) queueMicrotask(() => cancel(record)); }, end() { this.writableEnded = true; } };
+        subscribe(record, observer); start(); await work;
+        expect(record.status).toBe('cancelled'); expect(record.drained).toBe(true); expect(calls).toBe(0);
+        expect(readChat(path.join(directories.chats, 'Aria', 'Chat.jsonl'))).toEqual(initial);
+    });
+    test('post-preparation hook growth is rejected before dispatch and cannot publish queued plugin settings', async () => {
+        session.settings.oai_settings.openai_max_context = 512; session.settings.oai_settings.openai_max_tokens = 64;
+        const dir = path.join(directories.extensions, 'budget-growth'); fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ runtime: 'headless', entry: 'index.mjs', hooks: { beforePrompt: 'beforePrompt' } }));
+        fs.writeFileSync(path.join(dir, 'index.mjs'), 'export async function beforePrompt(context) { context.messages.push({role:"system",content:"token ".repeat(2000)}); context.writeExtensionFieldBulk("budget-growth",{mustNotPersist:true}); }');
+        start(); await work;
+        expect(record.status).toBe('error'); expect(record.error.code).toBe('validation'); expect(record.error.message).toContain('final outgoing prompt exceeds'); expect(calls).toBe(0);
+        expect(readChat(path.join(directories.chats, 'Aria', 'Chat.jsonl'))).toEqual(initial);
+        expect(readSettings(directories).extension_settings['budget-growth']).toBeUndefined();
+    });
     test.each([
         ['afterGeneration', null],
         ['onGenerationEvent', 'generation_completed'],

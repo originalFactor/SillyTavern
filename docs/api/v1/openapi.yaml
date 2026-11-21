@@ -373,10 +373,10 @@ paths:
         Maximum 128 prompts/order entries and 512 KiB of configuration. Writes only
         oai_settings.prompts and the global prompt_order (ID 100001), preserving
         other settings and orders. Supports relative order, boolean enables,
-        roles, markers, injection_position (0/1), injection_depth (0..100),
+        roles, markers, injection_position (0/1), injection_depth (0..10000),
         injection_order (-10000..10000), injection_trigger and forbid_overrides.
         Applies to subsequent generation snapshots. Named preset storage, full
-        macro compatibility, token budgeting and Instruct mode remain unsupported.
+        macro compatibility and Instruct mode remain incomplete; source token budgeting is available.
       requestBody:
         required: true
         content:
@@ -607,7 +607,7 @@ paths:
                 description: { type: string, maxLength: 65536 }
                 title: { type: string, maxLength: 200 }
                 position: { type: integer, enum: [0, 2, 3, 4, 9] }
-                depth: { type: integer, minimum: 0, maximum: 100 }
+                depth: { type: integer, minimum: 0, maximum: 10000 }
                 role: { type: integer, enum: [0, 1, 2] }
                 lorebook: { type: string, description: Existing native book name; empty clears the Persona binding. }
                 select: { type: boolean, default: false }
@@ -828,7 +828,7 @@ paths:
     post:
       operationId: previewGeneration
       summary: Assemble a prompt without contacting a model provider.
-      description: Also returns the derived providerRequest for inspection.
+      description: Supports normal, quiet, regenerate and continue. Returns derived providerRequest and tokenizer budget; never dispatches or publishes variables. Regenerate excludes the prior assistant reply, while continue reserves its prefix and nudge.
       requestBody:
         $ref: '#/components/requestBodies/GenerationInput'
       responses:

@@ -31,6 +31,11 @@ function document(settings) {
         const index = order.findIndex(entry => entry.identifier === 'charDescription');
         order.splice(index < 0 ? 0 : index, 0, { identifier: 'personaDescription', enabled: true });
     }
+    // Source preparation adds absent dynamic field markers, and absence is not
+    // an explicit disable. Expose that effective state in the native editor.
+    for (const identifier of PROMPT_MARKERS) {
+        if (!['chatHistory', 'dialogueExamples'].includes(identifier) && !order.some(entry => entry.identifier === identifier)) order.push({ identifier, enabled: true });
+    }
     const config = { prompts, order };
     return { ...config, revision: crypto.createHash('sha256').update(JSON.stringify(config)).digest('hex') };
 }
@@ -38,6 +43,7 @@ function document(settings) {
 export function readPromptManager(session) {
     return document(readSettings(session.directories));
 }
+export function promptManagerConfiguration(settings) { return document(settings); }
 
 /** Validate bounded native edits without dropping opaque upstream prompt/order fields. */
 export function validatePromptManager(config) {
@@ -54,7 +60,7 @@ export function validatePromptManager(config) {
         if (prompt.marker && !PROMPT_MARKERS.has(prompt.identifier)) fail('Unknown prompt marker.');
         if (prompt.injection_position !== undefined && ![0, 1].includes(prompt.injection_position)) fail('Invalid injection position.');
         if (prompt.injection_position === 1 && ['chatHistory', 'dialogueExamples'].includes(prompt.identifier)) fail('History and example collections cannot be depth-injected.');
-        if (prompt.injection_depth !== undefined && (!Number.isInteger(prompt.injection_depth) || prompt.injection_depth < 0 || prompt.injection_depth > 100)) fail('Injection depth must be an integer from 0 to 100.');
+        if (prompt.injection_depth !== undefined && (!Number.isInteger(prompt.injection_depth) || prompt.injection_depth < 0 || prompt.injection_depth > 10000)) fail('Injection depth must be an integer from 0 to 10000.');
         if (prompt.injection_order !== undefined && (!Number.isInteger(prompt.injection_order) || Math.abs(prompt.injection_order) > 10000)) fail('Injection priority must be an integer from -10000 to 10000.');
         if (prompt.injection_trigger !== undefined && (!Array.isArray(prompt.injection_trigger) || !prompt.injection_trigger.every(trigger => TRIGGERS.includes(trigger)))) fail('Unknown generation trigger.');
         for (const field of ['marker', 'system_prompt', 'forbid_overrides', 'enabled']) {
@@ -81,63 +87,4 @@ export function savePromptManager(session, body) {
     oai.prompt_order = [...orders.filter(item => String(item.character_id) !== '100001'), { ...(activePromptOrder(oai) ?? {}), character_id: 100001, order: config.order }];
     writeSettings(session.directories, settings);
     return document(settings);
-}
-
-/** Assemble the supported Prompt Manager subset, shared by preview and dispatch. */
-export function assembleManagedPrompt(oai, blocks, history, examples, character, type, expand, extraInjections = []) {
-    const selected = activePromptOrder(oai);
-    if (!selected) return null; // retain legacy story-string behavior for old API clients
-    const config = document({ oai_settings: oai });
-    validatePromptManager(config);
-    const prompts = new Map(config.prompts.map(prompt => [prompt.identifier, prompt]));
-    const prepared = new Map();
-    for (const entry of config.order) {
-        const prompt = prompts.get(entry.identifier);
-        if (entry.enabled && (!prompt.injection_trigger?.length || prompt.injection_trigger.includes(type))) prepared.set(entry.identifier, expand(String(prompt.content ?? '')));
-    }
-    const ordered = [];
-    const relative = extraInjections.filter(prompt => prompt.relativeToMain);
-    const absolute = extraInjections.filter(prompt => !prompt.relativeToMain);
-    const segments = [];
-    for (const entry of config.order) {
-        const prompt = prompts.get(entry.identifier);
-        if (!entry.enabled || (prompt.injection_trigger?.length && !prompt.injection_trigger.includes(type))) continue;
-        const id = prompt.identifier;
-        const role = prompt.role ?? 'system';
-        const original = prepared.get(id) ?? '';
-        const override = id === 'main' ? character.system_prompt : id === 'jailbreak' ? character.post_history_instructions : '';
-        const content = Object.hasOwn(blocks, id) ? expand(String(blocks[id] ?? '')) : override && !prompt.forbid_overrides ? expand(String(override), original) : original;
-        const messages = id === 'chatHistory' ? history.map(message => ({ ...message }))
-            : id === 'dialogueExamples' ? examples.map(message => ({ ...message })) : content ? [{ role, content }] : [];
-        segments.push({ name: id, role, content: ['chatHistory', 'dialogueExamples'].includes(id) ? String(messages.length) : content });
-        if (prompt.injection_position === 1) {
-            const children = id === 'main' ? relative.map(child => ({ ...prompt, role, content: child.content, relativeToMain: child.relativeToMain })) : [];
-            absolute.push(...children.filter(child => child.relativeToMain === 'start'), { ...prompt, role, content }, ...children.filter(child => child.relativeToMain === 'end'));
-        } else ordered.push({ id, messages: id === 'main' ? [...relative.filter(child => child.relativeToMain === 'start').map(({ role, content }) => ({ role, content })), ...messages, ...relative.filter(child => child.relativeToMain === 'end').map(({ role, content }) => ({ role, content }))] : messages });
-    }
-    // Upstream injects into reversed history, grouping descending priority then
-    // system/user/assistant, before reversing the completed history again.
-    const historyBlock = ordered.find(block => block.id === 'chatHistory');
-    if (historyBlock) {
-        const reversed = [...historyBlock.messages].reverse();
-        let inserted = 0;
-        const depths = [...new Set(absolute.map(prompt => prompt.injection_depth ?? 4))].filter(depth => Number.isInteger(depth) && depth >= 0 && depth <= 10000).sort((a, b) => a - b);
-        for (const depth of depths) {
-            const atDepth = absolute.filter(prompt => (prompt.injection_depth ?? 4) === depth && prompt.content);
-            const priorities = [...new Set(atDepth.map(prompt => prompt.injection_order ?? 100))].sort((a, b) => b - a);
-            const injected = [];
-            for (const priority of priorities) {
-                for (const role of ROLES) {
-                    const content = atDepth.filter(prompt => (prompt.injection_order ?? 100) === priority && prompt.role === role).map(prompt => prompt.content).join('\n').trim();
-                    if (content) injected.push({ role, content });
-                }
-            }
-            reversed.splice(Math.min(reversed.length, depth + inserted), 0, ...injected);
-            inserted += injected.length;
-        }
-        historyBlock.messages = reversed.reverse();
-    } else if (absolute.some(prompt => prompt.content)) {
-        throw new ApiError(422, 'unsupported', 'Depth-injected prompts require an enabled chatHistory marker.');
-    }
-    return { messages: ordered.flatMap(block => block.messages), segments };
 }

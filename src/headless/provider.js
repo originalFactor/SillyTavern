@@ -3,7 +3,7 @@ import yaml from 'yaml';
 import { createSession } from './session.js';
 import { redactProviderText } from './redaction.js';
 import { ApiError } from './contract.js';
-import { appendToken, isTerminal, markProviderDispatched } from './generation-store.js';
+import { appendToken, isTerminal, markProviderDispatched, setUsage } from './generation-store.js';
 
 // Credentials are deliberately outside the serializable session, prompt and
 // journal. A worker keeps the exact connection authorized at admission.
@@ -159,7 +159,13 @@ export class ProviderSseDecoder {
                 const detail = typeof json.error === 'string' ? json.error : String(json.error.message ?? 'Provider stream error.');
                 throw new ApiError(502, 'provider', `Provider stream error: ${redactProviderText(detail, this.secrets)}`);
             }
-            if (json.usage && typeof json.usage === 'object' && !Array.isArray(json.usage)) this.usage = publicUsage(json.usage);
+            if (json.usage && typeof json.usage === 'object' && !Array.isArray(json.usage)) {
+                const next = publicUsage(json.usage);
+                const previous = this.usage ?? {};
+                this.usage = { ...previous, ...next };
+                for (const key of ['prompt_tokens_details', 'completion_tokens_details']) if (previous[key] || next[key]) this.usage[key] = { ...(previous[key] ?? {}), ...(next[key] ?? {}) };
+                setUsage(this.record, this.usage);
+            }
             const choice = json.choices?.find?.(item => item.index === 0) ?? json.choices?.[0];
             if (!choice) continue;
             const delta = choice.delta ?? choice.message ?? choice;

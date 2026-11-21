@@ -71,10 +71,15 @@ export async function buildPrompt(session, character, chat, options) {
 export function runNativeText(session, character, chat, options) {
     return execute({ operation: 'text', session: evaluationSession(session), character, chat, options: { ...options, extensions: options.extensions ?? listExtensions(session) } });
 }
+export function auditPrompt(session, request) {
+    const oai = session.settings.oai_settings ?? {};
+    const settings = { oai_settings: { chat_completion_source: oai.chat_completion_source ?? 'openai', openai_max_context: Number(oai.openai_max_context ?? session.settings.max_context ?? 4096), openai_max_tokens: Number(oai.openai_max_tokens ?? session.settings.amount_gen ?? 300) } };
+    return execute({ operation: 'audit', session: { settings }, request: { model: request.model, max_tokens: request.max_tokens, max_completion_tokens: request.max_completion_tokens, messages: request.messages } });
+}
 function evaluationSession(session) {
     const live = session.directories?.root && fs.existsSync(path.join(session.directories.root, 'settings.json')) ? readSettings(session.directories) : session.settings;
     const oai = session.settings.oai_settings ?? {};
-    const safeOai = Object.fromEntries(['chat_completion_source', 'openai_model', 'custom_model', 'openai_max_context', 'openai_max_tokens', 'prompts', 'prompt_order', 'new_chat_prompt', 'new_example_chat_prompt', 'personality_format', 'scenario_format', 'use_sysprompt', 'preset_settings_openai'].filter(key => key in oai).map(key => [key, oai[key]]));
+    const safeOai = Object.fromEntries(['chat_completion_source', 'openai_model', 'custom_model', 'openai_max_context', 'openai_max_tokens', 'prompts', 'prompt_order', 'new_chat_prompt', 'new_example_chat_prompt', 'personality_format', 'scenario_format', 'use_sysprompt', 'preset_settings_openai', 'new_group_chat_prompt', 'wi_format', 'group_nudge_prompt', 'impersonation_prompt', 'continue_prefill', 'continue_nudge_prompt', 'assistant_prefill', 'send_if_empty', 'names_behavior', 'squash_system_messages', 'show_thoughts', 'tool_reasoning_mode'].filter(key => key in oai).map(key => [key, oai[key]]));
     safeOai.extensions = { regex_scripts: oai.extensions?.regex_scripts ?? [] };
     const extensions = session.extensionSettings ?? {};
     const safeExtensions = Object.fromEntries(['regex', 'disabledExtensions', 'character_allowed_regex', 'preset_allowed_regex', 'note'].filter(key => key in extensions).map(key => [key, extensions[key]]));

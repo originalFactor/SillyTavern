@@ -87,7 +87,14 @@ describe('non-replaying bounded provider dispatch', () => {
         const result = await request();
         expect(result.text).toBe('Complete');
         expect(result.usage).toEqual({ total_tokens: 4, completion_tokens_details: { reasoning_tokens: 1 } });
+        expect(record.usage).toEqual({ totalTokens: 4, reasoningTokens: 1 });
         expect(calls).toBe(1);
+    });
+    test('reported usage survives an interrupted stream without inventing absent zero counts', async () => {
+        route = (_req, res) => { res.type('text/event-stream'); res.end(token('Partial') + 'data: {"choices":[],"usage":{"prompt_tokens":5,"prompt_tokens_details":{"cached_tokens":0}}}\n\ndata: {"choices":[],"usage":{"completion_tokens":2,"completion_tokens_details":{"reasoning_tokens":1}}}\n\n'); };
+        await expect(request()).rejects.toMatchObject({ code: 'unknown' });
+        expect(record.usage).toEqual({ promptTokens: 5, completionTokens: 2, cachedTokens: 0, reasoningTokens: 1 });
+        expect(record.usage.totalTokens).toBeUndefined(); expect(calls).toBe(1);
     });
     test('does not misinterpret an HTTP 200 JSON error as successful SSE', async () => {
         route = (_req, res) => res.json({ error: { message: 'not SSE' } });

@@ -108,7 +108,7 @@ export function savePersona(session, personaId, input) {
     const position = requestedPosition === 1 ? 0 : requestedPosition;
     const depth = input.depth ?? previous.depth ?? 2;
     const role = input.role ?? previous.role ?? 0;
-    if (![0, 2, 3, 4, 9].includes(position) || !Number.isInteger(depth) || depth < 0 || depth > 100 || ![0, 1, 2].includes(role)) throw new ApiError(422, 'unsupported', 'Persona placement, role or depth is invalid.');
+    if (![0, 2, 3, 4, 9].includes(position) || !Number.isInteger(depth) || depth < 0 || depth > 10000 || ![0, 1, 2].includes(role)) throw new ApiError(422, 'unsupported', 'Persona placement, role or depth is invalid.');
     p.personas[id] = input.name.trim();
     p.persona_descriptions[id] = { ...previous, description: input.description, title: input.title ?? previous.title ?? '', position, depth, role, ...(input.lorebook === undefined ? {} : { lorebook: input.lorebook }) };
     if (Object.keys(p.personas).length > 128 || Buffer.byteLength(JSON.stringify(p.persona_descriptions)) > 4 * 1024 * 1024) throw new ApiError(413, 'validation', 'Persona catalog exceeds its size limit.');

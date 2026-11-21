@@ -6,7 +6,6 @@ import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
 import { router } from '../src/endpoints/api-v1.js';
 import { readSettings, writeSettings } from '../src/headless/session.js';
 import { buildPrompt } from '../src/headless/prompt.js';
-import { assembleManagedPrompt } from '../src/headless/prompt-manager.js';
 import { setConfigFilePath } from '../src/util.js';
 import { serverDirectory } from '../src/server-directory.js';
 
@@ -19,8 +18,8 @@ const prompts = [
     { identifier: 'jailbreak', role: 'system', content: 'End' },
 ];
 const order = ['main', 'charDescription', 'chatHistory', 'custom', 'jailbreak'].map(identifier => ({ identifier, enabled: true }));
-const oai = extra => ({ chat_completion_source: 'openai', openai_model: 'test', prompts, prompt_order: [{ character_id: 100001, order }], ...extra });
-const assemble = (extra = {}, type = 'normal', character = {}) => assembleManagedPrompt(oai(extra), { charDescription: 'Description' }, [{ role: 'user', content: 'History' }], [], character, type, (text, original) => text.replace('{{original}}', original));
+const oai = extra => ({ chat_completion_source: 'openai', openai_model: 'test', openai_max_context: 4096, openai_max_tokens: 100, new_chat_prompt: '', prompts, prompt_order: [{ character_id: 100001, order }], ...extra });
+const assemble = (extra = {}, type = 'normal', character = {}) => buildPrompt({ ...session, settings: { ...readSettings(session.directories), oai_settings: oai(extra), power_user: {} } }, { name: 'Aria', description: 'Description', ...character }, [{ name: 'Reader', is_user: true, mes: 'History' }], { type });
 
 beforeAll(async () => {
     process.env.SILLYTAVERN_API_V1_ENABLED = 'true';
@@ -49,17 +48,31 @@ async function save(body) {
 }
 
 describe('managed prompt assembly', () => {
+    test('implicit source field markers are visible as enabled and can be explicitly disabled through the revisioned editor', async () => {
+        const previous = readSettings(session.directories);
+        try {
+            writeSettings(session.directories, { ...previous, oai_settings: oai(), power_user: { persona_description: 'Implicit Persona', persona_description_position: 0 } });
+            const displayed = await read();
+            expect(displayed.order.find(entry => entry.identifier === 'personaDescription')?.enabled).toBe(true);
+            let settings = readSettings(session.directories);
+            expect((await buildPrompt({ ...session, settings }, { name: 'Aria' }, [], { type: 'normal' })).messages.some(message => message.content === 'Implicit Persona')).toBe(true);
+            const changed = { ...displayed, expectedRevision: displayed.revision, order: displayed.order.map(entry => entry.identifier === 'personaDescription' ? { ...entry, enabled: false } : entry) };
+            expect((await save(changed)).status).toBe(200);
+            settings = readSettings(session.directories);
+            expect((await buildPrompt({ ...session, settings }, { name: 'Aria' }, [], { type: 'normal' })).messages.some(message => message.content === 'Implicit Persona')).toBe(false);
+        } finally { writeSettings(session.directories, previous); }
+    });
     test('follows order, roles, disabled entries and history markers without duplicating story', async () => {
-        expect(assemble().messages.map(item => item.content)).toEqual(['Original {{CHAR}}', 'Description', 'History', 'Custom for {{user}}', 'End']);
+        expect((await assemble()).messages.map(item => item.content)).toEqual(['Original Aria', 'Description', 'History', 'Custom for Reader', 'End']);
         const changed = [...order].reverse().map(entry => ({ ...entry, enabled: entry.identifier !== 'main' }));
-        expect(assemble({ prompt_order: [{ character_id: 100001, order: changed }] }).messages.map(item => item.content)).toEqual(['End', 'Custom for {{user}}', 'History', 'Description']);
+        expect((await assemble({ prompt_order: [{ character_id: 100001, order: changed }] })).messages.map(item => item.content)).toEqual(['End', 'Custom for Reader', 'History', 'Description']);
     });
     test('honors triggers, card overrides, original macro and forbid_overrides', async () => {
         const custom = prompts.map(prompt => prompt.identifier === 'custom' ? { ...prompt, injection_trigger: ['quiet'] } : prompt);
-        expect(assemble({ prompts: custom }).messages.some(item => item.role === 'user' && item.content.startsWith('Custom'))).toBe(false);
-        expect(assemble({ prompts: custom }, 'quiet').messages.some(item => item.content.startsWith('Custom'))).toBe(true);
-        expect(assemble({}, 'normal', { system_prompt: 'Override: {{original}}' }).messages[0].content).toBe('Override: Original {{CHAR}}');
-        expect(assemble({ prompts: prompts.map(prompt => ({ ...prompt, forbid_overrides: true })) }, 'normal', { system_prompt: 'Blocked' }).messages[0].content).toBe('Original {{CHAR}}');
+        expect((await assemble({ prompts: custom })).messages.some(item => item.role === 'user' && item.content.startsWith('Custom'))).toBe(false);
+        expect((await assemble({ prompts: custom }, 'quiet')).messages.some(item => item.content.startsWith('Custom'))).toBe(true);
+        expect((await assemble({}, 'normal', { system_prompt: 'Override: {{original}}' })).messages[0].content).toBe('Override: Original Aria');
+        expect((await assemble({ prompts: prompts.map(prompt => ({ ...prompt, forbid_overrides: true })) }, 'normal', { system_prompt: 'Blocked' })).messages[0].content).toBe('Original Aria');
     });
     test('depth zero is after history; deeper injections retain upstream priority and role grouping', async () => {
         const injected = [
@@ -67,8 +80,8 @@ describe('managed prompt assembly', () => {
             { identifier: 'b', role: 'user', content: 'Before history', injection_position: 1, injection_depth: 1 },
             { identifier: 'c', role: 'assistant', content: 'Low priority', injection_position: 1, injection_depth: 0, injection_order: 200 },
         ];
-        const result = assemble({ prompts: [...prompts, ...injected], prompt_order: [{ character_id: 100001, order: [...order, ...injected.map(prompt => ({ identifier: prompt.identifier, enabled: true }))] }] });
-        expect(result.messages.map(item => item.content)).toEqual(['Original {{CHAR}}', 'Description', 'Before history', 'History', 'At zero', 'Low priority', 'Custom for {{user}}', 'End']);
+        const result = await assemble({ prompts: [...prompts, ...injected], prompt_order: [{ character_id: 100001, order: [...order, ...injected.map(prompt => ({ identifier: prompt.identifier, enabled: true }))] }] });
+        expect(result.messages.map(item => item.content)).toEqual(['Original Aria', 'Description', 'Before history', 'History', 'At zero', 'Low priority', 'Custom for Reader', 'End']);
     });
     test('depth Persona stays within history, while quiet instructions remain after post-history prompts', async () => {
         const settings = { ...readSettings(session.directories), oai_settings: oai(), power_user: { persona_description: 'Depth Persona', persona_description_position: 4, persona_description_depth: 0 } };
@@ -87,7 +100,7 @@ describe('managed prompt assembly', () => {
         expect(result.messages.slice(-2)).toEqual([{ role: 'system', name: 'example_user', content: 'Hello' }, { role: 'system', name: 'example_assistant', content: 'Hi' }]);
     });
     test('100001 takes precedence over legacy order; unknown references are skipped like upstream', async () => {
-        expect(assemble({ prompt_order: [{ character_id: 100000, order: [] }, { character_id: 100001, order: [...order, { identifier: 'missing', enabled: true }] }] }).messages).toHaveLength(5);
+        expect((await assemble({ prompt_order: [{ character_id: 100000, order: [] }, { character_id: 100001, order: [...order, { identifier: 'missing', enabled: true }] }] })).messages).toHaveLength(5);
     });
     test('shared preview/dispatch builder expands case-insensitive character macros and leaves unsupported macros visible', async () => {
         session.settings = readSettings(session.directories);

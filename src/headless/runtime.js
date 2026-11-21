@@ -1,6 +1,6 @@
 import { ApiError, getUserKey } from './contract.js';
 import { complete, fail, recordPluginEvents, beginGeneration, endGeneration, shouldStopGeneration, setFinalText, setFinalReasoning, setUsage, stage, withChatLock } from './generation-store.js';
-import { buildPrompt, runNativeText } from './prompt.js';
+import { buildPrompt, runNativeText, auditPrompt } from './prompt.js';
 import { persistMacroEffects } from './macros.js';
 import {
     applyHeadlessHooks,
@@ -93,11 +93,6 @@ export async function runGeneration(sourceRequest, session, record, input) {
             // metadata effects before the first awaited hook/provider dispatch,
             // preserving the saved transcript until successful completion.
             persistMacroEffects(session, chatPath, chat, built.macroEffects);
-            if (input.type === 'continue' && input.input) {
-                // Continuation instructions affect the request only, never the
-                // stored transcript or which assistant message receives text.
-                built.messages.push({ role: 'system', content: String(input.input) });
-            }
             const hooked = await applyHeadlessHooks(session, built, {
                 characterId: input.characterId,
                 chatId: input.chatId,
@@ -111,6 +106,9 @@ export async function runGeneration(sourceRequest, session, record, input) {
             mergeEffects(effects, hooked.effects);
             recordPluginEvents(record, effects.events);
 
+            stage(record, 'budget');
+            built.warnings.tokenBudget = await auditPrompt(session, built.providerRequest);
+            if (shouldStopGeneration(record)) return;
             stage(record, 'provider');
             const { runSessionChatCompletion } = await import('./provider.js');
             const result = await runSessionChatCompletion(sourceRequest, built.providerRequest, record, session);

@@ -98,6 +98,8 @@ router.get('/capabilities', (_request, response) => {
         },
         generation: {
             preview: true,
+            previewRegenerate: true,
+            previewContinue: true,
             normal: true,
             quiet: true,
             regenerate: true,
@@ -136,6 +138,8 @@ router.get('/capabilities', (_request, response) => {
             scopedRegex: false,
             promptManagerPresets: false,
             promptManagerOrdering: true,
+            sourcePromptAssembly: true,
+            promptTokenBudget: true,
             instructMode: false,
             groupChats: false,
             swipes: true,
@@ -477,7 +481,7 @@ router.get('/extensions', asyncHandler(async (request, response) => {
 
 router.post('/generations/preview', asyncHandler(async (request, response) => {
     const session = createSession(request);
-    const input = validateGenerationInput(request.body, { allowUnsupportedTypes: false });
+    const input = validateGenerationInput(request.body);
     const character = await readCharacter(session, input.characterId);
     const chatPath = resolveChatPath(session, input.characterId, input.chatId);
     const { readChat } = await import('../headless/session.js');
@@ -488,10 +492,13 @@ router.post('/generations/preview', asyncHandler(async (request, response) => {
     if (input.type === 'normal' && input.input) {
         chat.push({ name: session.userName, is_user: true, mes: input.input });
     }
+    if (['regenerate', 'continue'].includes(input.type) && (chat.length <= 1 || chat.at(-1).is_user || typeof chat.at(-1).mes !== 'string')) throw new ApiError(409, 'conflict', 'The last message must be an assistant reply.');
+    const macroChat = input.type === 'regenerate' ? [...chat] : null;
+    if (input.type === 'regenerate' && chat.length > 1 && !chat.at(-1).is_user) chat.pop();
     const built = await buildPrompt(session, character.data, chat, {
         type: input.type, input: input.input, overrides: input.overrides,
         characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext, preview: true,
-        stageUserInput: input.type === 'normal' && Boolean(input.input),
+        macroChat, stageUserInput: input.type === 'normal' && Boolean(input.input),
     });
     response.json({
         messages: built.messages,
@@ -502,7 +509,7 @@ router.post('/generations/preview', asyncHandler(async (request, response) => {
 }));
 
 router.post('/generations', asyncHandler(async (request, response) => {
-    const input = validateGenerationInput(request.body, { allowUnsupportedTypes: true });
+    const input = validateGenerationInput(request.body);
     const { prepareProviderSession } = await import('../headless/provider.js');
     const session = await prepareProviderSession(request);
     const created = createGeneration({
@@ -640,16 +647,13 @@ function resolveUiPath(session, extension) {
  * @param {boolean} options.allowUnsupportedTypes Whether regenerate/continue are accepted
  * @returns {{characterId: string, chatId: string, type: string, input: string, stream: boolean, overrides: Record<string, any>}} Validated input
  */
-function validateGenerationInput(body, { allowUnsupportedTypes }) {
+function validateGenerationInput(body) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
         throw new ApiError(400, 'validation', 'Request body must be a JSON object.');
     }
     const type = String(body.type ?? 'normal');
     if (!['normal', 'quiet', 'regenerate', 'continue'].includes(type)) {
         throw new ApiError(400, 'validation', `Unknown generation type "${type}".`);
-    }
-    if (!allowUnsupportedTypes && ['regenerate', 'continue'].includes(type)) {
-        throw new ApiError(422, 'unsupported', `Generation type "${type}" is not supported by preview.`);
     }
     const overrides = body.overrides && typeof body.overrides === 'object' && !Array.isArray(body.overrides)
         ? body.overrides : {};

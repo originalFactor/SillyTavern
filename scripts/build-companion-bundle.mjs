@@ -21,6 +21,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateHeadlessMacros } from './generate-headless-macros.mjs';
 import { generateHeadlessWorldInfo } from './generate-headless-world-info.mjs';
+import { generateHeadlessPromptManager } from './generate-headless-prompt-manager.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 /** Files with no JS import edge but required at runtime. */
@@ -29,6 +30,7 @@ const EXTRA_FILES = [
     'pnpm-lock.yaml',
     'src/headless/macro-runtime/generated/manifest.json',
     'src/headless/world-info-runtime/generated/manifest.json',
+    'src/headless/prompt-runtime/generated/manifest.json',
     'default/content/settings.json',
     'default/content/default_Seraphina.png',
     'default/config.yaml',
@@ -157,6 +159,7 @@ function writeManifest(out, fileCount) {
 function main() {
     generateHeadlessMacros({ check: true });
     generateHeadlessWorldInfo({ check: true });
+    generateHeadlessPromptManager({ check: true });
     const argv = process.argv.slice(2);
     const outIndex = argv.indexOf('--out');
     if (outIndex === -1 || !argv[outIndex + 1]) throw new Error('--out <dir> is required');

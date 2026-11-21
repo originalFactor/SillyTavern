@@ -36,7 +36,7 @@ function makeSession(overrides = {}) {
                 chat_completion_source: 'custom',
                 custom_model: 'mock-model',
                 custom_url: 'http://127.0.0.1:3999/v1',
-                openai_max_context: 8,
+                openai_max_context: 4096,
                 openai_max_tokens: 100,
                 prompts: [{ identifier: 'main', enabled: true, content: 'Reply as {{char}}.' }],
             },

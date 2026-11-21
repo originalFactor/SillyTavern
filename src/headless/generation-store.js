@@ -371,11 +371,15 @@ export function recordPluginEvents(record, events) {
  */
 export function setUsage(record, usage) {
     if (!usage || typeof usage !== 'object') return;
-    record.usage = {
-        promptTokens: Number(usage.prompt_tokens ?? usage.promptTokens ?? 0),
-        completionTokens: Number(usage.completion_tokens ?? usage.completionTokens ?? 0),
-        totalTokens: Number(usage.total_tokens ?? usage.totalTokens ?? 0),
+    const fields = {
+        promptTokens: usage.prompt_tokens ?? usage.promptTokens,
+        completionTokens: usage.completion_tokens ?? usage.completionTokens,
+        totalTokens: usage.total_tokens ?? usage.totalTokens,
+        cachedTokens: usage.prompt_tokens_details?.cached_tokens ?? usage.cachedTokens,
+        reasoningTokens: usage.completion_tokens_details?.reasoning_tokens ?? usage.reasoningTokens,
     };
+    const reported = Object.fromEntries(Object.entries(fields).filter(([, value]) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0));
+    if (Object.keys(reported).length) record.usage = { ...(record.usage ?? {}), ...reported };
 }
 
 /**

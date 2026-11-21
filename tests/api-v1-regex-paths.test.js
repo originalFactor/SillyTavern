@@ -98,6 +98,15 @@ describe('source regex across storage, prompt, editing and read-only display', (
         expect(fs.readFileSync(filename(), 'utf8')).toBe(before); expect(calls).toBe(0);
         expect((await req('/chats/Chat/render', 'POST', { characterId: 'Aria', nativeContext: { now: 0 } })).status).toBe(400);
     });
+    test('regenerate and continue previews use their real history shape without dispatch or transcript mutation', async () => {
+        const before = fs.readFileSync(filename(), 'utf8');
+        const regenerate = await req('/generations/preview', 'POST', { characterId: 'Aria', chatId: 'Chat', type: 'regenerate' });
+        expect(regenerate.status).toBe(200); expect(regenerate.value.messages.some(message => message.content === 'Greeting raw')).toBe(false);
+        const continued = await req('/generations/preview', 'POST', { characterId: 'Aria', chatId: 'Chat', type: 'continue', input: 'Continue guidance' });
+        expect(continued.status).toBe(200); expect(continued.value.messages.some(message => message.role === 'assistant' && message.content === 'Greeting raw')).toBe(true);
+        expect(continued.value.messages.at(-1).content).toBe('Continue guidance');
+        expect(fs.readFileSync(filename(), 'utf8')).toBe(before); expect(calls).toBe(0);
+    });
     test('edit honors runOnEdit and captures/trim/macros, while append uses ordinary placement rules', async () => {
         configure([script(2, String.raw`/\[(?<word>.*?)\]/g`, '$<word>!', { runOnEdit: true, trimStrings: ['x'] }), script(2, '/old/g', 'must-not-run-on-edit')]);
         const route = '/chats/Chat/messages';

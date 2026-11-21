@@ -38,7 +38,7 @@ from the companion entry point.
   legacy position 1 maps to 0. Author-note placements 2/3 use the source-derived
   floating-note/Persona assembly and are separately capability-gated.
   The companion packages a default character and user avatar without the SPA.
-- `src/headless/prompt-manager.js` owns revision-checked active Chat Completion prompt edits and the shared preview/dispatch ordering. Writes are scoped to prompts and global order 100001, preserving provider settings and unrelated orders; old 100000 orders migrate with the persona marker. Support includes roles, enables, markers, generation triggers, depth/priority injection and card main/PHI overrides. Keep `promptManagerPresets` false: token-budget packing, full macros and Instruct remain incomplete (named storage/selection is implemented below). Never publish partial ordering as full preset compatibility.
+- `src/headless/prompt-manager.js` owns revision-checked active Chat Completion prompt edits and the shared preview/dispatch ordering. Writes are scoped to prompts and global order 100001, preserving provider settings and unrelated orders; old 100000 orders migrate with the persona marker. Support includes roles, enables, markers, generation triggers, depth/priority injection and card main/PHI overrides. Keep `promptManagerPresets` false: full macros and Instruct remain incomplete (source packing is implemented below) (named storage/selection is implemented below). Never publish partial ordering as full preset compatibility.
 - `src/headless/presets.js` manages revision-checked named Chat Completion/context/instruct/system templates. Presets use native ST directories and bundled defaults; portable snapshots/exports exclude credentials. Selection checks both file and active-config revisions, requires explicit consent for connection changes, and uses the upstream-checked alias table in `preset-mapping.js`. Template selection must not enable unsupported modes. Update the bundle/Gradle source inputs when changing packaged defaults.
 - Current provider scope remains OpenAI/custom Chat Completions. Advanced
   macros, full presets/instruct, group chats, tools, images, TTS and vectors
@@ -48,7 +48,7 @@ from the companion entry point.
 Focused verification from this checkout:
 
 ```sh
-NODE_OPTIONS=--experimental-vm-modules pnpm --dir tests exec jest --config jest.config.json --runInBand api-v1-generation-owner.test.js api-v1-generation-journal.test.js api-v1-generation-lifecycle.test.js api-v1-presets.test.js api-v1-provider.test.js api-v1-prompt-manager.test.js api-v1-character-management.test.js api-v1-integration.test.js api-v1-headless.test.js api-v1-companion.test.js api-v1-bundle.test.js api-v1-plugins.test.js api-v1-macros.test.js api-v1-macro-management.test.js api-v1-world-info.test.js api-v1-world-info-management.test.js api-v1-regex-paths.test.js api-v1-regex-concurrency.test.js
+NODE_OPTIONS=--experimental-vm-modules pnpm --dir tests exec jest --config jest.config.json --runInBand api-v1-generation-owner.test.js api-v1-generation-journal.test.js api-v1-generation-lifecycle.test.js api-v1-presets.test.js api-v1-provider.test.js api-v1-prompt-manager.test.js api-v1-character-management.test.js api-v1-integration.test.js api-v1-headless.test.js api-v1-companion.test.js api-v1-bundle.test.js api-v1-plugins.test.js api-v1-macros.test.js api-v1-macro-management.test.js api-v1-world-info.test.js api-v1-world-info-management.test.js api-v1-regex-paths.test.js api-v1-regex-concurrency.test.js api-v1-source-prompt.test.js
 pnpm exec eslint src/endpoints/api-v1.js src/headless/session.js src/headless/runtime.js src/headless/prompt.js src/headless/generation-store.js
 ```
 
@@ -141,3 +141,28 @@ Host-side tests do not prove execution of the arm64 Android Node binary.
   `regexManagement` and `renderedTranscript` do not establish full streaming,
   reasoning-in-prompt, slash-command or scoped-management parity; keep full
   `scopedRegex` false until those requirements are complete.
+
+
+- `prompt-runtime` derives upstream Prompt Manager/message/token-packing classes,
+  helpers, defaults and reasoning from ten authorities. Packaging runs its
+  generator --check; never hand-edit generated artifacts. There is no subset
+  assembler or 64-row clipping fallback. Preserve source budget reservation,
+  history/example priority, names, role/depth, overrides and notes. Missing dynamic
+  markers are implicitly enabled; expose that effective state in the editor and
+  honor explicit disables. Prompt/Persona depths follow 0..10000.
+- Tokenizer AJAX is a local strict call, not network: downloads and guessed counts
+  are disabled. The opaque token cache uses bounded collision-resistant keys.
+  Source browser code catches partial packing failures for inspection; native
+  assembly deliberately rethrows to prevent dispatching that partial prompt.
+  An enabled history marker must retain a newly staged nonempty input or fail.
+- Audit the final packet after request hooks without rerunning macros. Transfer
+  only model/messages/budget, never URLs/credentials/headers/variables, to that
+  audit. Recheck cancellation after waiting. Continue instructions belong to
+  reserved control prompts, not a post-budget append. All four generation kinds
+  have read-only preview with correct regenerate/continue history shapes.
+- Usage is reported numeric metadata, not a tokenizer estimate: never fill absent
+  counts with zero. Merge known partial counts/details across SSE and checkpoint
+  them with the record, including interruption/formatting failure. Terminal
+  reasoning must match stored transformed reasoning. Native UI labels tokenizer
+  estimates and backend-reported usage separately. Full dependent preset/Instruct,
+  group/media/tool/plugin compatibility remains open; do not flip their flags.
