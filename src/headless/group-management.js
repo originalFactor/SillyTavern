@@ -182,6 +182,44 @@ export async function listGroupChats(session, groupId) {
     });
 }
 
+/** Delete one group chat after checking the group revision and shared references. */
+export async function deleteGroupChat(session, groupId, chatId, expectedRevision) {
+    const item = await readGroup(session, groupId);
+    const { id, file } = chatPath(session, chatId);
+    if (!item.group.chats.includes(id)) throw new ApiError(404, 'not_found', 'Group chat is not attached to this group.');
+    if (!expectedRevision || expectedRevision !== item.revision) throw new ApiError(409, 'conflict', 'Group changed since it was opened. Reload before deleting a chat.');
+    assertCharacterIdle(session.handle, item.id, session.directories, 'group');
+    assertChatIdle(session.handle, item.id, id, session.directories, 'group');
+    for (const entry of fs.readdirSync(session.directories.groups, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith('.json') || entry.name === `${item.id}.json`) continue;
+        let other;
+        try {
+            const otherFile = path.join(session.directories.groups, entry.name);
+            if (fs.statSync(otherFile).size > MAX_GROUP_BYTES) throw new Error('Oversized group');
+            other = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(otherFile)));
+            if (!other || typeof other !== 'object' || Array.isArray(other) || (other.chats != null && (!Array.isArray(other.chats) || other.chats.some(chat => typeof chat !== 'string')))) throw new Error('Invalid group');
+        } catch {
+            throw new ApiError(409, 'conflict', 'Cannot verify whether another group references this chat. Inspect the group files before deleting.');
+        }
+        const chats = other.chat_id === undefined ? [path.parse(entry.name).name] : (other.chats ?? []);
+        if (chats.includes(id)) throw new ApiError(409, 'conflict', 'Another group references this chat. Remove the shared reference before deleting.');
+    }
+    const chats = item.group.chats.filter(chat => chat !== id);
+    const updated = saveGroup(session, {
+        groupId: item.id,
+        group: { ...item.group, chats, chat_id: item.group.chat_id === id ? (chats[0] ?? '') : item.group.chat_id },
+        expectedRevision,
+        create: false,
+    });
+    try {
+        if (fs.existsSync(file)) fs.unlinkSync(file);
+    } catch (error) {
+        saveGroup(session, { groupId: item.id, group: item.group, expectedRevision: updated.revision, create: false });
+        throw error;
+    }
+    return updated;
+}
+
 export async function createGroupChat(session, groupId, chatId, expectedRevision) {
     const item = await readGroup(session, groupId);
     const { id, file } = chatPath(session, chatId);

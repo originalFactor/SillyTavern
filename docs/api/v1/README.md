@@ -113,9 +113,12 @@ references a chat file or its references cannot be verified.
 `GET /api/v1/groups/{groupId}/chats/{chatId}` provides the same bounded paging
 shape as ordinary chats. `POST /api/v1/groups/{groupId}/chats` accepts a caller-owned
 `chatId` and `expectedRevision`, attaches it and writes an empty JSONL header.
-If file creation fails after attachment, inspect the group and explicitly submit
-the same ID with the current revision to initialize the missing file. Existing
-files are never replaced. These management and read paths do not claim group
+Creation reserves the file before updating the descriptor. Existing files are
+never replaced. An interrupted operation can leave an unattached file for
+inspection. `DELETE /api/v1/groups/{groupId}/chats/{chatId}` requires the
+current `expectedRevision`, rejects active or shared chats, and returns the
+updated group document. An interrupted deletion can leave an unattached file.
+These management and read paths do not claim group
 generation parity. The `features.groupChats` capability remains false until
 member activation, per-member prompt context and the durable multi-member
 generation lifecycle are connected.

@@ -473,6 +473,15 @@ paths:
       summary: Read a bounded paged group JSONL transcript.
       responses:
         '200': { description: Paged group transcript. }
+    delete:
+      operationId: deleteGroupChat
+      summary: Delete one group chat and update its group descriptor.
+      parameters:
+        - { name: expectedRevision, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Updated group document. }
+        '404': { description: Chat is not attached to the group. }
+        '409': { description: Stale revision, active generation, or shared chat. }
   /api/v1/groups/{groupId}/chats/{chatId}/swipe:
     parameters:
       - { name: groupId, in: path, required: true, schema: { type: string } }

@@ -57,6 +57,9 @@ from the companion entry point.
   Group chat creation reserves a new file exclusively before updating the group
   descriptor and removes it if the descriptor update fails. An abrupt process
   exit between those writes can leave an unattached file for inspection.
+  Individual group chat deletion checks the revision, shared references and
+  generation fence, and restores the reference if file removal fails. A process
+  exit after descriptor publication can leave an unattached file for inspection.
   Group swipe selection validates the on-disk paged index, including legacy
   headerless transcripts, and checks the shared chat admission fence before writing.
   Group message deletion also checks that the displayed row matches the stored

@@ -5,7 +5,7 @@ import express from 'express';
 
 import { API_V1_VERSION, ApiError, asyncHandler, ensureRequestId, requireObject, requireSafeId, sendApiError } from '../headless/contract.js';
 import { deleteCharacter, exportCharacter, importCharacter, saveCharacter } from '../headless/character-management.js';
-import { createGroupChat, deleteGroup, deleteGroupMessage, editGroupMessage, getGroup, listGroupChats, listGroups, loadGroupCharacters, readGroupChat, resolveGroupChat, saveGroup, selectGroupSwipe } from '../headless/group-management.js';
+import { createGroupChat, deleteGroup, deleteGroupChat, deleteGroupMessage, editGroupMessage, getGroup, listGroupChats, listGroups, loadGroupCharacters, readGroupChat, resolveGroupChat, saveGroup, selectGroupSwipe } from '../headless/group-management.js';
 import { activePreset, activatePreset, deletePreset, exportPreset, getPreset, listPresets, savePreset } from '../headless/presets.js';
 import { publicConfiguration } from '../headless/redaction.js';
 import { TEXT_COMPLETION_SOURCES } from '../headless/text-provider.js';
@@ -79,6 +79,7 @@ router.get('/capabilities', (_request, response) => {
             groupManagement: true,
             groupChatPaging: true,
             groupChatCreate: true,
+            groupChatDelete: true,
             groupChatPreview: true,
             groupChatSwipe: true,
             groupChatMessageDelete: true,
@@ -401,6 +402,10 @@ router.get('/groups/:groupId/chats/:chatId', asyncHandler(async (request, respon
     response.json(await readGroupChat(createSession(request), request.params.groupId, request.params.chatId, {
         limit: request.query.limit, before: request.query.before, after: request.query.after,
     }));
+}));
+
+router.delete('/groups/:groupId/chats/:chatId', asyncHandler(async (request, response) => {
+    response.json(await deleteGroupChat(createSession(request), request.params.groupId, request.params.chatId, String(request.query.expectedRevision ?? '')));
 }));
 
 router.post('/groups/:groupId/chats/:chatId/swipe', asyncHandler(async (request, response) => {

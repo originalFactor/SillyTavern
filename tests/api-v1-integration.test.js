@@ -5,7 +5,7 @@ import express from 'express';
 import { afterAll, beforeAll, describe, expect, jest, test } from '@jest/globals';
 
 import { router as apiV1Router } from '../src/endpoints/api-v1.js';
-import { createGroupChat, getGroup, loadGroupCharacters } from '../src/headless/group-management.js';
+import { createGroupChat, deleteGroupChat, getGroup, loadGroupCharacters } from '../src/headless/group-management.js';
 import { runGroupGeneration } from '../src/headless/group-runtime.js';
 import { prepareProviderSession } from '../src/headless/provider.js';
 import { cancel, clearGenerations, createGeneration, getGeneration, snapshot } from '../src/headless/generation-store.js';
@@ -87,6 +87,57 @@ afterAll(async () => {
 });
 
 describe('API v1 routes', () => {
+    test('restores the group reference when deleting its chat file fails', async () => {
+        const groupFile = path.join(directories.groups, 'delete-failure.json');
+        const chatFile = path.join(directories.groupChats, 'delete-failure-chat.jsonl');
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Delete failure', members: ['Aria.png'], chats: ['delete-failure-chat'], chat_id: 'delete-failure-chat' }));
+        fs.writeFileSync(chatFile, '{}\n');
+        const session = { handle: 'contract-user', directories };
+        const document = await getGroup(session, 'delete-failure');
+        const unlink = fs.unlinkSync;
+        const unlinkSpy = jest.spyOn(fs, 'unlinkSync').mockImplementation(file => {
+            if (file === chatFile) throw Object.assign(new Error('delete failure'), { code: 'EIO' });
+            return unlink(file);
+        });
+        try {
+            await expect(deleteGroupChat(session, 'delete-failure', 'delete-failure-chat', document.revision)).rejects.toThrow('delete failure');
+        } finally {
+            unlinkSpy.mockRestore();
+        }
+        const restored = await getGroup(session, 'delete-failure');
+        expect(restored.group.chats).toEqual(['delete-failure-chat']);
+        expect(restored.group.chat_id).toBe('delete-failure-chat');
+        expect(fs.readFileSync(chatFile, 'utf8')).toBe('{}\n');
+        fs.unlinkSync(chatFile);
+        fs.unlinkSync(groupFile);
+    });
+
+    test('deletes an individual group chat only when its revision and references permit it', async () => {
+        const groupFile = path.join(directories.groups, 'delete-one.json');
+        const otherFile = path.join(directories.groups, 'delete-other.json');
+        const chatFile = path.join(directories.groupChats, 'delete-one-chat.jsonl');
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Delete one', members: ['Aria.png'], chats: ['delete-one-chat'], chat_id: 'delete-one-chat' }));
+        fs.writeFileSync(otherFile, JSON.stringify({ name: 'Other', members: ['Aria.png'], chats: ['delete-one-chat'], chat_id: 'delete-one-chat' }));
+        fs.writeFileSync(chatFile, JSON.stringify({ chat_metadata: {} }));
+        const document = await (await fetch(`${baseUrl}/api/v1/groups/delete-one`)).json();
+        const endpoint = `${baseUrl}/api/v1/groups/delete-one/chats/delete-one-chat`;
+        expect((await fetch(`${endpoint}?expectedRevision=stale`, { method: 'DELETE' })).status).toBe(409);
+        expect((await fetch(`${endpoint}?expectedRevision=${document.revision}`, { method: 'DELETE' })).status).toBe(409);
+        expect(fs.existsSync(chatFile)).toBe(true);
+        fs.unlinkSync(otherFile);
+        createGeneration({ handle: 'contract-user', characterId: 'another-group', chatId: 'delete-one-chat', clientRequestId: 'delete-active', type: 'normal', targetKind: 'group' });
+        expect((await fetch(`${endpoint}?expectedRevision=${document.revision}`, { method: 'DELETE' })).status).toBe(409);
+        expect(fs.existsSync(chatFile)).toBe(true);
+        clearGenerations();
+        const result = await fetch(`${endpoint}?expectedRevision=${document.revision}`, { method: 'DELETE' });
+        expect(result.status).toBe(200);
+        const updated = await result.json();
+        expect(updated.group.chats).toEqual([]);
+        expect(updated.group.chat_id).toBe('');
+        expect(fs.existsSync(chatFile)).toBe(false);
+        fs.unlinkSync(groupFile);
+    });
+
     test('group chat creation preserves the descriptor when either file write fails', async () => {
         const groupFile = path.join(directories.groups, 'creation-failure.json');
         const chatFile = path.join(directories.groupChats, 'creation-failure-chat.jsonl');
