@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
-import { afterEach, beforeAll, beforeEach, describe, expect, test } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { cancel, clearGenerations, createGeneration, setFinalText, snapshot, subscribe } from '../src/headless/generation-store.js';
 import { runGeneration } from '../src/headless/runtime.js';
 import { runGroupGeneration } from '../src/headless/group-runtime.js';
@@ -73,6 +73,25 @@ async function entered(signal) {
 }
 
 describe('cancellation admission through asynchronous hooks', () => {
+    test('manual group transcript write failure leaves an unknown outcome', async () => {
+        const chatFile = path.join(directories.groupChats, 'FailureChat.jsonl');
+        fs.writeFileSync(path.join(directories.groups, 'Failure.json'), JSON.stringify({ name: 'Failure', members: ['Aria.png'], disabled_members: [], activation_strategy: 2, chats: ['FailureChat'], chat_id: 'FailureChat' }));
+        writeChat(chatFile, [{ chat_metadata: {} }]);
+        record = createGeneration({ handle: session.handle, clientRequestId: 'manual-write-failure', characterId: 'Failure', chatId: 'FailureChat', type: 'normal', targetKind: 'group', directories }).record;
+        const rename = fs.renameSync;
+        const spy = jest.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+            if (to === chatFile) throw Object.assign(new Error('disk failure'), { code: 'EIO' });
+            return rename(from, to);
+        });
+        try {
+            await runGroupGeneration({ user: { directories }, headers: {} }, session, record, { groupId: 'Failure', chatId: 'FailureChat', type: 'normal', input: 'Hello', overrides: {} });
+        } finally {
+            spy.mockRestore();
+        }
+        expect(record.status).toBe('unknown');
+        expect(readChat(chatFile)).toEqual([{ chat_metadata: {} }]);
+        expect(calls).toBe(0);
+    });
     test('cancelled manual group input does not publish macro effects or a message', async () => {
         const groupFile = path.join(directories.groups, 'Manual.json');
         const chatFile = path.join(directories.groupChats, 'ManualChat.jsonl');
