@@ -79,11 +79,12 @@ export async function runGeneration(sourceRequest, session, record, input) {
 
             stage(record, 'prompt');
             const macroChat = previousReply ? [...chat, { ...previousReply, swipe_id: previousReply.swipes?.length ?? 1 }] : chat;
-            let built = buildPrompt(session, character.data, chat, {
+            let built = await buildPrompt(session, character.data, chat, {
                 type: input.type, input: input.input, overrides: input.overrides ?? {},
                 characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext,
                 macroChat,
             });
+            if (shouldStopGeneration(record)) return;
             // Upstream variable macros run during preparation. Publish their
             // metadata effects before the first awaited hook/provider dispatch,
             // preserving the saved transcript until successful completion.

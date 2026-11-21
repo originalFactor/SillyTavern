@@ -162,7 +162,7 @@ describe('native personas', () => {
         expect(readSettings(directories).oai_settings.openai_model).toBe('changed-model');
     });
 
-    test('legacy in-prompt placement is normalized, while author-note placement fails explicitly', async () => {
+    test('legacy in-prompt placement is normalized and author-note placements can be selected', async () => {
         await request('/settings', 'PATCH', { power_user: { persona_descriptions: { 'test.png': { position: 1, connections: [{ keep: true }] } } } });
         const catalog = (await request('/personas')).body;
         expect(catalog.personas.find(p => p.id === 'test.png').position).toBe(0);
@@ -171,9 +171,9 @@ describe('native personas', () => {
         expect(readSettings(directories).power_user.persona_description_position).toBe(0);
         await request('/settings', 'PATCH', { power_user: { persona_descriptions: { 'test.png': { position: 2 } } } });
         const changed = (await request('/personas')).body;
-        const rejected = await request('/personas/test.png/select', 'POST', { expectedRevision: changed.revision });
-        expect(rejected.status).toBe(422);
-        expect(rejected.body.error.code).toBe('unsupported');
+        const authorNote = await request('/personas/test.png/select', 'POST', { expectedRevision: changed.revision });
+        expect(authorNote.status).toBe(200);
+        expect(readSettings(directories).power_user.persona_description_position).toBe(2);
         expect(readSettings(directories).power_user.persona_descriptions['test.png'].connections).toEqual([{ keep: true }]);
     });
 });

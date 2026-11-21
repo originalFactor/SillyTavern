@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "sources": {
+    "public/scripts/world-info.js": "111c7f47945839e75b021e09bdbb112a54f0a9b7857d2b95435f573efc7cd9a5",
+    "public/scripts/utils.js": "2a2cfe240d5a84ce2e09ba053db6c0c71473b6406173f614f3521d89f50ada61",
+    "public/scripts/extensions/regex/engine.js": "091bb3402a12552cf1754d6e4d2b44df38d3553aa374539896c716e78905d350",
+    "public/scripts/authors-note.js": "6a7bf7bd185a4881a847350acf25861a44df24c528e746652bdb8a7150e5144b",
+    "public/scripts/personas.js": "9cef6f9ad424f9c59628b039a65b8e141ffa71aa4519c7108e8c33b5d97f090c",
+    "public/script.js": "955c603d0bad84bac5a716f0818d85c2543e44d4c43878e0d63ef1e55ca91855"
+  },
+  "files": {
+    "engine.js": "976a0ee50faa9691707445ad4bc1dfd8846f2a5f6f55b4c63305d5bc09ba1397",
+    "regex.js": "39d09d03dbb91a12f3173d77c1bce8b0d1ef18dead4c48d58d40416808490722",
+    "authors-note.js": "df553eeb36f9e719773e7f0919828490a1fe709504c17dac67ffeaa849a7c521"
+  }
+}

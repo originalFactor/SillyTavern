@@ -96,7 +96,8 @@ export function assembleManagedPrompt(oai, blocks, history, examples, character,
         if (entry.enabled && (!prompt.injection_trigger?.length || prompt.injection_trigger.includes(type))) prepared.set(entry.identifier, expand(String(prompt.content ?? '')));
     }
     const ordered = [];
-    const absolute = [...extraInjections];
+    const relative = extraInjections.filter(prompt => prompt.relativeToMain);
+    const absolute = extraInjections.filter(prompt => !prompt.relativeToMain);
     const segments = [];
     for (const entry of config.order) {
         const prompt = prompts.get(entry.identifier);
@@ -109,8 +110,10 @@ export function assembleManagedPrompt(oai, blocks, history, examples, character,
         const messages = id === 'chatHistory' ? history.map(message => ({ ...message }))
             : id === 'dialogueExamples' ? examples.map(message => ({ ...message })) : content ? [{ role, content }] : [];
         segments.push({ name: id, role, content: ['chatHistory', 'dialogueExamples'].includes(id) ? String(messages.length) : content });
-        if (prompt.injection_position === 1) absolute.push({ ...prompt, role, content });
-        else ordered.push({ id, messages });
+        if (prompt.injection_position === 1) {
+            const children = id === 'main' ? relative.map(child => ({ ...prompt, role, content: child.content, relativeToMain: child.relativeToMain })) : [];
+            absolute.push(...children.filter(child => child.relativeToMain === 'start'), { ...prompt, role, content }, ...children.filter(child => child.relativeToMain === 'end'));
+        } else ordered.push({ id, messages: id === 'main' ? [...relative.filter(child => child.relativeToMain === 'start').map(({ role, content }) => ({ role, content })), ...messages, ...relative.filter(child => child.relativeToMain === 'end').map(({ role, content }) => ({ role, content }))] : messages });
     }
     // Upstream injects into reversed history, grouping descending priority then
     // system/user/assistant, before reversing the completed history again.
@@ -118,7 +121,8 @@ export function assembleManagedPrompt(oai, blocks, history, examples, character,
     if (historyBlock) {
         const reversed = [...historyBlock.messages].reverse();
         let inserted = 0;
-        for (let depth = 0; depth <= 100; depth++) {
+        const depths = [...new Set(absolute.map(prompt => prompt.injection_depth ?? 4))].filter(depth => Number.isInteger(depth) && depth >= 0 && depth <= 10000).sort((a, b) => a - b);
+        for (const depth of depths) {
             const atDepth = absolute.filter(prompt => (prompt.injection_depth ?? 4) === depth && prompt.content);
             const priorities = [...new Set(atDepth.map(prompt => prompt.injection_order ?? 100))].sort((a, b) => b - a);
             const injected = [];

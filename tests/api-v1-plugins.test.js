@@ -105,7 +105,7 @@ afterEach(() => {
 });
 
 describe('plugin context shim', () => {
-    test('exposes the ST global shape and redacts credentials', () => {
+    test('exposes the ST global shape and redacts credentials', async () => {
         const { context } = createPluginContext({
             messages: [], settings: { apiKey: 'SECRET', nested: { token: 'X', keep: 1 } },
             extensionSettings: {}, generation: {},
@@ -117,7 +117,7 @@ describe('plugin context shim', () => {
         expect(context.eventTypes.MESSAGE_RECEIVED).toBe(HEADLESS_EVENT_TYPES.MESSAGE_RECEIVED);
     });
 
-    test('collects settings writes, extension prompts and bounded events', () => {
+    test('collects settings writes, extension prompts and bounded events', async () => {
         const { context, effects } = createPluginContext({
             messages: [], settings: {}, extensionSettings: {}, generation: {},
         });
@@ -140,7 +140,7 @@ describe('plugin context shim', () => {
 });
 
 describe('headless hook runtime', () => {
-    test('feature flag is off by default and on via env', () => {
+    test('feature flag is off by default and on via env', async () => {
         delete process.env.SILLYTAVERN_API_V1_HEADLESSPLUGINS;
         expect(areHeadlessPluginHooksEnabled()).toBe(false);
         process.env.SILLYTAVERN_API_V1_HEADLESSPLUGINS = 'true';
@@ -156,7 +156,7 @@ export async function afterPrompt(context) {
     context.messages.push({ role: 'system', content: 'HEADLESS-AFTER' });
 }
 `);
-        const prompt = builtPrompt();
+        const prompt = await builtPrompt();
         const { prompt: hooked, effects } = await applyHeadlessHooks(makeSession(), prompt, { characterId: 'Aria', chatId: 'Chat' });
         expect(hooked.messages.some(m => m.content === 'HEADLESS-BEFORE')).toBe(true);
         expect(hooked.messages.some(m => m.content === 'HEADLESS-AFTER')).toBe(true);
@@ -169,7 +169,7 @@ export async function beforePrompt(context) {
     context.setExtensionPrompt('extra', 'INJECTED-LORE', 0, 0, 0);
 }
 `);
-        const { prompt } = await applyHeadlessHooks(makeSession(), builtPrompt(), {});
+        const { prompt } = await applyHeadlessHooks(makeSession(), await builtPrompt(), {});
         expect(prompt.messages.some(m => m.content === 'INJECTED-LORE')).toBe(true);
     });
 
@@ -179,7 +179,7 @@ export async function beforePrompt(context) {
     context.writeExtensionFieldBulk('settings-writer', { enabled: true, count: 7 });
 }
 `);
-        const { effects } = await applyHeadlessHooks(makeSession(), builtPrompt(), {});
+        const { effects } = await applyHeadlessHooks(makeSession(), await builtPrompt(), {});
         expect(effects.settingsPatch['settings-writer'].count).toBe(7);
         persistPluginSettings(makeSession(), effects.settingsPatch);
         const stored = readSettings(directories);
@@ -214,7 +214,7 @@ export async function afterGeneration(context) {
 
     test('a throwing hook degrades to a visible warning without breaking the turn', async () => {
         installExtension('broken', 'export async function beforePrompt() { throw new Error("boom"); }');
-        const { prompt, effects } = await applyHeadlessHooks(makeSession(), builtPrompt(), {});
+        const { prompt, effects } = await applyHeadlessHooks(makeSession(), await builtPrompt(), {});
         expect(prompt.messages.length).toBeGreaterThan(0);
         expect(effects.warnings.join(' ')).toContain('boom');
     });
@@ -222,14 +222,14 @@ export async function afterGeneration(context) {
     test('local extension entries resolve from the session directory, not the default user', async () => {
         installExtension('local-only', 'export async function beforePrompt(ctx) { ctx.messages.push({ role: "system", content: "LOCAL-OK" }); }');
         const session = makeSession({ directories: { ...directories, extensions: path.join(root, 'extensions') } });
-        const { prompt, effects } = await applyHeadlessHooks(session, builtPrompt(), {});
+        const { prompt, effects } = await applyHeadlessHooks(session, await builtPrompt(), {});
         expect(prompt.messages.some(m => m.content === 'LOCAL-OK')).toBe(true);
         expect(effects.warnings).toHaveLength(0);
     });
 });
 
 describe('generation journal', () => {
-    test('in-flight records restore as unknown after a restart and are never replayed', () => {
+    test('in-flight records restore as unknown after a restart and are never replayed', async () => {
         const created = createGeneration({ handle: 'plugin-user', clientRequestId: 'journal-1', characterId: 'Aria', chatId: 'Chat', type: 'normal', directories });
         persistGeneration(directories, created.record);
         clearGenerations();
@@ -241,7 +241,7 @@ describe('generation journal', () => {
         expect(record.restored).toBe(true);
     });
 
-    test('terminal records restore with their committed snapshot', () => {
+    test('terminal records restore with their committed snapshot', async () => {
         const created = createGeneration({ handle: 'plugin-user', clientRequestId: 'journal-2', characterId: 'Aria', chatId: 'Chat', type: 'normal', directories });
         created.record.status = 'done';
         created.record.text = 'final text';

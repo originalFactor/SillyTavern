@@ -32,7 +32,7 @@ function fixture(experimental = true) {
 afterEach(() => roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true })));
 
 describe('source-derived native macro runtime', () => {
-    test('generated engine and definitions match every authoritative upstream input', () => {
+    test('generated engine and definitions match every authoritative upstream input', async () => {
         expect(() => generateHeadlessMacros({ check: true })).not.toThrow();
     });
     test.each([true, false])('engine=%s expands environment, state, chat and variable macros without leaking frames', engine => {
@@ -45,12 +45,12 @@ describe('source-derived native macro runtime', () => {
         expect(second.context.expand('{{getvar::n}}|{{getglobalvar::shared}}')).toBe('|old');
         expect(first.context.expand('{{getvar::n}}')).toBe('4');
     });
-    test('conditional bodies are lazy and shorthand values use upstream variable operations', () => {
+    test('conditional bodies are lazy and shorthand values use upstream variable operations', async () => {
         const { context } = fixture();
         expect(context.expand('{{if false}}{{incvar::count}}{{else}}Skipped{{/if}}/{{getvar::count}}')).toBe('Skipped/2');
         expect(context.expand('{{if .count}}{{incvar::count}}{{/if}}/{{getvar::count}}')).toBe('3/3');
     });
-    test('extension macros match upstream internal identifiers rather than display names', () => {
+    test('extension macros match upstream internal identifiers rather than display names', async () => {
         const { session, character, chat, options } = fixture();
         const context = createMacroContext(session, character, chat, { ...options, extensions: [
             { id: 'local/Café', displayName: 'Other name', enabled: true },
@@ -58,20 +58,20 @@ describe('source-derived native macro runtime', () => {
         ] });
         expect(context.expand('{{hasExtension::cafe}}/{{hasExtension::third-party/CAFÉ}}/{{hasExtension::Other name}}/{{hasExtension::Disabled}}')).toBe('true/true/false/false');
     });
-    test('original is consumed once per evaluation and unknown macros remain inspectable', () => {
+    test('original is consumed once per evaluation and unknown macros remain inspectable', async () => {
         const { context } = fixture();
         expect(context.expand('{{original}}/{{original}}', { original: 'Base' })).toBe('Base/');
         expect(context.expand('{{unregisteredNativeFixture}}')).toBe('{{unregisteredNativeFixture}}');
         expect(context.expand('{{original}}', { original: 'Next' })).toBe('Next');
     });
-    test('indexed variables and reserved property names cannot modify object prototypes', () => {
+    test('indexed variables and reserved property names cannot modify object prototypes', async () => {
         const { context } = fixture();
         expect(context.expand('{{setvarkey::list::0::hello}}{{getvarkey::list::0}}')).toBe('hello');
         expect(context.expand('{{setvar::__proto__::safe}}{{getvar::__proto__}}')).toBe('safe');
         expect({}.safe).toBeUndefined();
         expect(context.effects().metadata.variables.__proto__).toBe('safe');
     });
-    test('time zone, fixed time, seeded selection and random ranges use upstream handlers', () => {
+    test('time zone, fixed time, seeded selection and random ranges use upstream handlers', async () => {
         const { session, character, chat, options } = fixture();
         const context = createMacroContext(session, character, chat, { ...options, nativeContext: { ...options.nativeContext, now: Date.UTC(2026, 10, 20, 15, 4, 5) } });
         // Jest replaces process.env with a proxy, which does not apply Node's TZ
@@ -88,16 +88,16 @@ describe('source-derived native macro runtime', () => {
         const dice = Number(context.expand('{{roll::2d6}}'));
         expect(dice).toBeGreaterThanOrEqual(2); expect(dice).toBeLessThanOrEqual(12);
     });
-    test('preview evaluates variable effects without writing settings or transcript', () => {
+    test('preview evaluates variable effects without writing settings or transcript', async () => {
         const { session, character, chat, chatPath, options } = fixture();
         session.settings.oai_settings.prompts[0].content = '{{incvar::count}} {{setglobalvar::shared::preview}}';
         const before = fs.readFileSync(chatPath, 'utf8');
-        const built = buildPrompt(session, character, chat, { ...options, preview: true });
+        const built = await buildPrompt(session, character, chat, { ...options, preview: true });
         expect(built.warnings.macroStateChanges).toEqual({ local: true, global: true });
         expect(fs.readFileSync(chatPath, 'utf8')).toBe(before);
         expect(readSettings(session.directories).extension_settings.variables.global.shared).toBe('old');
     });
-    test('publishing effects changes metadata only and merges independent settings writes', () => {
+    test('publishing effects changes metadata only and merges independent settings writes', async () => {
         const { session, chat, chatPath, context } = fixture();
         context.expand('{{incvar::count}}{{setglobalvar::shared::new}}');
         const latest = readSettings(session.directories); latest.username = 'Independent'; writeSettings(session.directories, latest);
@@ -107,21 +107,21 @@ describe('source-derived native macro runtime', () => {
         expect(readChat(chatPath)[0].chat_metadata).toMatchObject({ keep: 'metadata', variables: { count: 3 } });
         expect(readSettings(session.directories)).toMatchObject({ username: 'Independent', extension_settings: { unrelated: { preserve: true }, variables: { global: { shared: 'new' } } } });
     });
-    test('conflicting global mutation is rejected before any local effect is written', () => {
+    test('conflicting global mutation is rejected before any local effect is written', async () => {
         const { session, chat, chatPath, context } = fixture();
         context.expand('{{incvar::count}}{{setglobalvar::shared::new}}');
         const latest = readSettings(session.directories); latest.extension_settings.variables.global.shared = 'Other'; writeSettings(session.directories, latest);
         expect(() => persistMacroEffects(session, chatPath, chat, context.effects())).toThrow('changed during prompt preparation');
         expect(readChat(chatPath)[0].chat_metadata.variables.count).toBe(2);
     });
-    test('large inputs and excessive dice refuse evaluation with bounded errors', () => {
+    test('large inputs and excessive dice refuse evaluation with bounded errors', async () => {
         const { context } = fixture();
         expect(() => context.expand('x'.repeat(1_048_577))).toThrow('size limit');
         expect(() => context.expand('{{roll::1000000000d6}}')).toThrow('limit');
         expect(() => fixture().context.expand('{{space::1000000000}}')).toThrow('limit');
         expect(() => fixture().context.expand('{{setvarkey::sparse::1000000000::value}}')).toThrow('limit');
     });
-    test('variable allocation quota includes names, not just stored values', () => {
+    test('variable allocation quota includes names, not just stored values', async () => {
         const { context } = fixture();
         const name = 'k'.repeat(524288);
         for (let index = 0; index < 15; index++) context.frame.metadata.variables[name + index] = 'v';
@@ -139,18 +139,18 @@ describe('source-derived native macro runtime', () => {
         expect(() => createMacroChat(session, character, 'Aria', 'New', '{{setglobalvar::shared::must-not-run}}')).toThrow('already exists');
         expect(readSettings(session.directories).extension_settings.variables.global.shared).toBe('greeted');
     });
-    test('upstream eager character-field preparation evaluates the original greeting again in a dry-run frame', () => {
+    test('upstream eager character-field preparation evaluates the original greeting again in a dry-run frame', async () => {
         const { session, character, options } = fixture();
         session.directories.chats = path.join(session.directories.root, 'chats');
         character.first_mes = 'Greeting {{incvar::greetCount}}';
         createMacroChat(session, character, 'Aria', 'Eager', character.first_mes);
         const chatPath = path.join(session.directories.chats, 'Aria', 'Eager.jsonl');
-        const built = buildPrompt(session, character, readChat(chatPath), { ...options, preview: true });
+        const built = await buildPrompt(session, character, readChat(chatPath), { ...options, preview: true });
         expect(built.macroEffects.metadata.variables.greetCount).toBe(2);
         expect(readChat(chatPath)[0].chat_metadata.variables.greetCount).toBe(1);
         expect(readChat(chatPath)[1].mes).toBe('Greeting 1');
     });
-    test('greeting warnings remain with their stored message for native navigation/recreation', () => {
+    test('greeting warnings remain with their stored message for native navigation/recreation', async () => {
         const { session, character } = fixture();
         session.directories.chats = path.join(session.directories.root, 'chats');
         const created = createMacroChat(session, character, 'Aria', 'Warning', 'Greeting {{space::invalid}}');
@@ -158,7 +158,7 @@ describe('source-derived native macro runtime', () => {
         const saved = readChat(path.join(session.directories.chats, 'Aria', 'Warning.jsonl'));
         expect(saved[1].extra.native_macro_warnings).toEqual(created.warnings.macroWarnings);
     });
-    test('failed greeting publication reports already-published global effects without retrying', () => {
+    test('failed greeting publication reports already-published global effects without retrying', async () => {
         const { session, character } = fixture();
         session.directories.chats = path.join(session.directories.root, 'chats');
         fs.mkdirSync(session.directories.chats);

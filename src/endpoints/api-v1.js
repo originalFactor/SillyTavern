@@ -124,6 +124,8 @@ router.get('/capabilities', (_request, response) => {
             macroVariables: true,
             nativeMacroContext: true,
             worldInfo: true,
+            worldInfoScanner: true,
+            personaAuthorNote: true,
             globalRegex: true,
             scopedRegex: false,
             promptManagerPresets: false,
@@ -436,7 +438,7 @@ router.post('/generations/preview', asyncHandler(async (request, response) => {
     if (input.type === 'normal' && input.input) {
         chat.push({ name: session.userName, is_user: true, mes: input.input });
     }
-    const built = buildPrompt(session, character.data, chat, {
+    const built = await buildPrompt(session, character.data, chat, {
         type: input.type, input: input.input, overrides: input.overrides,
         characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext, preview: true,
     });

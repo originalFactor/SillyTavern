@@ -87,10 +87,10 @@ preserve unrelated provider settings, and use standard `power_user.personas`,
 `persona_descriptions`, `user_avatar` and `username` fields. New IDs end in
 `.png`; a packaged default avatar is created. Selection applies to subsequent
 requests; existing transcript names/text are not rewritten. Description
-positions 0 (story prompt), 4 (depth/role), and 9 (no automatic injection) work;
-author-note placements 2/3 explicitly reject instead of silently degrading.
-Persona-specific lorebooks join global books under the existing simplified
-World Info matcher. Full World Info and author-note parity remain separate work.
+positions 0 (story prompt), 2/3 (before/after Author’s Note), 4 (depth/role),
+and 9 (no automatic injection) work. Author-note placements require the
+`personaAuthorNote` capability. Persona-specific lorebooks join chat, character,
+embedded and global books through the source-derived World Info scanner.
 
 ## Extensions and WebViews
 
@@ -169,7 +169,7 @@ Headless extensions are **not sandboxed against Node** — they run as ESM in a 
 
 ## MVP limitations
 
-Only `main_api=openai` with `chat_completion_source=openai` or `custom` is supported. Basic `{{char}}`/`{{user}}` macros, global World Info books, embedded character books, global regex scripts and static system/story/jailbreak prompts are assembled server-side. Advanced macros, Prompt Manager presets, scoped/preset regex, instruct mode, group chats, tools, images, TTS and vectors remain unsupported; chat rename and swipe alternatives are available through the versioned API.
+Only `main_api=openai` with `chat_completion_source=openai` or `custom` is supported. Source-derived macro engines, World Info scanning and active Prompt Manager ordering assemble the prompt server-side; see the later milestone sections for precise capability boundaries. Advanced macros, Prompt Manager presets, scoped/preset regex, instruct mode, group chats, tools, images, TTS and vectors remain unsupported; chat rename and swipe alternatives are available through the versioned API.
 
 See `openapi.yaml` and `schema/*.json` for the machine-readable contract, and `tests/api-v1-plugins.test.js` for the headless plugin compat-layer tests.
 
@@ -434,3 +434,29 @@ Engine choice affects newly admitted generations; existing admissions retain
 their engine snapshot while preparation reads the latest global variables.
 The `resources.macroManagement` flag gates these controls separately from full
 `features.advancedMacros` parity.
+
+
+## Source-derived World Info and bounded preparation
+
+`worldInfoScanner` enables the actual upstream scanner: key/secondary matching,
+recursion, minimum activations, token budgets, probability, inclusion groups,
+sticky/cooldown/delay, field scans, all insertion positions and outlets. Global,
+chat, Persona, primary/extra character and embedded books follow source ordering.
+WI output uses source-derived regex with scope authorization; other regex paths
+remain incomplete, so full `scopedRegex` stays false. External extension WI event
+hooks remain unavailable; this is not full browser/plugin parity.
+
+Selected files must be regular, non-symlink JSON/UTF-8 books (4 MiB each, 32 MiB
+combined). A missing linked primary may use an embedded book; corrupt/unreadable
+selections fail visibly. Preparation uses an isolated serialized Worker with a
+10-second deadline, 256 MiB old-generation limit, 32-job/64 MiB input queue and
+32 MiB result limit. Tokenization uses the actual OpenAI tokenizer with model
+downloads disabled. Failure never automatically replays a request. Provider
+credentials, URLs and headers remain outside the worker. Cancellation is checked
+again after preparation and before effects or provider dispatch.
+
+Preview does not publish variables/timed effects. Upstream preview intentionally
+ignores saved sticky/cooldown state, so preview activation may differ from a real
+turn. Actual preparation publishes variable/timed metadata before provider
+execution. Book management API/UI, full token packing/Instruct and full regex
+coverage are still pending.

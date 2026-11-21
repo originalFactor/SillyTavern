@@ -49,19 +49,19 @@ async function save(body) {
 }
 
 describe('managed prompt assembly', () => {
-    test('follows order, roles, disabled entries and history markers without duplicating story', () => {
+    test('follows order, roles, disabled entries and history markers without duplicating story', async () => {
         expect(assemble().messages.map(item => item.content)).toEqual(['Original {{CHAR}}', 'Description', 'History', 'Custom for {{user}}', 'End']);
         const changed = [...order].reverse().map(entry => ({ ...entry, enabled: entry.identifier !== 'main' }));
         expect(assemble({ prompt_order: [{ character_id: 100001, order: changed }] }).messages.map(item => item.content)).toEqual(['End', 'Custom for {{user}}', 'History', 'Description']);
     });
-    test('honors triggers, card overrides, original macro and forbid_overrides', () => {
+    test('honors triggers, card overrides, original macro and forbid_overrides', async () => {
         const custom = prompts.map(prompt => prompt.identifier === 'custom' ? { ...prompt, injection_trigger: ['quiet'] } : prompt);
         expect(assemble({ prompts: custom }).messages.some(item => item.role === 'user' && item.content.startsWith('Custom'))).toBe(false);
         expect(assemble({ prompts: custom }, 'quiet').messages.some(item => item.content.startsWith('Custom'))).toBe(true);
         expect(assemble({}, 'normal', { system_prompt: 'Override: {{original}}' }).messages[0].content).toBe('Override: Original {{CHAR}}');
         expect(assemble({ prompts: prompts.map(prompt => ({ ...prompt, forbid_overrides: true })) }, 'normal', { system_prompt: 'Blocked' }).messages[0].content).toBe('Original {{CHAR}}');
     });
-    test('depth zero is after history; deeper injections retain upstream priority and role grouping', () => {
+    test('depth zero is after history; deeper injections retain upstream priority and role grouping', async () => {
         const injected = [
             { identifier: 'a', role: 'system', content: 'At zero', injection_position: 1, injection_depth: 0 },
             { identifier: 'b', role: 'user', content: 'Before history', injection_position: 1, injection_depth: 1 },
@@ -70,28 +70,28 @@ describe('managed prompt assembly', () => {
         const result = assemble({ prompts: [...prompts, ...injected], prompt_order: [{ character_id: 100001, order: [...order, ...injected.map(prompt => ({ identifier: prompt.identifier, enabled: true }))] }] });
         expect(result.messages.map(item => item.content)).toEqual(['Original {{CHAR}}', 'Description', 'Before history', 'History', 'At zero', 'Low priority', 'Custom for {{user}}', 'End']);
     });
-    test('depth Persona stays within history, while quiet instructions remain after post-history prompts', () => {
+    test('depth Persona stays within history, while quiet instructions remain after post-history prompts', async () => {
         const settings = { ...readSettings(session.directories), oai_settings: oai(), power_user: { persona_description: 'Depth Persona', persona_description_position: 4, persona_description_depth: 0 } };
-        const result = buildPrompt({ ...session, settings }, { name: 'Aria' }, [{ is_user: true, mes: 'History' }], { type: 'quiet', input: 'Quiet last' });
+        const result = await buildPrompt({ ...session, settings }, { name: 'Aria' }, [{ is_user: true, mes: 'History' }], { type: 'quiet', input: 'Quiet last' });
         expect(result.messages.map(message => message.content)).toEqual(['Original Aria', 'History', 'Depth Persona', 'Custom for Reader', 'End', 'Quiet last']);
     });
-    test('legacy global settings retain Persona descriptions when migrated to marker assembly', () => {
+    test('legacy global settings retain Persona descriptions when migrated to marker assembly', async () => {
         const settings = { ...readSettings(session.directories), oai_settings: oai({ prompt_order: [{ character_id: 100000, order }] }), power_user: { persona_description: 'Legacy Persona', persona_description_position: 0 } };
-        const result = buildPrompt({ ...session, settings }, { name: 'Aria', description: 'Description' }, [], { type: 'normal' });
+        const result = await buildPrompt({ ...session, settings }, { name: 'Aria', description: 'Description' }, [], { type: 'normal' });
         expect(result.messages.map(message => message.content)).toContain('Legacy Persona');
     });
-    test('macro-prefixed dialogue examples use upstream named system messages', () => {
+    test('macro-prefixed dialogue examples use upstream named system messages', async () => {
         const exampleOrder = [...order, { identifier: 'dialogueExamples', enabled: true }];
         const settings = { ...readSettings(session.directories), oai_settings: oai({ prompt_order: [{ character_id: 100001, order: exampleOrder }] }), power_user: {} };
-        const result = buildPrompt({ ...session, settings }, { name: 'Aria', mes_example: '{{user}}: Hello\n{{char}}: Hi' }, [], { type: 'normal' });
+        const result = await buildPrompt({ ...session, settings }, { name: 'Aria', mes_example: '{{user}}: Hello\n{{char}}: Hi' }, [], { type: 'normal' });
         expect(result.messages.slice(-2)).toEqual([{ role: 'system', name: 'example_user', content: 'Hello' }, { role: 'system', name: 'example_assistant', content: 'Hi' }]);
     });
-    test('100001 takes precedence over legacy order; unknown references are skipped like upstream', () => {
+    test('100001 takes precedence over legacy order; unknown references are skipped like upstream', async () => {
         expect(assemble({ prompt_order: [{ character_id: 100000, order: [] }, { character_id: 100001, order: [...order, { identifier: 'missing', enabled: true }] }] }).messages).toHaveLength(5);
     });
-    test('shared preview/dispatch builder expands case-insensitive character macros and leaves unsupported macros visible', () => {
+    test('shared preview/dispatch builder expands case-insensitive character macros and leaves unsupported macros visible', async () => {
         session.settings = readSettings(session.directories);
-        const result = buildPrompt(session, { name: 'Aria', description: 'Description', system_prompt: '{{original}} / {{charIfNotGroup}} / {{getvar::unknown}} / {{unregisteredFixture}}' }, [{ is_user: true, mes: 'History' }], { type: 'normal' });
+        const result = await buildPrompt(session, { name: 'Aria', description: 'Description', system_prompt: '{{original}} / {{charIfNotGroup}} / {{getvar::unknown}} / {{unregisteredFixture}}' }, [{ is_user: true, mes: 'History' }], { type: 'normal' });
         expect(result.messages[0].content).toBe('Original Aria / Aria /  / {{unregisteredFixture}}');
         expect(result.messages.filter(item => item.content === 'Description')).toHaveLength(1);
         expect(result.warnings.promptManagerOrdering).toBe(true);

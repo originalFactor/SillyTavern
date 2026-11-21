@@ -39,7 +39,7 @@ function makeSession(overrides = {}) {
                 chat_completion_source: 'custom',
                 custom_model: 'mock-model',
                 custom_url: 'http://127.0.0.1:3999/v1',
-                openai_max_context: 8,
+                openai_max_context: 4096,
                 openai_max_tokens: 100,
                 prompts: [{ identifier: 'main', enabled: true, content: 'Reply as {{char}}.' }],
             },
@@ -64,7 +64,7 @@ describe('API v1 contracts', () => {
         expect(() => requireSafeId(value, 'characterId')).toThrow('not a valid identifier');
     });
 
-    test('error body has stable fields', () => {
+    test('error body has stable fields', async () => {
         expect(errorBody('request-1', new Error('hidden')).error).toEqual({
             code: 'internal',
             message: 'An internal error occurred.',
@@ -73,7 +73,7 @@ describe('API v1 contracts', () => {
         });
     });
 
-    test('merge patch preserves unknown fields and deletes null keys', () => {
+    test('merge patch preserves unknown fields and deletes null keys', async () => {
         expect(mergePatch({ keep: 1, nested: { a: 1, b: 2 }, remove: true }, { nested: { b: 3 }, remove: null })).toEqual({
             keep: 1,
             nested: { a: 1, b: 3 },
@@ -82,7 +82,7 @@ describe('API v1 contracts', () => {
 });
 
 describe('settings and cards', () => {
-    test('settings patch preserves unknown keys on disk', () => {
+    test('settings patch preserves unknown keys on disk', async () => {
         const directories = makeDirectories();
         writeSettings(directories, { customFutureField: { keep: true }, username: 'Old' });
         const patched = patchSettings(directories, { username: 'New' });
@@ -90,7 +90,7 @@ describe('settings and cards', () => {
         expect(readSettings(directories).username).toBe('New');
     });
 
-    test('normalizes Spec V2 character fields', () => {
+    test('normalizes Spec V2 character fields', async () => {
         const data = normalizeCharacterData({ name: 'Outer', data: { name: 'Inner', description: 'Lore' } });
         expect(data.name).toBe('Inner');
         expect(data.description).toBe('Lore');
@@ -98,7 +98,7 @@ describe('settings and cards', () => {
 });
 
 describe('headless prompt assembly', () => {
-    test('expands macros, activates World Info, and applies regex', () => {
+    test('expands macros, activates World Info, and applies regex', async () => {
         const session = makeSession();
         session.extensionSettings.regex = [{ findRegex: '/^Hello.*$/g', replaceString: 'Greetings', placement: regex_placement.USER_INPUT }];
         fs.writeFileSync(path.join(session.directories.worlds, 'Contract.json'), JSON.stringify({
@@ -115,7 +115,7 @@ describe('headless prompt assembly', () => {
             character_book: null,
         };
         const chat = [{ name: 'Aria', is_user: false, mes: 'Hello contract', send_date: new Date().toISOString() }];
-        const built = buildPrompt(session, character, chat, { type: 'normal', input: 'Hello' });
+        const built = await buildPrompt(session, character, chat, { type: 'normal', input: 'Hello' });
         expect(built.messages[0].content).toContain('Reply as Aria.');
         expect(built.messages.some(message => message.content.includes('World lore for Aria.'))).toBe(true);
         expect(built.messages.at(-1).content).toBe('Greetings');
@@ -123,16 +123,16 @@ describe('headless prompt assembly', () => {
         expect(built.providerRequest.custom_url).toBe('http://127.0.0.1:3999/v1');
     });
 
-    test('rejects unsupported main APIs and providers', () => {
+    test('rejects unsupported main APIs and providers', async () => {
         const session = makeSession();
         session.settings.main_api = 'novel';
-        expect(() => buildPrompt(session, { name: 'Aria' }, [], { type: 'normal' })).toThrow('not supported');
+        await expect(buildPrompt(session, { name: 'Aria' }, [], { type: 'normal' })).rejects.toThrow('not supported');
         session.settings.main_api = 'openai';
         session.settings.oai_settings.chat_completion_source = 'claude';
-        expect(() => buildPrompt(session, { name: 'Aria' }, [], { type: 'normal' })).toThrow('not supported');
+        await expect(buildPrompt(session, { name: 'Aria' }, [], { type: 'normal' })).rejects.toThrow('not supported');
     });
 
-    test('global regex only runs at matching placement', () => {
+    test('global regex only runs at matching placement', async () => {
         const settings = { regex: [{ findRegex: '/a/g', replaceString: 'b', placement: regex_placement.USER_INPUT }] };
         expect(applyGlobalRegex('a', settings, regex_placement.USER_INPUT)).toBe('b');
         expect(applyGlobalRegex('a', settings, regex_placement.AI_OUTPUT)).toBe('a');

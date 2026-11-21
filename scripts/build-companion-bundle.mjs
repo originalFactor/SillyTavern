@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateHeadlessMacros } from './generate-headless-macros.mjs';
+import { generateHeadlessWorldInfo } from './generate-headless-world-info.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 /** Files with no JS import edge but required at runtime. */
@@ -27,12 +28,14 @@ const EXTRA_FILES = [
     'package.json',
     'pnpm-lock.yaml',
     'src/headless/macro-runtime/generated/manifest.json',
+    'src/headless/world-info-runtime/generated/manifest.json',
     'default/content/settings.json',
     'default/content/default_Seraphina.png',
     'default/config.yaml',
     // Loaded via `new URL('./plugin-worker.js', import.meta.url)`, not an import
     // specifier, so the graph walker cannot discover it.
     'src/headless/plugin-worker.js',
+    'src/headless/prompt-worker.js',
 ];
 /** Non-JS data directories referenced at runtime. */
 const DATA_DIRECTORIES = [
@@ -153,12 +156,14 @@ function writeManifest(out, fileCount) {
 
 function main() {
     generateHeadlessMacros({ check: true });
+    generateHeadlessWorldInfo({ check: true });
     const argv = process.argv.slice(2);
     const outIndex = argv.indexOf('--out');
     if (outIndex === -1 || !argv[outIndex + 1]) throw new Error('--out <dir> is required');
     const out = path.resolve(argv[outIndex + 1]);
 
     walk(path.join(ROOT, 'src/headless-companion.js'));
+    for (const file of EXTRA_FILES.filter(file => file.endsWith('.js'))) walk(path.join(ROOT, file));
     fs.rmSync(out, { recursive: true, force: true });
     fs.mkdirSync(out, { recursive: true });
     for (const file of seen) copyEntry(path.relative(ROOT, file), out);
