@@ -103,6 +103,17 @@ describe('non-replaying bounded provider dispatch', () => {
         await expect(request()).rejects.toMatchObject({ code: 'provider' });
         expect(record.text).toBe('Earlier reply');
     });
+    test('keeps later reasoning separate and retains partial output on interruption', async () => {
+        const reasoning = value => `data: ${JSON.stringify({ choices: [{ index: 0, delta: { reasoning_content: value } }] })}\n\n`;
+        route = (_req, res) => res.type('text/event-stream').end(reasoning('First thought') + token('First') + 'data: [DONE]\n\n');
+        const first = await request();
+        expect(first.reasoning).toBe('First thought');
+        route = (_req, res) => res.type('text/event-stream').end(reasoning('Second thought') + token('Partial'));
+        await expect(request()).rejects.toMatchObject({ code: 'unknown' });
+        expect(record.text).toBe('FirstPartial');
+        expect(record.reasoning).toBe('First thoughtSecond thought');
+        expect(calls).toBe(2);
+    });
     test('reported usage survives an interrupted stream without inventing absent zero counts', async () => {
         route = (_req, res) => { res.type('text/event-stream'); res.end(token('Partial') + 'data: {"choices":[],"usage":{"prompt_tokens":5,"prompt_tokens_details":{"cached_tokens":0}}}\n\ndata: {"choices":[],"usage":{"completion_tokens":2,"completion_tokens_details":{"reasoning_tokens":1}}}\n\n'); };
         await expect(request()).rejects.toMatchObject({ code: 'unknown' });
