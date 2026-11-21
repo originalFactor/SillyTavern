@@ -498,6 +498,32 @@ describe('API v1 routes', () => {
         }
     });
 
+    test('group swipe preserves legacy indices and fences shared active chats', async () => {
+        const groupId = 'legacy-swipe-group';
+        const chatId = 'legacy-swipe-chat';
+        const groupFile = path.join(directories.groups, `${groupId}.json`);
+        const chatFile = path.join(directories.groupChats, `${chatId}.jsonl`);
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Legacy', members: ['Aria.png'], chats: [chatId], chat_id: chatId }));
+        const original = { name: 'Aria', is_user: false, mes: 'First', swipes: ['First', 'Second'], swipe_id: 0 };
+        fs.writeFileSync(chatFile, JSON.stringify(original));
+        const url = `${baseUrl}/api/v1/groups/${groupId}/chats/${chatId}/swipe`;
+        const select = () => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: 0, swipeId: 1 }) });
+        let record;
+        try {
+            expect((await select()).status).toBe(200);
+            const rows = fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse);
+            expect(rows).toHaveLength(1);
+            expect(rows[0]).toMatchObject({ mes: 'Second', swipe_id: 1 });
+            record = createGeneration({ handle: 'contract-user', clientRequestId: 'legacy-swipe-fence', characterId: 'another-group', chatId, type: 'normal', targetKind: 'group', directories }).record;
+            expect((await select()).status).toBe(409);
+            expect(JSON.parse(fs.readFileSync(chatFile, 'utf8'))).toEqual(rows[0]);
+        } finally {
+            if (record) cancel(record);
+            fs.rmSync(chatFile, { force: true });
+            fs.rmSync(groupFile, { force: true });
+        }
+    });
+
     test('deleting a group does not remove a chat referenced by another group', async () => {
         const chatId = 'shared-delete-chat';
         const groupIds = ['shared-delete-one', 'shared-delete-two'];
