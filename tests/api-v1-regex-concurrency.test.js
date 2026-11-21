@@ -11,6 +11,7 @@ import { write as writeCard } from '../src/character-card-parser.js';
 let enter, resolve, entered;
 jest.unstable_mockModule('../src/headless/prompt.js', () => ({ runNativeText: () => { enter(); return new Promise(done => { resolve = done; }); } }));
 const { mutateNativeMessage } = await import('../src/headless/message-text.js');
+const { editGroupMessage } = await import('../src/headless/group-management.js');
 let root, session, file, pending;
 beforeAll(() => setConfigFilePath(path.join(serverDirectory, 'default/config.yaml')));
 beforeEach(() => {
@@ -44,4 +45,42 @@ test('an unchanged transcript publishes computed metadata and edited text while 
     pending = edit(); await entered; resolve(result());
     expect(await pending).toBe(1);
     expect(readChat(file)).toEqual([{ chat_metadata: { variables: { keep: 1, computed: 1 } } }, { is_user: false, mes: 'Transformed', extra: { opaque: true } }]);
+});
+
+test('a group edit rejects a transcript changed while text processing is suspended', async () => {
+    session.directories.groups = path.join(root, 'groups');
+    session.directories.groupChats = path.join(root, 'group chats');
+    fs.mkdirSync(session.directories.groups);
+    fs.mkdirSync(session.directories.groupChats);
+    fs.writeFileSync(path.join(session.directories.groups, 'Group.json'), JSON.stringify({ name: 'Group', members: ['Aria.png'], chats: ['Shared'], chat_id: 'Shared' }));
+    const groupFile = path.join(session.directories.groupChats, 'Shared.jsonl');
+    const original = { name: 'Aria', original_avatar: 'Aria.png', is_user: false, mes: 'Original' };
+    writeChat(groupFile, [{ chat_metadata: { variables: { keep: 1 } } }, original]);
+    pending = editGroupMessage(session, 'Group', 'Shared', 1, { ...original, index: 1 }, 'Draft');
+    await entered;
+    const changed = readChat(groupFile);
+    changed.push({ is_user: true, mes: 'Independent' });
+    writeChat(groupFile, changed);
+    const bytes = fs.readFileSync(groupFile, 'utf8');
+    resolve(result());
+    await expect(pending).rejects.toMatchObject({ status: 409, code: 'conflict' });
+    expect(fs.readFileSync(groupFile, 'utf8')).toBe(bytes);
+});
+
+test('a shared group generation admitted during text processing fences the edit', async () => {
+    session.directories.groups = path.join(root, 'groups');
+    session.directories.groupChats = path.join(root, 'group chats');
+    fs.mkdirSync(session.directories.groups);
+    fs.mkdirSync(session.directories.groupChats);
+    fs.writeFileSync(path.join(session.directories.groups, 'Group.json'), JSON.stringify({ name: 'Group', members: ['Aria.png'], chats: ['Shared'], chat_id: 'Shared' }));
+    const groupFile = path.join(session.directories.groupChats, 'Shared.jsonl');
+    const original = { name: 'Aria', original_avatar: 'Aria.png', is_user: false, mes: 'Original' };
+    writeChat(groupFile, [{ chat_metadata: { variables: { keep: 1 } } }, original]);
+    pending = editGroupMessage(session, 'Group', 'Shared', 1, { ...original, index: 1 }, 'Draft');
+    await entered;
+    createGeneration({ handle: session.handle, characterId: 'OtherGroup', chatId: 'Shared', clientRequestId: 'group-admitted-during-edit', type: 'normal', targetKind: 'group', directories: session.directories });
+    const bytes = fs.readFileSync(groupFile, 'utf8');
+    resolve(result());
+    await expect(pending).rejects.toMatchObject({ status: 409, code: 'conflict' });
+    expect(fs.readFileSync(groupFile, 'utf8')).toBe(bytes);
 });
