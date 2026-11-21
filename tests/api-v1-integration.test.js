@@ -107,6 +107,22 @@ describe('API v1 routes', () => {
         expect(fs.readFileSync(groupFile, 'utf8')).toBe(original);
         expect(fs.existsSync(chatFile)).toBe(false);
 
+        const write = fs.writeFileSync;
+        const writeSpy = jest.spyOn(fs, 'writeFileSync').mockImplementation((file, data, ...args) => {
+            if (typeof file === 'number') {
+                write(file, 'partial');
+                throw Object.assign(new Error('partial write'), { code: 'EIO' });
+            }
+            return write(file, data, ...args);
+        });
+        try {
+            await expect(createGroupChat(session, 'creation-failure', 'creation-failure-chat', revision)).rejects.toThrow('partial write');
+        } finally {
+            writeSpy.mockRestore();
+        }
+        expect(fs.readFileSync(groupFile, 'utf8')).toBe(original);
+        expect(fs.existsSync(chatFile)).toBe(false);
+
         const rename = fs.renameSync;
         const renameSpy = jest.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
             if (to === groupFile) throw Object.assign(new Error('descriptor failure'), { code: 'EIO' });
