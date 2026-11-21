@@ -16,7 +16,7 @@ let frame;
 export const diagnosticConsole = {
     debug() {}, log() {},
     warn(message) { if (frame && frame.diagnostics.length < 32) frame.diagnostics.push(String(message).slice(0, 500)); },
-    error() { diagnosticConsole.warn('World Info evaluator reported an invalid setting.'); },
+    error() { diagnosticConsole.warn(frame?.diagnosticLabel ?? 'World Info evaluator reported an invalid setting.'); },
 };
 export const toastr = { warning: message => diagnosticConsole.warn(message) };
 export const event_types = { WORLDINFO_ENTRIES_LOADED: 'worldinfo_entries_loaded', WORLDINFO_SCAN_DONE: 'worldinfo_scan_done' };

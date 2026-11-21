@@ -5,14 +5,17 @@ import { serverDirectory } from '../server-directory.js';
 setConfigFilePath(path.join(serverDirectory, 'default/config.yaml'));
 process.env.SILLYTAVERN_ENABLEDOWNLOADABLETOKENIZERS = 'false';
 const { buildPromptInline } = await import('./prompt-core.js');
+const { evaluateNativeText } = await import('./text-core.js');
 // Do not forward console output from tokenizers/source evaluators to host logs.
 console.log = console.info = console.debug = console.warn = console.error = () => {};
 parentPort.on('message', async ({ id, payload }) => {
     try {
-        const result = await buildPromptInline(payload.session, payload.character, payload.chat, payload.options);
+        const result = payload.operation === 'text'
+            ? evaluateNativeText(payload.session, payload.character, payload.chat, payload.options)
+            : await buildPromptInline(payload.session, payload.character, payload.chat, payload.options);
         if (Buffer.byteLength(JSON.stringify(result)) > 33_554_432) throw new Error('Prompt result exceeds its size limit.');
         parentPort.postMessage({ id, result });
     } catch (error) {
-        parentPort.postMessage({ id, error: { status: Number(error.status) || 422, code: error.code ?? 'validation', message: error.status ? error.message : 'World Info/prompt preparation failed. Inspect the selected books and configuration.' } });
+        parentPort.postMessage({ id, error: { status: Number(error.status) || 422, code: error.code ?? 'validation', message: error.status ? error.message : 'Native text/prompt evaluation failed. Inspect the selected scripts and configuration.' } });
     }
 });

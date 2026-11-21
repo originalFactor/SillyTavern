@@ -442,8 +442,9 @@ The `resources.macroManagement` flag gates these controls separately from full
 recursion, minimum activations, token budgets, probability, inclusion groups,
 sticky/cooldown/delay, field scans, all insertion positions and outlets. Global,
 chat, Persona, primary/extra character and embedded books follow source ordering.
-WI output uses source-derived regex with scope authorization; other regex paths
-remain incomplete, so full `scopedRegex` stays false. External extension WI event
+WI output uses source-derived regex with scope authorization. Additional storage,
+prompt/edit/display paths are described below; full `scopedRegex` stays false
+until live-stream and remaining source integration are complete. External extension WI event
 hooks remain unavailable; this is not full browser/plugin parity.
 
 Selected files must be regular, non-symlink JSON/UTF-8 books (4 MiB each, 32 MiB
@@ -497,3 +498,62 @@ blocks deletion. Bounds are 10000 inventory entries, 64 MiB total, 4 MiB/card an
 8 MiB/chat. This reference guard does not enable group generation. Import/edit
 never authorizes embedded regex, external code or network calls. Native bulk JSON
 editors retain failed drafts; only explicit Reload discards them.
+
+
+## Source-derived native regex paths and scope management
+
+`upstreamRegexPaths` now covers source-derived regex in new user-message storage,
+character greetings, provider output/reasoning, prompt history, explicit message
+editing/appending and saved-message display. All these evaluations use the bounded
+serialized Worker, not a second simplified RegExp implementation. The old native
+helper has been removed. Source order is **global → preset → character**. Scoped
+scripts require standard `character_allowed_regex`/`preset_allowed_regex` grants.
+Flags `promptOnly`, `markdownOnly`, `runOnEdit`, depth, capture trimming, named
+captures and raw/escaped macro substitution use the generated upstream engine.
+
+Default user/output scripts run at storage time; `promptOnly` history processing
+uses the actual user/assistant placement and source depth (including continue's
+prefix depth). Character/story/Persona fields are not passed through user-input
+regex. Examples are not user messages. New input is transformed and expanded once,
+with staged swipe text kept consistent. Preview uses the same pipeline without
+publishing it; random/time values and upstream dry-run WI activation can differ. Existing historical MVP rows are never silently rewritten. If an
+old configuration relied on the former incorrect prompt-wide user-regex behavior,
+use `promptOnly` with the intended placement instead of relying on that bug.
+
+`GET/PUT /regex-settings` manages `{enabled,scripts,characterAllowed,presetAllowed}`
+under its own revision, preserving the latest unrelated settings. PUT takes
+`{expectedRevision,settings,confirmScopeChanges}`. Added character/preset scopes
+and re-enabling previously granted scopes require a separate explicit `true`
+confirmation. Importing or saving a card/preset never grants permission. A grant
+is for the named avatar/preset, including future edits; it is not a script digest.
+Revocation does not require confirmation. Limits are 1 MiB, 512 scripts and bounded
+unique permission lists; malformed stored containers fail instead of becoming
+empty authority. Unknown script properties are preserved. Disable only changes
+the `regex` entry in disabledExtensions, preserving other extensions.
+
+`GET /chats/{id}?characterId=...&render=true` adds `native_display` and
+`native_display_reasoning` while retaining raw `mes`/`extra.reasoning`. Native
+clients use `POST /chats/{id}/render` with paging fields, characterId and whitelisted
+nativeContext in the body, keeping device facts/drafts out of URLs. Display-only
+rules see full-history depth even when paging. Rendering does not call a provider,
+rerun prompt preparation, or publish macro-variable effects. A script proposing
+such effects produces a visible diagnostic. Native editing uses raw stored text,
+not its display projection. Narrator/AI/user and reasoning placements are distinct.
+The native UI includes a separate collapsible reasoning block and diagnostics.
+
+Greeting evaluation is asynchronous: identity and admission are rechecked after
+waiting and before any effects. Message edit/append snapshots are checked again
+after evaluation; newer rows/metadata or a newly admitted generation reject the
+stale edit before text or variables are published. Failed drafts remain in the UI.
+Any uncertain publication instructs inspection; writes are never auto-replayed.
+Provider output processing rechecks cancellation before effects and transcript
+commit. A formatting-worker failure after dispatch is billable-unknown, retains
+raw provider text and never replays a caller key. Pre-dispatch formatting failures
+cannot send a provider request. Worker limits are shared with prompt preparation.
+
+This is not full browser regex/extension parity: live streaming still uses raw
+snapshots until the saved-message projection is loaded; full reasoning-in-prompt,
+slash-command execution and richer scoped-script management remain open. The
+`scopedRegex` full-compatibility flag therefore remains false. The separate
+`regexManagement` and `renderedTranscript` resources describe the implemented
+surfaces precisely. ST retains ownership of all transcript/configuration state.

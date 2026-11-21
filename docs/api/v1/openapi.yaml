@@ -20,6 +20,63 @@ security:
   # requires a 32-byte bearer capability instead of cookie/CSRF auth.
   - bearerCapability: []
 paths:
+  /api/v1/regex-settings:
+    get:
+      operationId: getRegexSettings
+      summary: Read independently revisioned global regex scripts and explicit scope grants.
+      responses:
+        '200': { description: Object with revision and settings (enabled, scripts, characterAllowed, presetAllowed). Maximum 1 MiB; unrelated settings and secrets are excluded. }
+        '422': { description: Stored regex/permission state is malformed or oversized. Nothing is truncated. }
+    put:
+      operationId: saveRegexSettings
+      summary: Save global regex and permission lists without implicitly granting imported scopes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, settings]
+              properties:
+                expectedRevision: { type: string }
+                settings:
+                  type: object
+                  required: [enabled, scripts, characterAllowed, presetAllowed]
+                  properties:
+                    enabled: { type: boolean }
+                    scripts: { type: array, maxItems: 512, items: { type: object, additionalProperties: true } }
+                    characterAllowed: { type: array, maxItems: 512, uniqueItems: true, items: { type: string }, description: Exact avatar filenames. Grants also apply to future edits of those cards. }
+                    presetAllowed: { type: object, additionalProperties: { type: array, maxItems: 512, uniqueItems: true, items: { type: string } }, description: API ID to preset-name arrays. Grants also apply to future edits. }
+                confirmScopeChanges: { type: boolean, default: false, description: Separate explicit confirmation required for added scopes or re-enabling scoped regex. Never inferred from script/card/preset JSON. }
+      responses:
+        '200': { description: Saved settings and revision. Latest unrelated provider, macro, note and extension settings survive. }
+        '400': { description: Invalid script fields, permissions or size. }
+        '409': { description: Revision conflict or explicit scope confirmation required. Draft was not applied. }
+  /api/v1/chats/{chatId}/render:
+    parameters:
+      - $ref: '#/components/parameters/chatId'
+    post:
+      operationId: renderNativeChatPage
+      summary: Read a stable transcript page with read-only source-derived display projections and native macro facts.
+      description: Rendering never publishes variable effects or modifies the transcript. Raw mes and extra.reasoning remain in the response; native_display and native_display_reasoning are transient projections. Proposed variable changes produce a diagnostic. Facts and drafts travel in the body, never the URL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [characterId]
+              properties:
+                characterId: { type: string }
+                limit: { type: integer, minimum: 1, maximum: 500, default: 200 }
+                before: { type: integer, minimum: 0 }
+                after: { type: integer, minimum: 0 }
+                nativeContext:
+                  $ref: '#/components/schemas/GenerationInput/properties/nativeContext'
+      responses:
+        '200': { description: Stable-indexed page with raw messages and native display projections. No provider call or transcript write. }
+        '400': { description: Invalid native context. }
+        '422': { description: Corrupt transcript/card or bounded regex evaluation failure. }
   /api/v1/world-info:
     get:
       operationId: listWorldInfoBooks
@@ -645,6 +702,10 @@ paths:
           schema:
             type: integer
             minimum: 0
+        - name: render
+          in: query
+          description: Add read-only native display projections with default macro facts. Native clients use POST /render to supply device facts privately.
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Chat page with total, hasMore and nextBefore.
@@ -684,7 +745,8 @@ paths:
   /api/v1/chats/{chatId}/messages:
     post:
       operationId: mutateChat
-      summary: Append, edit or delete a chat message by stable index.
+      summary: Append, edit, delete or select a swipe by stable index.
+      description: Text append/edit runs source storage regex (runOnEdit for edits) in the bounded worker, then rechecks admission and the transcript before publishing effects.
       parameters:
         - $ref: '#/components/parameters/chatId'
       requestBody:
@@ -707,6 +769,8 @@ paths:
                   type: integer
                   minimum: 0
                   description: Required with action swipe; selects a stored assistant alternative.
+                nativeContext:
+                  $ref: '#/components/schemas/GenerationInput/properties/nativeContext'
                 message:
                   type: object
                   description: Required for append/edit.
@@ -715,6 +779,8 @@ paths:
           description: Message appended.
         '200':
           description: Message edited or deleted.
+        '409': { description: Active/unresolved admission or transcript changed during evaluation. }
+        '500': { description: Publication is unknown; inspect text/variables before another explicit save. }
   /api/v1/extensions:
     get:
       operationId: listExtensions

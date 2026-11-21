@@ -5,8 +5,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, test } from '@jest/globals';
 
 import { errorBody, mergePatch, requireSafeId } from '../src/headless/contract.js';
-import { buildPrompt } from '../src/headless/prompt.js';
-import { applyGlobalRegex, regex_placement } from '../src/headless/regex.js';
+import { buildPrompt, runNativeText } from '../src/headless/prompt.js';
+import { regex_placement } from '../src/headless/regex-runtime.js';
 import { normalizeCharacterData, patchSettings, readSettings, writeSettings } from '../src/headless/session.js';
 
 const temporaryDirectories = [];
@@ -100,7 +100,7 @@ describe('settings and cards', () => {
 describe('headless prompt assembly', () => {
     test('expands macros, activates World Info, and applies regex', async () => {
         const session = makeSession();
-        session.extensionSettings.regex = [{ findRegex: '/^Hello.*$/g', replaceString: 'Greetings', placement: regex_placement.USER_INPUT }];
+        session.extensionSettings.regex = [{ findRegex: '/^Hello.*$/g', replaceString: 'Greetings', placement: [regex_placement.AI_OUTPUT], promptOnly: true }];
         fs.writeFileSync(path.join(session.directories.worlds, 'Contract.json'), JSON.stringify({
             entries: { lore: { id: 1, key: ['contract'], content: 'World lore for {{char}}.', order: 10, position: 0 } },
         }));
@@ -134,7 +134,8 @@ describe('headless prompt assembly', () => {
 
     test('global regex only runs at matching placement', async () => {
         const settings = { regex: [{ findRegex: '/a/g', replaceString: 'b', placement: regex_placement.USER_INPUT }] };
-        expect(applyGlobalRegex('a', settings, regex_placement.USER_INPUT)).toBe('b');
-        expect(applyGlobalRegex('a', settings, regex_placement.AI_OUTPUT)).toBe('a');
+        const session = makeSession({ extensionSettings: settings });
+        expect((await runNativeText(session, { name: 'Aria' }, [], { mode: 'append', message: { is_user: true, mes: 'a' } })).text).toBe('b');
+        expect((await runNativeText(session, { name: 'Aria' }, [], { mode: 'output', text: 'a' })).text).toBe('a');
     });
 });

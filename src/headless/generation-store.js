@@ -445,6 +445,11 @@ export function setFinalText(record, text) {
     if (Buffer.byteLength(finalText) > 8_388_608) throw new ApiError(502, 'unknown', 'Transformed output exceeded its size limit; the generated text was not committed.');
     record.text = finalText;
 }
+export function setFinalReasoning(record, text) {
+    const reasoning = String(text ?? '');
+    if (Buffer.byteLength(reasoning) > 8_388_608) throw new ApiError(502, 'unknown', 'Transformed reasoning exceeded its size limit; the generated text was not committed.');
+    record.reasoning = reasoning;
+}
 
 /**
  * Adds an SSE subscriber and sends current events after the given sequence.

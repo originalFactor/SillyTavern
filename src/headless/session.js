@@ -246,7 +246,7 @@ export function resolveChatPath(session, characterId, chatId) {
  * @param {string} [characterName] Display name for the greeting
  * @returns {{id: string, fileName: string, characterId: string}} Created chat
  */
-export function createChat(session, characterId, chatId, firstMessage = '', characterName = characterId, { metadata = {}, macroWarnings = [] } = {}) {
+export function createChat(session, characterId, chatId, firstMessage = '', characterName = characterId, { metadata = {}, macroWarnings = [], regexWarnings = [] } = {}) {
     const filePath = resolveChatPath(session, characterId, chatId);
     if (fs.existsSync(filePath)) {
         throw new ApiError(409, 'conflict', 'Chat already exists.');
@@ -255,6 +255,7 @@ export function createChat(session, characterId, chatId, firstMessage = '', char
         ? [createCharacterMessage(characterName, firstMessage)]
         : [];
     if (message.length && macroWarnings.length) message[0].extra.native_macro_warnings = macroWarnings;
+    if (message.length && regexWarnings.length) message[0].extra.native_regex_warnings = regexWarnings;
     writeChat(filePath, [{ chat_metadata: metadata }, ...message]);
     return { id: chatId, fileName: path.basename(filePath), characterId };
 }
@@ -305,7 +306,9 @@ export function renameChat(session, characterId, chatId, newChatId) {
  * @returns {{messages: Array<Record<string, any>>, total: number, hasMore: boolean, nextBefore: number|null}} Page
  */
 export function readChatPage(filePath, { limit = 200, before = null, after = null } = {}) {
-    const all = readChat(filePath);
+    return pageChat(readChat(filePath), { limit, before, after });
+}
+export function pageChat(all, { limit = 200, before = null, after = null } = {}) {
     const boundedLimit = Math.min(500, Math.max(1, Number(limit) || 200));
     const parseAnchor = value => {
         if (value === null || value === undefined || value === '') return null;

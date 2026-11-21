@@ -25,6 +25,8 @@ import {
 } from '../headless/generation-store.js';
 import { buildPrompt, listExtensions } from '../headless/prompt.js';
 import { createMacroChat } from '../headless/macros.js';
+import { renderedChatPage, mutateNativeMessage } from '../headless/message-text.js';
+import { getRegexSettings, saveRegexSettings } from '../headless/regex-management.js';
 import { readGlobalMacros, readLocalMacros, saveGlobalMacros, saveLocalMacros } from '../headless/macro-management.js';
 import { listWorldBooks, getWorldBook, saveWorldBook, deleteWorldBook, exportWorldBook, getWorldSettings, saveWorldSettings, getChatWorldBook, saveChatWorldBook } from '../headless/world-info-management.js';
 import { areHeadlessPluginHooksEnabled, HEADLESS_HOOKS } from '../headless/plugin-runtime.js';
@@ -35,7 +37,6 @@ import {
     isApiV1Enabled,
     listCharacters,
     listChats,
-    mutateChat,
     renameChat,
     patchSettings,
     readCharacter,
@@ -84,6 +85,8 @@ router.get('/capabilities', (_request, response) => {
             chatGreetingMacros: true,
             macroManagement: true,
             worldInfoManagement: true,
+            renderedTranscript: true,
+            regexManagement: true,
             chatDelete: true,
             chatMutate: true,
             chatPaging: true,
@@ -129,6 +132,7 @@ router.get('/capabilities', (_request, response) => {
             worldInfoScanner: true,
             personaAuthorNote: true,
             globalRegex: true,
+            upstreamRegexPaths: true,
             scopedRegex: false,
             promptManagerPresets: false,
             promptManagerOrdering: true,
@@ -184,6 +188,12 @@ router.patch('/settings', asyncHandler(async (request, response) => {
 
 router.get('/macro-variables/global', asyncHandler(async (request, response) => {
     response.json(readGlobalMacros(createSession(request)));
+}));
+router.get('/regex-settings', asyncHandler(async (request, response) => {
+    response.json(getRegexSettings(createSession(request)));
+}));
+router.put('/regex-settings', asyncHandler(async (request, response) => {
+    response.json(saveRegexSettings(createSession(request), request.body));
 }));
 
 router.get('/world-info', asyncHandler(async (request, response) => {
@@ -392,7 +402,7 @@ router.post('/characters/:characterId/chats', asyncHandler(async (request, respo
     const firstMessage = typeof request.body?.firstMessage === 'string' ? request.body.firstMessage : '';
     const character = await readCharacter(session, request.params.characterId);
     assertChatIdle(session.handle, request.params.characterId, chatId, session.directories);
-    const created = createMacroChat(session, character.data, request.params.characterId, chatId,
+    const created = await createMacroChat(session, character.data, request.params.characterId, chatId,
         firstMessage || String(character.data.first_mes ?? ''), validateNativeMacroContext(request.body?.nativeContext), listExtensions(session));
     response.status(201).json(created);
 }));
@@ -402,11 +412,12 @@ router.get('/chats/:chatId', asyncHandler(async (request, response) => {
     const characterId = typeof request.query.characterId === 'string' ? request.query.characterId : '';
     requireSafeId(characterId, 'characterId');
     const chatPath = resolveChatPath(session, characterId, request.params.chatId);
-    const page = readChatPage(chatPath, {
+    const paging = {
         limit: request.query.limit,
         before: request.query.before,
         after: request.query.after,
-    });
+    };
+    const page = request.query.render === 'true' ? await renderedChatPage(session, characterId, request.params.chatId, paging) : readChatPage(chatPath, paging);
     response.json({ characterId, chatId: request.params.chatId, ...page });
 }));
 
@@ -414,16 +425,25 @@ router.post('/chats/:chatId/messages', asyncHandler(async (request, response) =>
     const session = createSession(request);
     const characterId = typeof request.body?.characterId === 'string' ? request.body.characterId : '';
     requireSafeId(characterId, 'characterId');
-    const chatPath = resolveChatPath(session, characterId, request.params.chatId);
     const action = String(request.body?.action ?? 'append');
     assertChatIdle(session.handle, characterId, request.params.chatId, session.directories);
-    const index = await mutateChat(chatPath, {
+    const index = await mutateNativeMessage(session, characterId, request.params.chatId, {
         action,
         message: request.body?.message,
         index: request.body?.index,
         swipeId: request.body?.swipeId,
+        nativeContext: validateNativeMacroContext(request.body?.nativeContext),
     });
     response.status(action === 'append' ? 201 : 200).json({ chatId: request.params.chatId, action, index });
+}));
+router.post('/chats/:chatId/render', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    const characterId = requireSafeId(request.body?.characterId, 'characterId');
+    const page = await renderedChatPage(session, characterId, request.params.chatId, {
+        limit: request.body?.limit, before: request.body?.before, after: request.body?.after,
+        nativeContext: validateNativeMacroContext(request.body?.nativeContext),
+    });
+    response.json({ characterId, chatId: request.params.chatId, ...page });
 }));
 
 router.delete('/chats/:chatId', asyncHandler(async (request, response) => {
@@ -471,6 +491,7 @@ router.post('/generations/preview', asyncHandler(async (request, response) => {
     const built = await buildPrompt(session, character.data, chat, {
         type: input.type, input: input.input, overrides: input.overrides,
         characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext, preview: true,
+        stageUserInput: input.type === 'normal' && Boolean(input.input),
     });
     response.json({
         messages: built.messages,

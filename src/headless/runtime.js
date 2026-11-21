@@ -1,7 +1,6 @@
 import { ApiError, getUserKey } from './contract.js';
-import { complete, fail, recordPluginEvents, beginGeneration, endGeneration, shouldStopGeneration, setFinalText, setUsage, stage, withChatLock } from './generation-store.js';
-import { applyGlobalRegex, regex_placement } from './regex.js';
-import { buildPrompt } from './prompt.js';
+import { complete, fail, recordPluginEvents, beginGeneration, endGeneration, shouldStopGeneration, setFinalText, setFinalReasoning, setUsage, stage, withChatLock } from './generation-store.js';
+import { buildPrompt, runNativeText } from './prompt.js';
 import { persistMacroEffects } from './macros.js';
 import {
     applyHeadlessHooks,
@@ -83,8 +82,13 @@ export async function runGeneration(sourceRequest, session, record, input) {
                 type: input.type, input: input.input, overrides: input.overrides ?? {},
                 characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext,
                 macroChat,
+                stageUserInput: input.type === 'normal' && Boolean(input.input),
             });
             if (shouldStopGeneration(record)) return;
+            if (built.stagedUserMessage !== undefined) {
+                chat.at(-1).mes = built.stagedUserMessage;
+                chat.at(-1).swipes = [built.stagedUserMessage];
+            }
             // Upstream variable macros run during preparation. Publish their
             // metadata effects before the first awaited hook/provider dispatch,
             // preserving the saved transcript until successful completion.
@@ -111,8 +115,19 @@ export async function runGeneration(sourceRequest, session, record, input) {
             const { runSessionChatCompletion } = await import('./provider.js');
             const result = await runSessionChatCompletion(sourceRequest, built.providerRequest, record, session);
             if (shouldStopGeneration(record)) return;
+            setUsage(record, result.usage);
 
-            let output = applyGlobalRegex(result.text, session.extensionSettings, regex_placement.AI_OUTPUT);
+            let formatted;
+            try {
+                formatted = await runNativeText(session, character.data, chat, { mode: 'output', text: result.text, reasoning: result.reasoning, type: input.type, characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext });
+            } catch {
+                throw new ApiError(500, 'unknown', 'The provider completed but local regex formatting failed. The request may have been billed; inspect the retained raw generation before sending again.');
+            }
+            if (shouldStopGeneration(record)) return;
+            let output = formatted.text;
+            const reasoning = formatted.reasoning;
+            built.warnings.regexWarnings = [...(built.warnings.regexWarnings ?? []), ...formatted.warnings.regexWarnings];
+            built.warnings.macroWarnings = [...(built.warnings.macroWarnings ?? []), ...formatted.warnings.macroWarnings];
             const outputHooks = await applyHeadlessOutputHooks(session, output, {
                 characterId: input.characterId,
                 chatId: input.chatId,
@@ -121,11 +136,14 @@ export async function runGeneration(sourceRequest, session, record, input) {
             if (shouldStopGeneration(record)) return;
             output = outputHooks.text;
             mergeEffects(effects, outputHooks.effects);
-            setUsage(record, result.usage);
             setFinalText(record, output);
+            setFinalReasoning(record, reasoning);
             mergeEffects(effects, await emitHeadlessEvent(session, 'generation_completed', { requestId: record.requestId, status: 'done' }));
             if (shouldStopGeneration(record)) return;
             recordPluginEvents(record, effects.events);
+            try { persistMacroEffects(session, chatPath, chat, formatted.macroEffects); } catch {
+                throw new ApiError(500, 'unknown', 'The provider completed but output variable effects could not be confirmed. Inspect the retained generation before sending again; no request was replayed.');
+            }
             // Persist plugin settings BEFORE the terminal event so a client that
             // observes `done` can immediately read back the extension settings.
             persistPluginSettings(session, effects.settingsPatch);
@@ -136,17 +154,17 @@ export async function runGeneration(sourceRequest, session, record, input) {
                     chatId: input.chatId,
                     messageIndex: null,
                     text: output,
-                    reasoning: result.reasoning,
+                    reasoning,
                     warnings: built.warnings,
                     pluginEffects: summarizeEffects(effects),
                 }, { committed: false });
             } else {
-                const messageIndex = commitMessages(chatPath, chat, character.name, output, result.reasoning, input.type, previousReply);
+                const messageIndex = commitMessages(chatPath, chat, character.name, output, reasoning, input.type, previousReply, formatted.warnings.regexWarnings);
                 complete(record, {
                     characterId: input.characterId,
                     chatId: input.chatId,
                     messageIndex,
-                    message: { name: character.name, is_user: false, mes: output, extra: result.reasoning ? { reasoning: result.reasoning } : {} },
+                    message: { name: character.name, is_user: false, mes: output, extra: reasoning ? { reasoning } : {} },
                     warnings: built.warnings,
                     pluginEffects: summarizeEffects(effects),
                 });
@@ -187,7 +205,7 @@ export async function runGeneration(sourceRequest, session, record, input) {
  * @param {Record<string, any>|null} previousReply Previous reply for regeneration
  * @returns {number} Index of the assistant message
  */
-function commitMessages(chatPath, chat, characterName, output, reasoning, type, previousReply = null) {
+function commitMessages(chatPath, chat, characterName, output, reasoning, type, previousReply = null, regexWarnings = []) {
     if (type === 'continue' && chat.length > 1 && !chat[chat.length - 1].is_user) {
         const last = chat[chat.length - 1];
         last.swipes = Array.isArray(last.swipes) && last.swipes.length ? [...last.swipes] : [String(last.mes ?? '')];
@@ -212,6 +230,12 @@ function commitMessages(chatPath, chat, characterName, output, reasoning, type, 
         chat.push({ ...previousReply, mes: output, swipes, swipe_info: swipeInfo, swipe_id: swipes.length - 1, extra });
     } else {
         chat.push(createCharacterMessage(characterName, output, reasoning));
+    }
+    if (regexWarnings.length) {
+        const message = chat.at(-1);
+        message.extra ??= {};
+        message.extra.native_regex_warnings = [...new Set([...(message.extra.native_regex_warnings ?? []), ...regexWarnings])].slice(0, 32);
+        if (message.swipe_info?.[message.swipe_id]) message.swipe_info[message.swipe_id].extra = { ...message.extra };
     }
     writeChat(chatPath, chat);
     return chat.length - 1;

@@ -48,7 +48,7 @@ from the companion entry point.
 Focused verification from this checkout:
 
 ```sh
-NODE_OPTIONS=--experimental-vm-modules pnpm --dir tests exec jest --config jest.config.json --runInBand api-v1-generation-owner.test.js api-v1-generation-journal.test.js api-v1-generation-lifecycle.test.js api-v1-presets.test.js api-v1-provider.test.js api-v1-prompt-manager.test.js api-v1-character-management.test.js api-v1-integration.test.js api-v1-headless.test.js api-v1-companion.test.js api-v1-bundle.test.js api-v1-plugins.test.js api-v1-macros.test.js api-v1-macro-management.test.js api-v1-world-info.test.js api-v1-world-info-management.test.js
+NODE_OPTIONS=--experimental-vm-modules pnpm --dir tests exec jest --config jest.config.json --runInBand api-v1-generation-owner.test.js api-v1-generation-journal.test.js api-v1-generation-lifecycle.test.js api-v1-presets.test.js api-v1-provider.test.js api-v1-prompt-manager.test.js api-v1-character-management.test.js api-v1-integration.test.js api-v1-headless.test.js api-v1-companion.test.js api-v1-bundle.test.js api-v1-plugins.test.js api-v1-macros.test.js api-v1-macro-management.test.js api-v1-world-info.test.js api-v1-world-info-management.test.js api-v1-regex-paths.test.js api-v1-regex-concurrency.test.js
 pnpm exec eslint src/endpoints/api-v1.js src/headless/session.js src/headless/runtime.js src/headless/prompt.js src/headless/generation-store.js
 ```
 
@@ -116,3 +116,28 @@ Host-side tests do not prove execution of the arm64 Android Node binary.
   group-chat references synchronously, rejecting unsafe/corrupt/oversized
   inventories (10000 entries/64 MiB aggregate, 4 MiB/card, 8 MiB/chat). A linked or
   uninspectable book remains intact. Management does not establish group support.
+
+
+- `regex-runtime.js` reuses generated upstream regex for storage, greetings,
+  prompt history, editing and saved display; no simplified fallback remains.
+  Preserve source global→preset→character order, role/depth, flags, captures and
+  macro substitution. Default storage rules must not run again on every prompt
+  or on character fields. New user text/swipes are staged consistently; no user
+  row is published before successful generation. Greetings recheck identity and
+  admission after awaited evaluation. Message edits recheck the whole transcript
+  and admission before publishing effects; newer metadata/rows must win.
+- `regex-management.js` owns independently revisioned global scripts and standard
+  scope lists (1 MiB/512 scripts). A separate confirmation grants new/re-enabled
+  character/preset scopes; import never grants authority. Preserve unrelated
+  extension/provider state and opaque script fields. Grants bind avatar/preset
+  names, including future edits, as in upstream. Do not infer trust from a file.
+- Rendered transcript reads are projections, never writes: retain raw mes and
+  reasoning; isolate/discard proposed variable effects and report diagnostics.
+  POST `/chats/:id/render` carries whitelisted native facts privately in the body;
+  GET render=true remains available with default facts. Native editors use raw
+  text. All regex jobs share the bounded worker. Post-provider failures are
+  billable-unknown with raw output retained; cancellation must be rechecked after
+  evaluation before any output metadata/text write. `upstreamRegexPaths`,
+  `regexManagement` and `renderedTranscript` do not establish full streaming,
+  reasoning-in-prompt, slash-command or scoped-management parity; keep full
+  `scopedRegex` false until those requirements are complete.

@@ -27,7 +27,7 @@ export async function scanWorldInfo(session, character, chat, context, fields, o
     const extensionSettings = clone(session.extensionSettings);
     extensionSettings.disabledExtensions ??= [];
     extensionSettings.note ??= {};
-    extensionSettings.regex = (extensionSettings.regex ?? []).map(script => ({ ...script, placement: Array.isArray(script.placement) ? script.placement : [Number(script.placement ?? 1)], replaceString: String(script.replaceString ?? ''), trimStrings: script.trimStrings ?? [] }));
+    extensionSettings.regex = (extensionSettings.regex ?? []).map(script => ({ ...script, placement: Array.isArray(script.placement) ? script.placement : [Number(script.placement ?? 1)], replaceString: String(script.replaceString ?? ''), trimStrings: script.trimStrings ?? [], substituteRegex: script.substituteRegex ?? 0 }));
     const frame = { context, books, characterId: options.characterId, settings: session.settings.world_info_settings, extensionSettings, loops: 0, diagnostics: [], tagMap: session.settings.tag_map ?? {}, presetName: session.settings.oai_settings?.preset_settings_openai, presetRegex: session.settings.oai_settings?.extensions?.regex_scripts };
     configure(frame, getRegexedString);
     initializeAuthorNote();

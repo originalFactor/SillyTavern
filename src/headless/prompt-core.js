@@ -3,7 +3,7 @@ import { upstreamMacroScript } from './macro-runtime/index.js';
 import { Handlebars } from './macro-runtime/platform.js';
 import { assembleManagedPrompt, activePromptOrder } from './prompt-manager.js';
 import { ApiError } from './contract.js';
-import { applyGlobalRegex, regex_placement } from './regex.js';
+import { nativeRegex, messagePlacement, regex_placement } from './regex-runtime.js';
 import { listExtensions } from './prompt-settings.js';
 import { scanWorldInfo } from './world-info-runtime/index.js';
 
@@ -50,7 +50,17 @@ export async function buildPromptInline(session, character, chat, { type, input 
     }
     const context = createMacroContext(session, character, chat, { type, input, overrides, extensions: macroOptions.extensions ?? listExtensions(session), ...macroOptions });
     const macro = (text, original) => context.expand(text, typeof original === 'string' ? { original } : {});
-    const regexUserInput = text => applyGlobalRegex(text, session.extensionSettings, regex_placement.USER_INPUT);
+    const regex = nativeRegex(session, context, macroOptions.characterId);
+    let stagedUserMessage;
+    if (macroOptions.stageUserInput) {
+        const last = chat.at(-1);
+        if (!last?.is_user || last.mes !== input) throw new ApiError(409, 'conflict', 'Staged user message changed before preparation.');
+        context.frame.chat.pop();
+        stagedUserMessage = context.expand(regex.apply(input, regex_placement.USER_INPUT));
+        last.mes = stagedUserMessage;
+        last.swipes = [stagedUserMessage];
+        context.frame.chat.push(structuredClone(last));
+    }
     const fields = context.fields();
     const worldInfo = await scanWorldInfo(session, character, chat, context, fields, { type, input, ...macroOptions });
     const maxContextMessages = Math.max(1, Number(oai.openai_max_context ?? settings.max_context ?? 16));
@@ -58,8 +68,10 @@ export async function buildPromptInline(session, character, chat, { type, input 
     const transcript = chat.filter(message => typeof message?.mes === 'string');
     const firstIncluded = history.find(message => typeof message?.mes === 'string');
     context.frame.metadata.lastInContextMessageId = Math.max(0, transcript.indexOf(firstIncluded));
-    const historyMessages = history.filter(message => typeof message?.mes === 'string').map(message => ({
-        role: message.is_system ? 'system' : message.is_user ? 'user' : 'assistant', content: regexUserInput(macro(message.mes)),
+    const usable = transcript.filter(message => !message.is_system);
+    const historyMessages = history.filter(message => typeof message?.mes === 'string' && !message.is_system).map(message => ({
+        role: message.is_user ? 'user' : 'assistant',
+        content: regex.apply(message === transcript[0] ? macro(message.mes) : message.mes, messagePlacement(message), { isPrompt: true, depth: usable.length - usable.indexOf(message) - (type === 'continue' ? 2 : 1) }),
     }));
     if (oai.new_chat_prompt) historyMessages.unshift({ role: 'system', content: macro(String(oai.new_chat_prompt)) });
     const examples = [];
@@ -72,14 +84,14 @@ export async function buildPromptInline(session, character, chat, { type, input 
         const parsed = context.run(() => upstreamMacroScript.substituteParams(example));
         const individual = context.run(() => context.frame.exampleParser(parsed));
         if (individual.length && oai.new_example_chat_prompt) examples.push({ role: 'system', content: macro(String(oai.new_example_chat_prompt)) });
-        examples.push(...individual.map(message => ({ role: 'system', name: message.name, content: regexUserInput(message.content) })));
+        examples.push(...individual.map(message => ({ role: 'system', name: message.name, content: message.content })));
     }
     const blocks = {
         worldInfoBefore: macro(worldInfo.before), worldInfoAfter: macro(worldInfo.after),
-        charDescription: regexUserInput(fields.description),
-        charPersonality: regexUserInput(fields.personality && oai.personality_format ? macro(String(oai.personality_format)) : fields.personality),
-        scenario: regexUserInput(fields.scenario && oai.scenario_format ? macro(String(oai.scenario_format)) : fields.scenario),
-        personaDescription: [0, 1].includes(personaPosition) ? regexUserInput(fields.persona) : '',
+        charDescription: fields.description,
+        charPersonality: fields.personality && oai.personality_format ? macro(String(oai.personality_format)) : fields.personality,
+        scenario: fields.scenario && oai.scenario_format ? macro(String(oai.scenario_format)) : fields.scenario,
+        personaDescription: [0, 1].includes(personaPosition) ? fields.persona : '',
     };
     const injections = [...worldInfo.depth, ...worldInfo.authorNotes];
     let messages, segments;
@@ -88,7 +100,7 @@ export async function buildPromptInline(session, character, chat, { type, input 
             ...character, system_prompt: fields.system, post_history_instructions: fields.jailbreak,
         }, type, macro, (personaPosition === 4 && fields.persona ? [{
             role: ['system', 'user', 'assistant'][Number(settings.power_user?.persona_description_role ?? 0)] ?? 'system',
-            content: regexUserInput(fields.persona),
+            content: fields.persona,
             injection_depth: Math.max(0, Math.min(100, Number(settings.power_user?.persona_description_depth ?? 2))), injection_order: 100,
         }] : []).concat(injections));
         messages = managed.messages;
@@ -116,13 +128,13 @@ export async function buildPromptInline(session, character, chat, { type, input 
         if (jailbreak?.content) messages.push({ role: jailbreak.role ?? 'system', content: macro(jailbreak.content) });
         segments = [{ role: 'system', name: 'storyString', content: story }];
     }
-    if (type === 'quiet' && input) messages.push({ role: 'system', content: regexUserInput(macro(input)) });
+    if (type === 'quiet' && input) messages.push({ role: 'system', content: macro(input) });
     const warnings = {
         worldInfoActivated: worldInfo.activated, promptManagerPresets: false,
         promptManagerOrdering: Boolean(activePromptOrder(oai)), instructMode: Boolean(settings.power_user?.instruct?.enabled),
         advancedMacros: false, upstreamMacroEngine: true, worldInfoScanner: true, worldInfoWarnings: worldInfo.warnings, macroWarnings: context.frame.warnings,
-        macroStateChanges: { local: context.frame.localDirty, global: context.frame.globalDirty },
+        macroStateChanges: { local: context.frame.localDirty, global: context.frame.globalDirty }, regexWarnings: regex.warnings,
         extensionPrompts: false, groupChats: false, swipes: true,
     };
-    return { messages, segments, warnings, macroEffects: context.effects() };
+    return { messages, segments, warnings, macroEffects: context.effects(), stagedUserMessage };
 }

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ApiError } from './contract.js';
 import { createChat, readChat, readSettings, resolveChatPath, writeChat, writeSettings } from './session.js';
-import { applyGlobalRegex, regex_placement } from './regex.js';
+import { assertChatIdle } from './generation-store.js';
 import { parseExampleIntoIndividual } from './macro-runtime/generated/instruct.js';
 import { evaluateNativeMacros, inMacroFrame, upstreamMacroScript } from './macro-runtime/index.js';
 
@@ -99,19 +99,23 @@ export function persistMacroEffects(session, chatPath, chat, effects) {
 }
 
 /** Expand once after checking identity; commit the greeting and local state together. */
-export function createMacroChat(session, character, characterId, chatId, firstMessage, nativeContext = {}, extensions = []) {
+export async function createMacroChat(session, character, characterId, chatId, firstMessage, nativeContext = {}, extensions = []) {
     const chatPath = resolveChatPath(session, characterId, chatId);
     if (fs.existsSync(chatPath)) throw new ApiError(409, 'conflict', 'Chat already exists.');
     const chat = [{ chat_metadata: {} }];
-    const context = createMacroContext(session, character, chat, { type: '', characterId, chatId, nativeContext, extensions });
-    const greeting = applyGlobalRegex(context.expand(firstMessage), session.extensionSettings, regex_placement.AI_OUTPUT);
-    const effects = context.effects();
+    const { runNativeText } = await import('./prompt.js');
+    const result = await runNativeText(session, character, chat, { mode: 'greeting', text: firstMessage, type: '', characterId, chatId, nativeContext, extensions });
+    // Evaluation yields. Recheck identity and admission before publishing any
+    // computed effects; competing creators must not overwrite the winner.
+    assertChatIdle(session.handle, characterId, chatId, session.directories);
+    if (fs.existsSync(chatPath)) throw new ApiError(409, 'conflict', 'Chat already exists.');
+    const effects = result.macroEffects;
     // As with generation preparation, global macro effects precede transcript
     // publication and are not rolled back by a later filesystem failure.
     try {
         persistMacroEffects(session, null, chat, { ...effects, localDirty: false });
-        const created = createChat(session, characterId, chatId, greeting, character.name, { metadata: effects.metadata, macroWarnings: context.frame.warnings });
-        return { ...created, warnings: { macroWarnings: context.frame.warnings, macroStateChanges: { local: effects.localDirty, global: effects.globalDirty } } };
+        const created = createChat(session, characterId, chatId, result.text, character.name, { metadata: effects.metadata, macroWarnings: result.warnings.macroWarnings, regexWarnings: result.warnings.regexWarnings });
+        return { ...created, warnings: { ...result.warnings, macroStateChanges: { local: effects.localDirty, global: effects.globalDirty } } };
     } catch (error) {
         if (error instanceof ApiError) throw error;
         throw new ApiError(500, 'unknown', 'Chat creation could not be confirmed after macro preparation. Global variable changes may already be saved. Inspect the chat and variables before creating again.');
