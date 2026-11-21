@@ -153,12 +153,13 @@ describe('API v1 routes', () => {
         const groupId = 'legacy-group-contract';
         const file = path.join(directories.groups, `${groupId}.json`);
         try {
-            fs.writeFileSync(file, JSON.stringify({ id: groupId, name: 'Legacy', members: ['Aria.png'] }));
+            fs.writeFileSync(file, JSON.stringify({ id: groupId, name: 'Legacy', members: ['Aria'] }));
             let response = await fetch(`${baseUrl}/api/v1/groups/${groupId}`);
             expect(response.status).toBe(200);
             let document = await response.json();
             expect(document.group.chat_id).toBe(groupId);
             expect(document.group.chats).toEqual([groupId]);
+            expect(document.group.members).toEqual(['Aria.png']);
 
             fs.writeFileSync(file, JSON.stringify({ id: groupId, name: 'Legacy', members: ['Aria.png'], chat_id: '', chats: [] }));
             response = await fetch(`${baseUrl}/api/v1/groups/${groupId}`);

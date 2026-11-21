@@ -5,7 +5,7 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { ApiError, requireSafeId } from './contract.js';
 import { assertChatIdle } from './generation-store.js';
-import { readChatPage } from './session.js';
+import { listCharacters, readChatPage } from './session.js';
 
 const MAX_GROUP_BYTES = 512 * 1024;
 const MAX_MEMBERS = 32;
@@ -62,7 +62,7 @@ function validateGroup(group) {
     };
 }
 
-function readGroup(session, groupId) {
+async function readGroup(session, groupId) {
     const { id, file } = groupPath(session, groupId);
     if (!fs.existsSync(file)) throw new ApiError(404, 'not_found', 'Group not found.');
     const stat = fs.statSync(file);
@@ -71,29 +71,34 @@ function readGroup(session, groupId) {
     let group;
     try { group = JSON.parse(bytes.toString('utf8')); } catch { throw new ApiError(422, 'validation', 'Group file is not valid JSON.'); }
     if (group && typeof group === 'object' && !Array.isArray(group) && group.chat_id === undefined) {
+        const characters = await listCharacters(session);
+        const members = Array.isArray(group.members) ? group.members : [];
+        const avatars = members.map(name => characters.find(character => character.name === name)?.avatar);
+        if (avatars.some(avatar => !avatar)) throw new ApiError(422, 'validation', 'A legacy group member could not be matched to a character.');
+        group.members = [...new Set(avatars)];
         group.chat_id = id;
         group.chats = [id];
     }
     return { id, group: validateGroup(group), revision: revision(bytes) };
 }
 
-export function listGroups(session) {
+export async function listGroups(session) {
     fs.mkdirSync(session.directories.groups, { recursive: true });
-    return fs.readdirSync(session.directories.groups, { withFileTypes: true })
+    return Promise.all(fs.readdirSync(session.directories.groups, { withFileTypes: true })
         .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
-        .map(entry => {
+        .map(async entry => {
             try {
-                const item = readGroup(session, path.parse(entry.name).name);
+                const item = await readGroup(session, path.parse(entry.name).name);
                 return { id: item.id, revision: item.revision, group: item.group };
             } catch (error) {
                 if (error instanceof ApiError) return { id: path.parse(entry.name).name, invalid: true, detail: error.message };
                 throw error;
             }
-        });
+        }));
 }
 
-export function getGroup(session, groupId) {
-    const item = readGroup(session, groupId);
+export async function getGroup(session, groupId) {
+    const item = await readGroup(session, groupId);
     return { id: item.id, revision: item.revision, group: item.group };
 }
 
@@ -112,9 +117,10 @@ export function saveGroup(session, { groupId, group, expectedRevision, create = 
     return { id, revision: revision(bytes), group: validated };
 }
 
-export function deleteGroup(session, groupId, expectedRevision, deleteChats = false) {
-    const item = readGroup(session, groupId);
-    if (!expectedRevision || item.revision !== expectedRevision) throw new ApiError(409, 'conflict', 'Group changed since it was opened. Reload before deleting.');
+export async function deleteGroup(session, groupId, expectedRevision, deleteChats = false) {
+    const item = await readGroup(session, groupId);
+    const current = fs.readFileSync(groupPath(session, item.id).file);
+    if (!expectedRevision || item.revision !== expectedRevision || revision(current) !== expectedRevision) throw new ApiError(409, 'conflict', 'Group changed since it was opened. Reload before deleting.');
     const active = item.group.chats.filter(chatId => fs.existsSync(chatPath(session, chatId).file));
     if (active.length && !deleteChats) throw new ApiError(409, 'confirmation_required', 'Group chats exist. Set deleteChats=true to remove them explicitly.', { details: { chatIds: active } });
     for (const chatId of active) {
@@ -127,8 +133,8 @@ export function deleteGroup(session, groupId, expectedRevision, deleteChats = fa
     return { deleted: true, id: item.id, deletedChats: active };
 }
 
-export function listGroupChats(session, groupId) {
-    const item = readGroup(session, groupId);
+export async function listGroupChats(session, groupId) {
+    const item = await readGroup(session, groupId);
     return item.group.chats.map(chatId => {
         const { file } = chatPath(session, chatId);
         if (!fs.existsSync(file)) return { id: chatId, missing: true };
@@ -137,8 +143,8 @@ export function listGroupChats(session, groupId) {
     });
 }
 
-export function readGroupChat(session, groupId, chatId, paging = {}) {
-    const item = readGroup(session, groupId);
+export async function readGroupChat(session, groupId, chatId, paging = {}) {
+    const item = await readGroup(session, groupId);
     if (!item.group.chats.includes(chatId)) throw new ApiError(404, 'not_found', 'Group chat is not attached to this group.');
     const { file } = chatPath(session, chatId);
     if (!fs.existsSync(file)) throw new ApiError(404, 'not_found', 'Group chat not found.');

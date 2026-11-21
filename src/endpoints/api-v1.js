@@ -353,7 +353,7 @@ router.get('/characters', asyncHandler(async (request, response) => {
 }));
 
 router.get('/groups', asyncHandler(async (request, response) => {
-    response.json(listGroups(createSession(request)));
+    response.json(await listGroups(createSession(request)));
 }));
 
 router.post('/groups', asyncHandler(async (request, response) => {
@@ -363,7 +363,7 @@ router.post('/groups', asyncHandler(async (request, response) => {
 }));
 
 router.get('/groups/:groupId', asyncHandler(async (request, response) => {
-    response.json(getGroup(createSession(request), request.params.groupId));
+    response.json(await getGroup(createSession(request), request.params.groupId));
 }));
 
 router.put('/groups/:groupId', asyncHandler(async (request, response) => {
@@ -375,16 +375,16 @@ router.put('/groups/:groupId', asyncHandler(async (request, response) => {
 }));
 
 router.delete('/groups/:groupId', asyncHandler(async (request, response) => {
-    response.json(deleteGroup(createSession(request), request.params.groupId,
+    response.json(await deleteGroup(createSession(request), request.params.groupId,
         String(request.query.expectedRevision ?? ''), request.query.deleteChats === 'true'));
 }));
 
 router.get('/groups/:groupId/chats', asyncHandler(async (request, response) => {
-    response.json(listGroupChats(createSession(request), request.params.groupId));
+    response.json(await listGroupChats(createSession(request), request.params.groupId));
 }));
 
 router.get('/groups/:groupId/chats/:chatId', asyncHandler(async (request, response) => {
-    response.json(readGroupChat(createSession(request), request.params.groupId, request.params.chatId, {
+    response.json(await readGroupChat(createSession(request), request.params.groupId, request.params.chatId, {
         limit: request.query.limit, before: request.query.before, after: request.query.after,
     }));
 }));
