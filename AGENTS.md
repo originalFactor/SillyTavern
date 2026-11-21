@@ -54,6 +54,8 @@ from the companion entry point.
   Group chat filenames are shared across group descriptors, so admissions,
   mutation fences and discovery use the chat ID across groups; discovery returns
   the original group ID so the blocking outcome can be inspected.
+  Group swipe selection validates the on-disk paged index, including legacy
+  headerless transcripts, and checks the shared chat admission fence before writing.
 
 Focused verification from this checkout:
 

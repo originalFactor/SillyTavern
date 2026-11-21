@@ -110,6 +110,12 @@ describe('API v1 routes', () => {
             }
             const last = fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse).at(-1);
             expect(last.swipes).toEqual(['Mock reply', 'Mock replyMock reply']);
+            const swipeUrl = `${baseUrl}/api/v1/groups/api-group/chats/api-group-chat/swipe`;
+            const swipe = await fetch(swipeUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: 2, swipeId: 0 }) });
+            expect(swipe.status).toBe(200);
+            expect(fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse).at(-1)).toMatchObject({ mes: 'Mock reply', swipe_id: 0 });
+            const invalidSwipe = await fetch(swipeUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: 2, swipeId: 9 }) });
+            expect(invalidSwipe.status).toBe(400);
             const quiet = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientRequestId: 'api-group-quiet', type: 'quiet' }) });
             expect(quiet.status).toBe(422);
         } finally {

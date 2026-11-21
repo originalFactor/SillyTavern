@@ -5,7 +5,7 @@ import express from 'express';
 
 import { API_V1_VERSION, ApiError, asyncHandler, ensureRequestId, requireObject, requireSafeId, sendApiError } from '../headless/contract.js';
 import { deleteCharacter, exportCharacter, importCharacter, saveCharacter } from '../headless/character-management.js';
-import { createGroupChat, deleteGroup, getGroup, listGroupChats, listGroups, loadGroupCharacters, readGroupChat, resolveGroupChat, saveGroup } from '../headless/group-management.js';
+import { createGroupChat, deleteGroup, getGroup, listGroupChats, listGroups, loadGroupCharacters, readGroupChat, resolveGroupChat, saveGroup, selectGroupSwipe } from '../headless/group-management.js';
 import { activePreset, activatePreset, deletePreset, exportPreset, getPreset, listPresets, savePreset } from '../headless/presets.js';
 import { publicConfiguration } from '../headless/redaction.js';
 import { TEXT_COMPLETION_SOURCES } from '../headless/text-provider.js';
@@ -80,6 +80,7 @@ router.get('/capabilities', (_request, response) => {
             groupChatPaging: true,
             groupChatCreate: true,
             groupChatPreview: true,
+            groupChatSwipe: true,
             characterCreate: true,
             characterEdit: true,
             characterDelete: true,
@@ -398,6 +399,11 @@ router.get('/groups/:groupId/chats/:chatId', asyncHandler(async (request, respon
     response.json(await readGroupChat(createSession(request), request.params.groupId, request.params.chatId, {
         limit: request.query.limit, before: request.query.before, after: request.query.after,
     }));
+}));
+
+router.post('/groups/:groupId/chats/:chatId/swipe', asyncHandler(async (request, response) => {
+    const input = requireObject(request.body, 'group swipe input');
+    response.json(await selectGroupSwipe(createSession(request), request.params.groupId, request.params.chatId, input.index, input.swipeId));
 }));
 
 router.post('/groups/:groupId/chats/:chatId/preview', asyncHandler(async (request, response) => {

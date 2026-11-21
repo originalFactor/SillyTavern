@@ -127,6 +127,10 @@ request or persisting macro effects. Availability is reported by the
 `resources.groupChatPreview` capability. Continue and regenerate previews
 require the selected member to be the author of the last assistant reply.
 
+`POST /api/v1/groups/{groupId}/chats/{chatId}/swipe` selects a stored assistant
+alternative using its paged message `index` and `swipeId`. The operation is
+advertised as `resources.groupChatSwipe` and rejects active or unresolved turns.
+
 `POST /api/v1/groups/{groupId}/chats/{chatId}/generations` admits a group
 turn using `clientRequestId`, `input`, `type`, `overrides` and `nativeContext`.
 Normal, regenerate and continue are advertised separately as

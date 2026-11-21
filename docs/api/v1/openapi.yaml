@@ -473,6 +473,27 @@ paths:
       summary: Read a bounded paged group JSONL transcript.
       responses:
         '200': { description: Paged group transcript. }
+  /api/v1/groups/{groupId}/chats/{chatId}/swipe:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: selectGroupSwipe
+      summary: Select an assistant reply alternative.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [index, swipeId]
+              properties:
+                index: { type: integer, minimum: 0 }
+                swipeId: { type: integer, minimum: 0 }
+      responses:
+        '200': { description: Selected reply alternative. }
+        '400': { description: Invalid message or alternative. }
+        '409': { description: Chat has an active or unresolved generation. }
   /api/v1/groups/{groupId}/chats/{chatId}/preview:
     parameters:
       - { name: groupId, in: path, required: true, schema: { type: string } }

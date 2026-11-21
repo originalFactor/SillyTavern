@@ -5,7 +5,7 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { ApiError, requireSafeId } from './contract.js';
 import { assertCharacterIdle, assertChatIdle } from './generation-store.js';
-import { listCharacters, pageChat, readCharacter } from './session.js';
+import { listCharacters, pageChat, readCharacter, writeChat } from './session.js';
 
 const MAX_GROUP_BYTES = 512 * 1024;
 const MAX_MEMBERS = 32;
@@ -204,6 +204,24 @@ export async function readGroupChat(session, groupId, chatId, paging = {}) {
     const { file } = chatPath(session, chatId);
     if (!fs.existsSync(file)) throw new ApiError(404, 'not_found', 'Group chat not found.');
     return { groupId: item.id, chatId, ...pageChat(parseGroupChat(file), paging) };
+}
+
+export async function selectGroupSwipe(session, groupId, chatId, index, swipeId) {
+    const item = await readGroup(session, groupId);
+    const { id, file } = chatPath(session, chatId);
+    if (!item.group.chats.includes(id) || !fs.existsSync(file)) throw new ApiError(404, 'not_found', 'Group chat not found.');
+    assertChatIdle(session.handle, item.id, id, session.directories, 'group');
+    const chat = parseGroupChat(file);
+    const entry = Number.isInteger(index) && index >= 0 ? chat[index] : null;
+    if (!entry || entry.is_user || typeof entry.mes !== 'string' || !Array.isArray(entry.swipes) ||
+        !Number.isInteger(swipeId) || swipeId < 0 || swipeId >= entry.swipes.length || typeof entry.swipes[swipeId] !== 'string') {
+        throw new ApiError(400, 'validation', 'A valid assistant message and swipe index are required.');
+    }
+    entry.swipe_id = swipeId;
+    entry.mes = entry.swipes[swipeId];
+    entry.extra = { ...(entry.swipe_info?.[swipeId]?.extra ?? {}) };
+    writeChat(file, chat);
+    return { groupId: item.id, chatId: id, index, swipeId };
 }
 
 function parseGroupChat(file) {
