@@ -132,6 +132,18 @@ describe('source-derived native macro runtime', () => {
         expect(readChat(chatPath)[0].chat_metadata).toMatchObject({ keep: 'metadata', variables: { count: 3 } });
         expect(readSettings(session.directories)).toMatchObject({ username: 'Independent', extension_settings: { unrelated: { preserve: true }, variables: { global: { shared: 'new' } } } });
     });
+    test('macro metadata preserves legacy headerless messages and rejects corrupt rows', () => {
+        const { session, chat, chatPath, context } = fixture();
+        context.expand('{{incvar::count}}');
+        fs.writeFileSync(chatPath, JSON.stringify(chat[1]) + '\n' + JSON.stringify(chat[2]) + '\n');
+        persistMacroEffects(session, chatPath, chat, context.effects());
+        expect(readChat(chatPath).slice(1)).toEqual(chat.slice(1));
+        expect(readChat(chatPath)[0].chat_metadata.variables.count).toBe(3);
+        const invalid = JSON.stringify(chat[1]) + '\n{invalid}\n';
+        fs.writeFileSync(chatPath, invalid);
+        expect(() => persistMacroEffects(session, chatPath, chat, context.effects())).toThrow('unreadable');
+        expect(fs.readFileSync(chatPath, 'utf8')).toBe(invalid);
+    });
     test('conflicting global mutation is rejected before any local effect is written', async () => {
         const { session, chat, chatPath, context } = fixture();
         context.expand('{{incvar::count}}{{setglobalvar::shared::new}}');

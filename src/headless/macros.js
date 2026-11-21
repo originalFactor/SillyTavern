@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ApiError } from './contract.js';
-import { createChat, readChat, readSettings, resolveChatPath, writeChat, writeSettings } from './session.js';
+import { createChat, readSettings, resolveChatPath, writeChat, writeSettings } from './session.js';
 import { assertChatIdle } from './generation-store.js';
 import { parseExampleIntoIndividual } from './macro-runtime/generated/instruct.js';
 import { evaluateNativeMacros, inMacroFrame, upstreamMacroScript } from './macro-runtime/index.js';
@@ -89,6 +89,20 @@ export function createMacroContext(session, character, chat, { type = 'normal', 
 /** Preview is dry-run; actual generations publish macro effects before dispatch. */
 export function persistMacroEffects(session, chatPath, chat, effects) {
     if (!effects) return;
+    let saved;
+    if (effects.localDirty) {
+        if (!chatPath || !fs.existsSync(chatPath)) throw new ApiError(409, 'conflict', 'Macro metadata needs an existing chat.');
+        try {
+            const text = new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(chatPath));
+            saved = text.split('\n').filter(line => line.trim()).map(line => JSON.parse(line));
+            if (saved.some(row => !row || typeof row !== 'object' || Array.isArray(row))) throw new Error('Invalid row');
+            if (saved.length && !Object.hasOwn(saved[0], 'chat_metadata')) saved.unshift({ chat_metadata: {} });
+            if (saved.length && (!saved[0].chat_metadata || typeof saved[0].chat_metadata !== 'object' || Array.isArray(saved[0].chat_metadata))) throw new Error('Invalid metadata');
+        } catch {
+            throw new ApiError(422, 'storage', 'Macro metadata cannot be saved because the chat is unreadable.');
+        }
+        if (!saved.length) throw new ApiError(409, 'conflict', 'Macro metadata needs an existing chat.');
+    }
     if (effects.globalDirty) {
         const latest = readSettings(session.directories);
         const current = latest.extension_settings?.variables?.global ?? {};
@@ -98,8 +112,6 @@ export function persistMacroEffects(session, chatPath, chat, effects) {
         writeSettings(session.directories, latest);
     }
     if (effects.localDirty) {
-        const saved = readChat(chatPath);
-        if (saved.length === 0) throw new ApiError(409, 'conflict', 'Macro metadata needs an existing chat.');
         saved[0].chat_metadata = { ...(saved[0].chat_metadata ?? {}), ...effects.metadata };
         writeChat(chatPath, saved);
     }
