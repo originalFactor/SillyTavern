@@ -196,6 +196,8 @@ describe('API v1 routes', () => {
         });
         expect(wrongRegeneration.status).toBe(409);
         fs.writeFileSync(previewFile, Buffer.from([0xff]));
+        const invalidPage = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat`);
+        expect(invalidPage.status).toBe(422);
         const invalidUtf8 = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ characterId: 'Aria' }),
         });

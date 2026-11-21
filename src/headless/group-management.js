@@ -5,7 +5,7 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { ApiError, requireSafeId } from './contract.js';
 import { assertCharacterIdle, assertChatIdle } from './generation-store.js';
-import { listCharacters, readCharacter, readChatPage } from './session.js';
+import { listCharacters, pageChat, readCharacter } from './session.js';
 
 const MAX_GROUP_BYTES = 512 * 1024;
 const MAX_MEMBERS = 32;
@@ -186,19 +186,24 @@ export async function readGroupChat(session, groupId, chatId, paging = {}) {
     if (!item.group.chats.includes(chatId)) throw new ApiError(404, 'not_found', 'Group chat is not attached to this group.');
     const { file } = chatPath(session, chatId);
     if (!fs.existsSync(file)) throw new ApiError(404, 'not_found', 'Group chat not found.');
-    return { groupId: item.id, chatId, ...readChatPage(file, paging) };
+    return { groupId: item.id, chatId, ...pageChat(parseGroupChat(file), paging) };
 }
 
-export async function resolveGroupChat(session, groupId, chatId) {
-    const item = await readGroup(session, groupId);
-    const { id, file } = chatPath(session, chatId);
-    if (!item.group.chats.includes(id) || !fs.existsSync(file)) throw new ApiError(404, 'not_found', 'Group chat not found.');
+function parseGroupChat(file) {
     let chat;
     try {
         const text = new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(file));
         chat = text.split('\n').filter(line => line.trim()).map(line => JSON.parse(line));
         if (chat.some(row => !row || typeof row !== 'object' || Array.isArray(row))) throw new Error('Invalid row');
     } catch { throw new ApiError(422, 'storage', 'Group chat contains unreadable transcript data.'); }
+    return chat;
+}
+
+export async function resolveGroupChat(session, groupId, chatId) {
+    const item = await readGroup(session, groupId);
+    const { id, file } = chatPath(session, chatId);
+    if (!item.group.chats.includes(id) || !fs.existsSync(file)) throw new ApiError(404, 'not_found', 'Group chat not found.');
+    const chat = parseGroupChat(file);
     // Older group chats can contain messages without a metadata header.
     // Match the browser loader by supplying empty metadata in memory only.
     if (!chat.length || !Object.hasOwn(chat[0], 'chat_metadata')) {
