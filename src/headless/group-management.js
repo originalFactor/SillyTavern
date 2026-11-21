@@ -207,7 +207,7 @@ export async function readGroupChat(session, groupId, chatId, paging = {}) {
     return { groupId: item.id, chatId, ...pageChat(parseGroupChat(file), paging) };
 }
 
-export async function selectGroupSwipe(session, groupId, chatId, index, swipeId) {
+export async function selectGroupSwipe(session, groupId, chatId, index, swipeId, expectedMessage) {
     const item = await readGroup(session, groupId);
     const { id, file } = chatPath(session, chatId);
     if (!item.group.chats.includes(id) || !fs.existsSync(file)) throw new ApiError(404, 'not_found', 'Group chat not found.');
@@ -217,6 +217,12 @@ export async function selectGroupSwipe(session, groupId, chatId, index, swipeId)
     if (!entry || entry.is_user || typeof entry.mes !== 'string' || !Array.isArray(entry.swipes) ||
         !Number.isInteger(swipeId) || swipeId < 0 || swipeId >= entry.swipes.length || typeof entry.swipes[swipeId] !== 'string') {
         throw new ApiError(400, 'validation', 'A valid assistant message and swipe index are required.');
+    }
+    if (expectedMessage !== undefined) {
+        if (!expectedMessage || typeof expectedMessage !== 'object' || Array.isArray(expectedMessage)) throw new ApiError(400, 'validation', 'Expected message must be an object.');
+        const expected = { ...expectedMessage };
+        delete expected.index;
+        if (!isDeepStrictEqual(entry, expected)) throw new ApiError(409, 'conflict', 'Message changed. Reload before switching replies.');
     }
     entry.swipe_id = swipeId;
     entry.mes = entry.swipes[swipeId];

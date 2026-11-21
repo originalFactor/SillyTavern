@@ -130,6 +130,7 @@ require the selected member to be the author of the last assistant reply.
 `POST /api/v1/groups/{groupId}/chats/{chatId}/swipe` selects a stored assistant
 alternative using its paged message `index` and `swipeId`. The operation is
 advertised as `resources.groupChatSwipe` and rejects active or unresolved turns.
+An optional `expectedMessage` rejects a changed row before selection.
 
 `POST /api/v1/groups/{groupId}/chats/{chatId}/messages/delete` deletes the
 message at `index` only when `expectedMessage` still matches the stored row.

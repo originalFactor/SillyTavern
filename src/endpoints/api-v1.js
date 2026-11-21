@@ -404,7 +404,7 @@ router.get('/groups/:groupId/chats/:chatId', asyncHandler(async (request, respon
 
 router.post('/groups/:groupId/chats/:chatId/swipe', asyncHandler(async (request, response) => {
     const input = requireObject(request.body, 'group swipe input');
-    response.json(await selectGroupSwipe(createSession(request), request.params.groupId, request.params.chatId, input.index, input.swipeId));
+    response.json(await selectGroupSwipe(createSession(request), request.params.groupId, request.params.chatId, input.index, input.swipeId, input.expectedMessage));
 }));
 
 router.post('/groups/:groupId/chats/:chatId/messages/delete', asyncHandler(async (request, response) => {

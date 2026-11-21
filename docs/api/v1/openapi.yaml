@@ -490,6 +490,7 @@ paths:
               properties:
                 index: { type: integer, minimum: 0 }
                 swipeId: { type: integer, minimum: 0 }
+                expectedMessage: { type: object }
       responses:
         '200': { description: Selected reply alternative. }
         '400': { description: Invalid message or alternative. }
