@@ -149,6 +149,28 @@ describe('API v1 routes', () => {
         expect(fs.existsSync(path.join(directories.groupChats, 'contract-group-chat.jsonl'))).toBe(false);
     });
 
+    test('reads legacy group chat identifiers and empty active chat selection', async () => {
+        const groupId = 'legacy-group-contract';
+        const file = path.join(directories.groups, `${groupId}.json`);
+        try {
+            fs.writeFileSync(file, JSON.stringify({ id: groupId, name: 'Legacy', members: ['Aria.png'] }));
+            let response = await fetch(`${baseUrl}/api/v1/groups/${groupId}`);
+            expect(response.status).toBe(200);
+            let document = await response.json();
+            expect(document.group.chat_id).toBe(groupId);
+            expect(document.group.chats).toEqual([groupId]);
+
+            fs.writeFileSync(file, JSON.stringify({ id: groupId, name: 'Legacy', members: ['Aria.png'], chat_id: '', chats: [] }));
+            response = await fetch(`${baseUrl}/api/v1/groups/${groupId}`);
+            expect(response.status).toBe(200);
+            document = await response.json();
+            expect(document.group.chat_id).toBe('');
+            expect(document.group.chats).toEqual([]);
+        } finally {
+            fs.rmSync(file, { force: true });
+        }
+    });
+
     test('checks every group chat before deleting any when a generation is active', async () => {
         const groupId = 'fenced-group';
         const chatIds = ['fenced-first', 'fenced-second'];

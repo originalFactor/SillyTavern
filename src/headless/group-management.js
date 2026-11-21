@@ -54,7 +54,7 @@ function validateGroup(group) {
         activation_strategy: activation,
         generation_mode: mode,
         chats,
-        chat_id: group.chat_id == null ? (chats[0] ?? null) : requireSafeId(String(group.chat_id), 'chatId'),
+        chat_id: group.chat_id == null ? (chats[0] ?? null) : group.chat_id === '' ? '' : requireSafeId(String(group.chat_id), 'chatId'),
         allow_self_responses: Boolean(group.allow_self_responses),
         auto_mode_delay: Math.min(3600, Math.max(0, Number(group.auto_mode_delay ?? 5) || 0)),
         generation_mode_join_prefix: String(group.generation_mode_join_prefix ?? '').slice(0, 4096),
@@ -70,6 +70,10 @@ function readGroup(session, groupId) {
     const bytes = fs.readFileSync(file);
     let group;
     try { group = JSON.parse(bytes.toString('utf8')); } catch { throw new ApiError(422, 'validation', 'Group file is not valid JSON.'); }
+    if (group && typeof group === 'object' && !Array.isArray(group) && group.chat_id === undefined) {
+        group.chat_id = id;
+        group.chats = [id];
+    }
     return { id, group: validateGroup(group), revision: revision(bytes) };
 }
 
