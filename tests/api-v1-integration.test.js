@@ -95,6 +95,10 @@ describe('API v1 routes', () => {
         expect(body.resources.chatPaging).toBe(true);
         expect(body.resources.chatRename).toBe(true);
         expect(body.resources.providerCredentials).toBe(true);
+        expect(body.providers.chatCompletionsOpenAI).toBe(true);
+        expect(body.providers.chatCompletionsOpenAICompatible).toBe(true);
+        expect(body.providers.textCompletionSources).toEqual(['generic', 'vllm', 'ooba', 'aphrodite', 'tabby', 'koboldcpp']);
+        expect(body.features.textCompletionRequests).toBe(true);
         expect(body.providers.otherChatCompletionSources).toBe(false);
         expect(body.features.serverPlugins).toBe(false);
         expect(body.features.swipes).toBe(true);
