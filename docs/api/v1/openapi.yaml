@@ -20,6 +20,108 @@ security:
   # requires a 32-byte bearer capability instead of cookie/CSRF auth.
   - bearerCapability: []
 paths:
+  /api/v1/world-info:
+    get:
+      operationId: listWorldInfoBooks
+      summary: List bounded native World Info book names and unsafe-file warnings.
+      responses:
+        '200': { description: Object with books (name and bytes) and warnings arrays. Catalog does not parse book contents. }
+        '422': { description: Storage unavailable or more than 512 books. }
+  /api/v1/world-info/{name}:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getWorldInfoBook
+      summary: Read a strict JSON/UTF-8 native book and its SHA-256 revision (4 MiB maximum).
+      responses:
+        '200': { description: Object with name, revision and opaque book. }
+        '404': { description: Book not found. }
+        '422': { description: Unsafe, malformed or oversized book. }
+    put:
+      operationId: saveWorldInfoBook
+      summary: Create or replace a complete native book, preserving supplied opaque fields.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [book]
+              properties:
+                expectedRevision: { type: string, nullable: true, description: Omit or null for create only; current digest required for replacement. }
+                book: { type: object, additionalProperties: true, description: Native SillyTavern object with entries object; maximum 4 MiB and 20000 entries. }
+      responses:
+        '200': { description: Saved name, revision and book. }
+        '400': { description: Invalid native book or unsafe name. }
+        '409': { description: Book exists or inspected revision changed. Draft was not applied. }
+    delete:
+      operationId: deleteWorldInfoBook
+      summary: Delete only an unbound book using the inspected revision.
+      description: Checks global/extra character, Persona, primary card, ordinary chat and group-chat references. Does not detach references. Reference inventories are bounded to 10000 entries, 64 MiB total, 4 MiB per card and 8 MiB per chat; unsafe/corrupt/oversized data fails closed.
+      parameters:
+        - { name: expectedRevision, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Deleted name. }
+        '409': { description: Book changed or remains referenced. }
+        '422': { description: Reference inventory cannot be inspected safely. }
+  /api/v1/world-info/{name}/export:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: exportWorldInfoBook
+      summary: Export complete native JSON as a bounded base64 file envelope.
+      responses:
+        '200': { description: fileName, mimeType and dataBase64 for a native JSON file. }
+  /api/v1/world-info-settings:
+    get:
+      operationId: getWorldInfoSettings
+      summary: Read World Info settings and their independent revision, excluding provider settings.
+      responses:
+        '200': { description: Object with settings and revision. }
+    put:
+      operationId: saveWorldInfoSettings
+      summary: Replace only World Info settings with revision checking and selected-book validation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, settings]
+              properties:
+                expectedRevision: { type: string }
+                settings: { type: object, additionalProperties: true, description: At most 1 MiB. world_info.globalSelect is a name array; world_info.charLore records contain character ID name and extraBooks array. Unknown fields are preserved as supplied. }
+      responses:
+        '200': { description: Saved settings and revision. Unrelated latest settings are merged. }
+        '400': { description: Invalid scan controls or duplicate/malformed bindings. }
+        '404': { description: Selected book not found. }
+        '409': { description: Settings revision changed. }
+  /api/v1/chats/{chatId}/world-info:
+    parameters:
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+      - { name: characterId, in: query, required: true, schema: { type: string } }
+    get:
+      operationId: getChatWorldInfo
+      summary: Read this chat's book binding and independent revision without evaluating macros.
+      responses:
+        '200': { description: Object with name (empty means no chat book) and revision. }
+    put:
+      operationId: saveChatWorldInfo
+      summary: Save this chat's book binding, preserving all other metadata and transcript rows.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, name]
+              properties:
+                expectedRevision: { type: string }
+                name: { type: string, description: Exact existing book name; empty clears the binding. }
+      responses:
+        '200': { description: Saved name and revision. }
+        '409': { description: Binding changed or chat has an active/unresolved generation. }
+        '422': { description: Invalid transcript/metadata or unreadable selected book. }
   /api/v1/macro-variables/global:
     get:
       operationId: getGlobalMacroVariables
@@ -450,11 +552,12 @@ paths:
                 position: { type: integer, enum: [0, 2, 3, 4, 9] }
                 depth: { type: integer, minimum: 0, maximum: 100 }
                 role: { type: integer, enum: [0, 1, 2] }
+                lorebook: { type: string, description: Existing native book name; empty clears the Persona binding. }
                 select: { type: boolean, default: false }
       responses:
         '200': { description: Updated persona catalog. Unknown descriptor fields are preserved. }
         '409': { description: Persona revision changed. }
-        '422': { description: Author-note persona positions are not supported by the headless prompt engine. }
+        '422': { description: Persona placement/role/depth is invalid. }
     delete:
       operationId: deletePersona
       summary: Remove a persona and its avatar while preserving existing chat messages.

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { ApiError, requireSafeId } from './contract.js';
 import { readSettings, writeSettings } from './session.js';
 import { serverDirectory } from '../server-directory.js';
+import { getWorldBook } from './world-info-management.js';
 
 /**
  * Derives a revision only from persona-owned state, not provider settings.
@@ -99,13 +100,17 @@ export function savePersona(session, personaId, input) {
     if (typeof input.description !== 'string' || input.description.length > 65536) throw new ApiError(400, 'validation', 'Persona description must contain at most 65536 characters.');
     if (input.title !== undefined && (typeof input.title !== 'string' || input.title.length > 200)) throw new ApiError(400, 'validation', 'Persona title is too long.');
     const previous = p.persona_descriptions[id] ?? {};
+    if (input.lorebook !== undefined) {
+        if (typeof input.lorebook !== 'string') throw new ApiError(400, 'validation', 'Persona lorebook must be a string; empty clears its binding.');
+        if (input.lorebook && input.lorebook !== previous.lorebook) getWorldBook(session, input.lorebook);
+    }
     const requestedPosition = input.position ?? previous.position ?? 0;
     const position = requestedPosition === 1 ? 0 : requestedPosition;
     const depth = input.depth ?? previous.depth ?? 2;
     const role = input.role ?? previous.role ?? 0;
     if (![0, 2, 3, 4, 9].includes(position) || !Number.isInteger(depth) || depth < 0 || depth > 100 || ![0, 1, 2].includes(role)) throw new ApiError(422, 'unsupported', 'Persona placement, role or depth is invalid.');
     p.personas[id] = input.name.trim();
-    p.persona_descriptions[id] = { ...previous, description: input.description, title: input.title ?? previous.title ?? '', position, depth, role };
+    p.persona_descriptions[id] = { ...previous, description: input.description, title: input.title ?? previous.title ?? '', position, depth, role, ...(input.lorebook === undefined ? {} : { lorebook: input.lorebook }) };
     if (Object.keys(p.personas).length > 128 || Buffer.byteLength(JSON.stringify(p.persona_descriptions)) > 4 * 1024 * 1024) throw new ApiError(413, 'validation', 'Persona catalog exceeds its size limit.');
     if (input.select === true || settings.user_avatar === id) activate(settings, id);
     const avatar = path.join(session.directories.avatars, id);

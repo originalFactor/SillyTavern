@@ -45,7 +45,7 @@ export function saveGlobalMacros(session, body) {
     writeSettings(session.directories, settings);
     return document(edited, body.experimental);
 }
-function localChat(session, characterId, chatId) {
+export function localChat(session, characterId, chatId) {
     const file = resolveChatPath(session, characterId, chatId);
     if (!fs.existsSync(file)) throw new ApiError(404, 'not_found', 'Chat does not exist.');
     let chat;
@@ -64,7 +64,7 @@ function localChat(session, characterId, chatId) {
 function validateStoredContainer(value) {
     if (value != null && (typeof value !== 'object' || Array.isArray(value))) throw new ApiError(422, 'storage', 'Stored macro variable container is invalid. Existing state has not been changed.');
 }
-function editableSettings(session) {
+export function editableSettings(session) {
     const file = path.join(session.directories.root, SETTINGS_FILE);
     if (fs.existsSync(file)) {
         try {

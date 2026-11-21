@@ -458,5 +458,42 @@ again after preparation and before effects or provider dispatch.
 Preview does not publish variables/timed effects. Upstream preview intentionally
 ignores saved sticky/cooldown state, so preview activation may differ from a real
 turn. Actual preparation publishes variable/timed metadata before provider
-execution. Book management API/UI, full token packing/Instruct and full regex
-coverage are still pending.
+execution. Native book management is described below; full token packing/Instruct and
+full regex coverage are still pending.
+
+
+## Native World Info management
+
+`worldInfoManagement` advertises `/world-info` catalog and `/world-info/{name}`
+GET/PUT/DELETE plus `/export`. GET/PUT return `{name,revision,book}`; PUT takes
+`{expectedRevision,book}`. Omit/null revision means create only. Imported native
+SillyTavern JSON uses the same create endpoint; foreign lorebook formats require
+conversion first. The full supplied object, including opaque entry/extension
+fields, is retained. Strict UTF-8/JSON, safe names, 4 MiB/20000-entry bounds and a
+512-book catalog limit apply. The catalog inspects names/type/size; opening a book
+validates its contents. Export returns `{fileName,mimeType,dataBase64}`.
+
+`GET/PUT /world-info-settings` uses `{revision,settings}` on read and
+`{expectedRevision,settings}` on write. Only WI settings are replaced; the latest
+unrelated provider/Persona settings survive. `world_info.globalSelect` names
+global books. `world_info.charLore` contains `{name: characterId,extraBooks:[]}`
+records for extra character books. Scan controls are validated; selected files
+must exist and be valid before saving. Unknown WI settings survive as supplied.
+
+Primary character links use `data.extensions.world` (legacy cards use
+`extensions.world`) through the existing revision-checked card endpoint.
+Persona save accepts `lorebook`; an empty string clears it, and selecting/saving
+the active Persona updates standard `persona_description_lorebook` state.
+`GET/PUT /chats/{chatId}/world-info?characterId=...` reads `{name,revision}` and
+writes `{name,expectedRevision}`. Empty name clears the chat link. Chat revisions
+exclude unrelated variable/history changes; active or unresolved admissions
+block writes. Every transcript row and unrelated metadata field is preserved.
+
+DELETE requires the inspected book revision and refuses referenced books. Remove
+all bindings first; deletion never silently changes other documents. Inspection
+includes unselected Personas, primary cards, extra character/global bindings,
+ordinary chats and group-chat headers. Corrupt/symlink/oversized reference data
+blocks deletion. Bounds are 10000 inventory entries, 64 MiB total, 4 MiB/card and
+8 MiB/chat. This reference guard does not enable group generation. Import/edit
+never authorizes embedded regex, external code or network calls. Native bulk JSON
+editors retain failed drafts; only explicit Reload discards them.

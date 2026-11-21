@@ -26,6 +26,7 @@ import {
 import { buildPrompt, listExtensions } from '../headless/prompt.js';
 import { createMacroChat } from '../headless/macros.js';
 import { readGlobalMacros, readLocalMacros, saveGlobalMacros, saveLocalMacros } from '../headless/macro-management.js';
+import { listWorldBooks, getWorldBook, saveWorldBook, deleteWorldBook, exportWorldBook, getWorldSettings, saveWorldSettings, getChatWorldBook, saveChatWorldBook } from '../headless/world-info-management.js';
 import { areHeadlessPluginHooksEnabled, HEADLESS_HOOKS } from '../headless/plugin-runtime.js';
 import { runGeneration } from '../headless/runtime.js';
 import {
@@ -82,6 +83,7 @@ router.get('/capabilities', (_request, response) => {
             chatCreate: true,
             chatGreetingMacros: true,
             macroManagement: true,
+            worldInfoManagement: true,
             chatDelete: true,
             chatMutate: true,
             chatPaging: true,
@@ -182,6 +184,34 @@ router.patch('/settings', asyncHandler(async (request, response) => {
 
 router.get('/macro-variables/global', asyncHandler(async (request, response) => {
     response.json(readGlobalMacros(createSession(request)));
+}));
+
+router.get('/world-info', asyncHandler(async (request, response) => {
+    response.json(listWorldBooks(createSession(request)));
+}));
+router.get('/world-info-settings', asyncHandler(async (request, response) => {
+    response.json(getWorldSettings(createSession(request)));
+}));
+router.put('/world-info-settings', asyncHandler(async (request, response) => {
+    response.json(saveWorldSettings(createSession(request), request.body));
+}));
+router.get('/world-info/:name', asyncHandler(async (request, response) => {
+    response.json(getWorldBook(createSession(request), request.params.name));
+}));
+router.put('/world-info/:name', asyncHandler(async (request, response) => {
+    response.json(saveWorldBook(createSession(request), request.params.name, request.body));
+}));
+router.delete('/world-info/:name', asyncHandler(async (request, response) => {
+    response.json(deleteWorldBook(createSession(request), request.params.name, request.query.expectedRevision));
+}));
+router.get('/world-info/:name/export', asyncHandler(async (request, response) => {
+    response.json(exportWorldBook(createSession(request), request.params.name));
+}));
+router.get('/chats/:chatId/world-info', asyncHandler(async (request, response) => {
+    response.json(getChatWorldBook(createSession(request), requireSafeId(request.query.characterId, 'characterId'), request.params.chatId));
+}));
+router.put('/chats/:chatId/world-info', asyncHandler(async (request, response) => {
+    response.json(saveChatWorldBook(createSession(request), requireSafeId(request.query.characterId, 'characterId'), request.params.chatId, request.body));
 }));
 router.put('/macro-variables/global', asyncHandler(async (request, response) => {
     response.json(saveGlobalMacros(createSession(request), request.body));

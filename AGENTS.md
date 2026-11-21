@@ -48,7 +48,7 @@ from the companion entry point.
 Focused verification from this checkout:
 
 ```sh
-NODE_OPTIONS=--experimental-vm-modules pnpm --dir tests exec jest --config jest.config.json --runInBand api-v1-generation-owner.test.js api-v1-generation-journal.test.js api-v1-generation-lifecycle.test.js api-v1-presets.test.js api-v1-provider.test.js api-v1-prompt-manager.test.js api-v1-character-management.test.js api-v1-integration.test.js api-v1-headless.test.js api-v1-companion.test.js api-v1-bundle.test.js api-v1-plugins.test.js api-v1-macros.test.js api-v1-macro-management.test.js
+NODE_OPTIONS=--experimental-vm-modules pnpm --dir tests exec jest --config jest.config.json --runInBand api-v1-generation-owner.test.js api-v1-generation-journal.test.js api-v1-generation-lifecycle.test.js api-v1-presets.test.js api-v1-provider.test.js api-v1-prompt-manager.test.js api-v1-character-management.test.js api-v1-integration.test.js api-v1-headless.test.js api-v1-companion.test.js api-v1-bundle.test.js api-v1-plugins.test.js api-v1-macros.test.js api-v1-macro-management.test.js api-v1-world-info.test.js api-v1-world-info-management.test.js
 pnpm exec eslint src/endpoints/api-v1.js src/headless/session.js src/headless/runtime.js src/headless/prompt.js src/headless/generation-store.js
 ```
 
@@ -101,3 +101,18 @@ Host-side tests do not prove execution of the arm64 Android Node binary.
   pre-dispatch persistence boundary as variables; preview never publishes it.
   External WI event hooks remain incomplete. `worldInfoScanner` and
   `personaAuthorNote` do not imply book management, full scoped regex or presets.
+
+
+- `world-info-management.js` owns native book CRUD/export, independent WI scan
+  settings revisions and chat-binding revisions. Book JSON is strict and bounded
+  to 4 MiB/20000 entries; catalogs to 512 files, settings to 1 MiB. Missing/stale
+  revisions never overwrite existing books. Selected books must validate before
+  settings/chat writes. Metadata edits retain every transcript row and reject
+  active/unresolved chat admissions; unrelated settings retain their latest values.
+  Primary card links stay in `extensions.world`; Persona links use standard
+  descriptors and selected lorebook state. No execution or regex authorization is
+  granted by import. Foreign lorebook formats still require conversion.
+  Delete never silently unlinks: inspect global/extra character/Persona/card/chat/
+  group-chat references synchronously, rejecting unsafe/corrupt/oversized
+  inventories (10000 entries/64 MiB aggregate, 4 MiB/card, 8 MiB/chat). A linked or
+  uninspectable book remains intact. Management does not establish group support.
