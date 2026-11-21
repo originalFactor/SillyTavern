@@ -152,6 +152,9 @@ Normal, regenerate and continue are advertised separately as
 `generation.groupContinue`. Generation observation, cancellation and unknown
 acknowledgement use the returned generation URLs. Earlier committed replies
 remain in the group transcript if a later member fails or is cancelled.
+Group `regenerate` currently creates a swipe for the last speaker's reply. The
+browser's group regeneration replaces the trailing generation batch and selects
+speakers again, so full group regeneration compatibility remains unavailable.
 
 ## Extensions and WebViews
 
