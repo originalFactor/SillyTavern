@@ -11,6 +11,26 @@ const group = { members: ['a.png', 'b.png'], disabled_members: [], activation_st
 const choose = options => selectGroupMembers({ group, characters, chat: [], random: () => 0.9, ...options });
 
 describe('group member activation', () => {
+    test('upstream regeneration removes the trailing batch before selecting speakers', async () => {
+        const source = fs.readFileSync(new URL('../public/scripts/group-chats.js', import.meta.url), 'utf8');
+        const start = source.indexOf('async function regenerateGroup()');
+        const end = source.indexOf('\n}', start);
+        const chat = [
+            { is_user: true, mes: 'Question' },
+            { mes: 'Earlier', extra: { gen_id: 1 } },
+            { mes: 'First', extra: { gen_id: 2 } },
+            { mes: 'Second', extra: { gen_id: 2 } },
+        ];
+        let observed;
+        const regenerate = vm.runInNewContext(`(${source.slice(start, end + 2)})`, {
+            chat, getLastMessageGenerationId: () => chat.at(-1)?.extra?.gen_id,
+            deleteLastMessage: async () => { chat.pop(); }, AbortController,
+            setExternalAbortController: () => {},
+            generateGroupWrapper: async (_auto, type) => { observed = { type, messages: chat.map(message => message.mes) }; },
+        });
+        await regenerate();
+        expect(observed).toEqual({ type: 'normal', messages: ['Question', 'Earlier'] });
+    });
     test('list, pooled and natural selection match the upstream browser functions', () => {
         const source = fs.readFileSync(new URL('../public/scripts/group-chats.js', import.meta.url), 'utf8');
         const extract = name => {
