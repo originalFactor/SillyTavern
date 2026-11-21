@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globa
 import {
     abandonClientGeneration, acknowledgeGeneration, appendToken, assertCharacterIdle, assertChatIdle, beginGeneration, cancel, clearGenerations,
     complete, createGeneration, endGeneration, fail, getGeneration, getGenerationByClient,
-    listGenerations, markProviderDispatched, persistGeneration, restoreGenerations, setUsage, snapshot,
+    listGenerations, markProviderDispatched, persistGeneration, prepareGroupProgress, recordGroupCommit, restoreGenerations, setUsage, snapshot,
 } from '../src/headless/generation-store.js';
 
 let root, directories;
@@ -16,6 +16,18 @@ afterEach(() => { clearGenerations(); jest.useRealTimers(); jest.restoreAllMocks
 const options = (extra = {}) => ({ handle: 'owner', clientRequestId: 'caller-key', characterId: 'Aria', chatId: 'Chat', type: 'normal', directories, requestIdentity: { input: 'private prompt not copied into admission metadata', overrides: { model: 'one', temperature: 0.5 } }, ...extra });
 
 describe('durable caller identity and failure handling', () => {
+    test('persists the group speaker order and committed replies across interruption', () => {
+        const record = createGeneration(options({ targetKind: 'group' })).record;
+        beginGeneration(record);
+        prepareGroupProgress(record, ['Aria.png', 'Bob.png']);
+        expect(() => recordGroupCommit(record, 'Bob.png', 3)).toThrow('out of order');
+        markProviderDispatched(record);
+        recordGroupCommit(record, 'Aria.png', 2);
+        clearGenerations();
+        const restored = getGeneration(record.requestId, 'owner', directories);
+        expect(snapshot(restored)).toMatchObject({ status: 'unknown', committed: true, groupProgress: { members: ['Aria.png', 'Bob.png'], completed: [{ member: 'Aria.png', messageIndex: 2 }] } });
+        expect(() => prepareGroupProgress(restored, ['Bob.png'])).toThrow();
+    });
     test('retains separate group provider usage and missing usage across restoration', () => {
         const record = createGeneration(options({ targetKind: 'group' })).record;
         beginGeneration(record);

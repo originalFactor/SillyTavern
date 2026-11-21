@@ -33,6 +33,7 @@ import { readGlobalMacros, readLocalMacros, saveGlobalMacros, saveLocalMacros } 
 import { listWorldBooks, getWorldBook, saveWorldBook, deleteWorldBook, exportWorldBook, getWorldSettings, saveWorldSettings, getChatWorldBook, saveChatWorldBook } from '../headless/world-info-management.js';
 import { areHeadlessPluginHooksEnabled, HEADLESS_HOOKS } from '../headless/plugin-runtime.js';
 import { runGeneration } from '../headless/runtime.js';
+import { runGroupGeneration } from '../headless/group-runtime.js';
 import {
     createSession,
     deleteChat,
@@ -121,6 +122,9 @@ router.get('/capabilities', (_request, response) => {
             discovery: true,
             durableAdmission: true,
             acknowledgeUnknown: true,
+            groupNormal: true,
+            groupRegenerate: true,
+            groupContinue: true,
         },
         providers: {
             chatCompletionsOpenAI: true,
@@ -421,6 +425,29 @@ router.post('/groups/:groupId/chats/:chatId/preview', asyncHandler(async (reques
         stageUserInput: input.type === 'normal' && Boolean(input.input),
     });
     response.json({ messages: built.messages, prompt: built.prompt, segments: built.segments, warnings: built.warnings, providerRequest: publicConfiguration(built.providerRequest) });
+}));
+
+router.post('/groups/:groupId/chats/:chatId/generations', asyncHandler(async (request, response) => {
+    const body = requireObject(request.body, 'group generation input');
+    const groupId = requireSafeId(request.params.groupId, 'groupId');
+    const input = validateGenerationInput({ ...body, characterId: groupId, chatId: request.params.chatId });
+    if (input.type === 'quiet') throw new ApiError(422, 'unsupported', 'Quiet group generation is not supported.');
+    const { prepareProviderSession } = await import('../headless/provider.js');
+    const session = await prepareProviderSession(request);
+    await resolveGroupChat(session, groupId, input.chatId);
+    const created = createGeneration({
+        handle: session.handle, clientRequestId: body.clientRequestId, characterId: groupId,
+        chatId: input.chatId, type: input.type, targetKind: 'group', requestIdentity: input,
+        directories: session.directories,
+    });
+    if (!created.existing) {
+        const detachedRequest = { user: request.user, session: request.session, ip: request.ip, headers: request.headers };
+        void runGroupGeneration(detachedRequest, session, created.record, { ...input, groupId });
+    }
+    response.status(202).json({
+        requestId: created.record.requestId, status: created.record.status, seq: created.record.seq,
+        idempotent: created.existing, ...generationUrls(created.record.requestId),
+    });
 }));
 
 router.post('/characters', asyncHandler(async (request, response) => {

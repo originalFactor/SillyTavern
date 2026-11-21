@@ -496,6 +496,30 @@ paths:
       responses:
         '200': { description: Prepared prompt and warnings. }
         '404': { description: Group, chat or member was not found. }
+  /api/v1/groups/{groupId}/chats/{chatId}/generations:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: generateGroupChat
+      summary: Admit a durable group generation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clientRequestId]
+              properties:
+                clientRequestId: { type: string }
+                input: { type: string }
+                type: { type: string, enum: [normal, regenerate, continue] }
+                overrides: { type: object }
+                nativeContext: { type: object }
+      responses:
+        '202': { description: Accepted or previously admitted generation. }
+        '409': { description: Conflicting request identity or unresolved generation. }
+        '422': { description: Unsupported generation type. }
   /csrf-token:
     get:
       operationId: getCsrfToken
@@ -1265,6 +1289,19 @@ components:
               type: array
               items: { type: [object, 'null'], additionalProperties: true }
               description: Group provider usage in dispatch order, with null for calls without reported usage.
+            groupProgress:
+              type: [object, 'null']
+              description: Selected group speaker order and confirmed transcript commits, when available.
+              properties:
+                generationId: { type: integer }
+                members: { type: array, items: { type: string } }
+                completed:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      member: { type: string }
+                      messageIndex: { type: integer, minimum: 0 }
             snapshot: { type: [object, 'null'], additionalProperties: true }
             finishedAt: { type: [string, 'null'], format: date-time }
     GenerationAccepted:

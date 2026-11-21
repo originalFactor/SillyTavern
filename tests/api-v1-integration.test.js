@@ -6,7 +6,9 @@ import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
 
 import { router as apiV1Router } from '../src/endpoints/api-v1.js';
 import { loadGroupCharacters } from '../src/headless/group-management.js';
-import { cancel, clearGenerations, createGeneration } from '../src/headless/generation-store.js';
+import { runGroupGeneration } from '../src/headless/group-runtime.js';
+import { prepareProviderSession } from '../src/headless/provider.js';
+import { cancel, clearGenerations, createGeneration, getGeneration, snapshot } from '../src/headless/generation-store.js';
 import { readSettings, writeSettings } from '../src/headless/session.js';
 import { write as writePngMetadata } from '../src/character-card-parser.js';
 import { DEFAULT_USER, USER_DIRECTORY_TEMPLATE } from '../src/constants.js';
@@ -27,6 +29,7 @@ let baseUrl;
 let mockUrl;
 /** @type {Array<Record<string, any>>} */
 let providerRequests;
+let groupToCancel;
 
 beforeAll(async () => {
     process.env.SILLYTAVERN_API_V1_ENABLED = 'true';
@@ -84,6 +87,120 @@ afterAll(async () => {
 });
 
 describe('API v1 routes', () => {
+    test('group generation API admits one durable request and returns its committed result', async () => {
+        const groupFile = path.join(directories.groups, 'api-group.json');
+        const chatFile = path.join(directories.groupChats, 'api-group-chat.jsonl');
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'API group', members: ['Aria.png'], disabled_members: [], activation_strategy: 1, chats: ['api-group-chat'], chat_id: 'api-group-chat' }));
+        fs.writeFileSync(chatFile, JSON.stringify({ chat_metadata: {} }));
+        try {
+            const url = `${baseUrl}/api/v1/groups/api-group/chats/api-group-chat/generations`;
+            const send = () => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientRequestId: 'api-group-turn', input: 'Group API request' }) });
+            const start = providerRequests.length;
+            const first = await (await send()).json();
+            const second = await (await send()).json();
+            expect(second).toMatchObject({ requestId: first.requestId, idempotent: true });
+            const result = await waitForGeneration(first.requestId);
+            expect(result).toMatchObject({ status: 'done', targetKind: 'group', committed: true, groupProgress: { members: ['Aria.png'], completed: [{ member: 'Aria.png', messageIndex: 2 }] } });
+            expect(providerRequests).toHaveLength(start + 1);
+            expect(fs.readFileSync(chatFile, 'utf8')).toContain('Mock reply');
+            for (const type of ['regenerate', 'continue']) {
+                const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientRequestId: `api-group-${type}`, type }) });
+                expect(response.status).toBe(202);
+                expect((await waitForGeneration((await response.json()).requestId)).status).toBe('done');
+            }
+            const last = fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse).at(-1);
+            expect(last.swipes).toEqual(['Mock reply', 'Mock replyMock reply']);
+            const quiet = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientRequestId: 'api-group-quiet', type: 'quiet' }) });
+            expect(quiet.status).toBe(422);
+        } finally {
+            fs.unlinkSync(groupFile);
+            fs.unlinkSync(chatFile);
+        }
+    });
+    test('cancelling a later group provider call preserves earlier replies', async () => {
+        const secondCard = { spec: 'chara_card_v2', spec_version: '2.0', data: { name: 'Bob', description: 'Bob speaks second.' } };
+        const png = fs.readFileSync(path.join(serverDirectory, 'default', 'content', 'default_Seraphina.png'));
+        fs.writeFileSync(path.join(directories.characters, 'Bob.png'), writePngMetadata(png, JSON.stringify(secondCard)));
+        const groupFile = path.join(directories.groups, 'cancel-group.json');
+        const chatFile = path.join(directories.groupChats, 'cancel-chat.jsonl');
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Cancel group', members: ['Aria.png', 'Bob.png'], disabled_members: [], activation_strategy: 1, chats: ['cancel-chat'], chat_id: 'cancel-chat' }));
+        fs.writeFileSync(chatFile, JSON.stringify({ chat_metadata: {} }));
+        const request = { user: { profile: { ...DEFAULT_USER, handle: 'contract-user' }, directories }, headers: {} };
+        const session = await prepareProviderSession(request);
+        const record = createGeneration({ handle: session.handle, clientRequestId: 'cancel-group-test', characterId: 'cancel-group', chatId: 'cancel-chat', type: 'normal', targetKind: 'group', directories }).record;
+        groupToCancel = record;
+        try {
+            await runGroupGeneration(request, session, record, { groupId: 'cancel-group', chatId: 'cancel-chat', input: 'Cancel second group reply', overrides: {} });
+            expect(record).toMatchObject({ status: 'cancelled', cancelOutcome: 'unknown', committed: true, drained: true });
+            expect(record.groupProgress.completed).toEqual([{ member: 'Aria.png', messageIndex: 2 }]);
+            const chat = fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse);
+            expect(chat.slice(1).map(message => message.mes)).toEqual(['Cancel second group reply', 'Mock reply']);
+        } finally {
+            groupToCancel = null;
+            fs.unlinkSync(path.join(directories.characters, 'Bob.png'));
+            fs.unlinkSync(groupFile);
+            fs.unlinkSync(chatFile);
+        }
+    });
+    test('group runtime retains earlier replies when a later provider stream is interrupted', async () => {
+        const secondCard = { spec: 'chara_card_v2', spec_version: '2.0', data: { name: 'Bob', description: 'Bob speaks second.' } };
+        const png = fs.readFileSync(path.join(serverDirectory, 'default', 'content', 'default_Seraphina.png'));
+        fs.writeFileSync(path.join(directories.characters, 'Bob.png'), writePngMetadata(png, JSON.stringify(secondCard)));
+        const groupFile = path.join(directories.groups, 'partial-group.json');
+        const chatFile = path.join(directories.groupChats, 'partial-chat.jsonl');
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Partial group', members: ['Aria.png', 'Bob.png'], disabled_members: [], activation_strategy: 1, chats: ['partial-chat'], chat_id: 'partial-chat' }));
+        fs.writeFileSync(chatFile, JSON.stringify({ chat_metadata: {} }));
+        const request = { user: { profile: { ...DEFAULT_USER, handle: 'contract-user' }, directories }, headers: {} };
+        const session = await prepareProviderSession(request);
+        const record = createGeneration({ handle: session.handle, clientRequestId: 'partial-group-test', characterId: 'partial-group', chatId: 'partial-chat', type: 'normal', targetKind: 'group', directories }).record;
+        const start = providerRequests.length;
+        await runGroupGeneration(request, session, record, { groupId: 'partial-group', chatId: 'partial-chat', input: 'Interrupt second group reply', overrides: {} });
+        expect(record.status).toBe('unknown');
+        expect(record.committed).toBe(true);
+        expect(record.groupProgress.completed).toEqual([{ member: 'Aria.png', messageIndex: 2 }]);
+        expect(providerRequests).toHaveLength(start + 2);
+        const chat = fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse);
+        expect(chat.slice(1).map(message => message.mes)).toEqual(['Interrupt second group reply', 'Mock reply']);
+        clearGenerations();
+        const restored = getGeneration(record.requestId, session.handle, directories);
+        expect(snapshot(restored)).toMatchObject({ status: 'unknown', committed: true, groupProgress: { members: ['Aria.png', 'Bob.png'], completed: [{ member: 'Aria.png', messageIndex: 2 }] } });
+        expect(providerRequests).toHaveLength(start + 2);
+        fs.unlinkSync(path.join(directories.characters, 'Bob.png'));
+        fs.unlinkSync(groupFile);
+        fs.unlinkSync(chatFile);
+    });
+    test('group runtime generates and commits speakers sequentially', async () => {
+        const secondCard = { spec: 'chara_card_v2', spec_version: '2.0', data: { name: 'Bob', description: 'Bob is the second speaker.' } };
+        const png = fs.readFileSync(path.join(serverDirectory, 'default', 'content', 'default_Seraphina.png'));
+        fs.writeFileSync(path.join(directories.characters, 'Bob.png'), writePngMetadata(png, JSON.stringify(secondCard)));
+        fs.writeFileSync(path.join(directories.groups, 'runtime-group.json'), JSON.stringify({ name: 'Runtime group', members: ['Aria.png', 'Bob.png'], disabled_members: [], activation_strategy: 1, chats: ['runtime-chat'], chat_id: 'runtime-chat' }));
+        const chatFile = path.join(directories.groupChats, 'runtime-chat.jsonl');
+        fs.writeFileSync(chatFile, JSON.stringify({ chat_metadata: {} }));
+        const request = { user: { profile: { ...DEFAULT_USER, handle: 'contract-user' }, directories }, headers: {} };
+        const session = await prepareProviderSession(request);
+        const record = createGeneration({ handle: session.handle, clientRequestId: 'runtime-group-test', characterId: 'runtime-group', chatId: 'runtime-chat', type: 'normal', targetKind: 'group', directories }).record;
+        const start = providerRequests.length;
+        await runGroupGeneration(request, session, record, { groupId: 'runtime-group', chatId: 'runtime-chat', input: 'Hello group', overrides: {} });
+        expect(record.status).toBe('done');
+        expect(providerRequests).toHaveLength(start + 2);
+        const chat = fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse);
+        expect(chat.slice(1).map(message => message.mes)).toEqual(['Hello group', 'Mock reply', 'Mock reply']);
+        expect(chat.slice(2).map(message => message.original_avatar)).toEqual(['Aria.png', 'Bob.png']);
+        expect(record.groupProgress.completed.map(item => item.messageIndex)).toEqual([2, 3]);
+        expect(providerRequests[start + 1].messages.some(message => message.content?.includes('Mock reply'))).toBe(true);
+        for (const type of ['regenerate', 'continue']) {
+            const next = createGeneration({ handle: session.handle, clientRequestId: `runtime-group-${type}`, characterId: 'runtime-group', chatId: 'runtime-chat', type, targetKind: 'group', directories }).record;
+            await runGroupGeneration(request, session, next, { groupId: 'runtime-group', chatId: 'runtime-chat', type, input: '', overrides: {} });
+            expect(next.status).toBe('done');
+        }
+        const revised = fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse).at(-1);
+        expect(revised.original_avatar).toBe('Bob.png');
+        expect(revised.swipes).toEqual(['Mock reply', 'Mock replyMock reply']);
+        expect(revised.swipe_id).toBe(1);
+        fs.unlinkSync(path.join(directories.characters, 'Bob.png'));
+        fs.unlinkSync(path.join(directories.groups, 'runtime-group.json'));
+        fs.unlinkSync(chatFile);
+    });
     test('loads group member cards while skipping missing members', async () => {
         const session = { directories };
         const members = await loadGroupCharacters(session, { members: ['Aria.png'] });
@@ -114,6 +231,9 @@ describe('API v1 routes', () => {
         expect(body.resources.groupManagement).toBe(true);
         expect(body.resources.groupChatPaging).toBe(true);
         expect(body.resources.groupChatPreview).toBe(true);
+        expect(body.generation.groupNormal).toBe(true);
+        expect(body.generation.groupRegenerate).toBe(true);
+        expect(body.generation.groupContinue).toBe(true);
         expect(body.providers.chatCompletionsOpenAI).toBe(true);
         expect(body.providers.chatCompletionsOpenAICompatible).toBe(true);
         expect(body.providers.textCompletionSources).toEqual(['generic', 'vllm', 'ooba', 'aphrodite', 'tabby', 'koboldcpp']);
@@ -780,6 +900,15 @@ function startMockProvider() {
         server.use(express.json());
         server.post('/v1/chat/completions', (request, response) => {
             providerRequests.push(request.body);
+            if (groupToCancel && request.body.messages.some(message => message.content?.includes('Cancel second group reply')) && request.body.messages.some(message => message.content?.includes('Mock reply'))) {
+                cancel(groupToCancel);
+                response.type('text/event-stream').end();
+                return;
+            }
+            if (request.body.messages.some(message => message.content?.includes('Interrupt second group reply')) && request.body.messages.some(message => message.content?.includes('Mock reply'))) {
+                response.type('text/event-stream').end('data: {"choices":[{"delta":{"content":"Incomplete"}}]}\n\n');
+                return;
+            }
             if (request.body.messages.some(message => message.content === 'Truncated outcome')) {
                 response.type('text/event-stream').end('data: {"choices":[{"delta":{"content":"Incomplete"}}]}\n\n');
                 return;

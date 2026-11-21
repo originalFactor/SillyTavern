@@ -127,6 +127,14 @@ request or persisting macro effects. Availability is reported by the
 `resources.groupChatPreview` capability. Continue and regenerate previews
 require the selected member to be the author of the last assistant reply.
 
+`POST /api/v1/groups/{groupId}/chats/{chatId}/generations` admits a group
+turn using `clientRequestId`, `input`, `type`, `overrides` and `nativeContext`.
+Normal, regenerate and continue are advertised separately as
+`generation.groupNormal`, `generation.groupRegenerate` and
+`generation.groupContinue`. Generation observation, cancellation and unknown
+acknowledgement use the returned generation URLs. Earlier committed replies
+remain in the group transcript if a later member fails or is cancelled.
+
 ## Extensions and WebViews
 
 `GET /api/v1/extensions` classifies manifests by optional fields:
@@ -645,6 +653,9 @@ counts remain real zeros. No monetary amount or billed total is inferred.
 Group generation journal snapshots expose `usageByCall` in provider dispatch
 order, retaining null for calls that did not report usage. This journal field
 does not enable the group generation capability.
+Group snapshots can also expose `groupProgress`, containing the selected member
+order and confirmed transcript commits. After interruption, inspect the chat as
+well as the journal because a transcript write may precede its progress update.
 
 This does not establish full preset/Instruct, group, media, tool or extension
 parity; their separate capability gates remain unchanged. Full Prompt Manager

@@ -204,7 +204,7 @@ export async function runGeneration(sourceRequest, session, record, input) {
  * @param {Record<string, any>|null} previousReply Previous reply for regeneration
  * @returns {number} Index of the assistant message
  */
-function commitMessages(chatPath, chat, characterName, output, reasoning, type, previousReply = null, regexWarnings = []) {
+export function commitMessages(chatPath, chat, characterName, output, reasoning, type, previousReply = null, regexWarnings = []) {
     if (type === 'continue' && chat.length > 1 && !chat[chat.length - 1].is_user) {
         const last = chat[chat.length - 1];
         last.swipes = Array.isArray(last.swipes) && last.swipes.length ? [...last.swipes] : [String(last.mes ?? '')];

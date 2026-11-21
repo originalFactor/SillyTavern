@@ -130,7 +130,7 @@ export function persistGeneration(directories, record) {
         'requestId', 'userKey', 'clientRequestId', 'characterId', 'chatId', 'type', 'targetKind',
         'fingerprint', 'status', 'seq', 'text', 'reasoning', 'error', 'committed',
         'cancelOutcome', 'cancelRequested', 'providerDispatched', 'drained',
-        'acknowledged', 'usage', 'usageByCall', 'providerCallCount', 'pluginEvents', 'createdAt', 'finishedAt', 'snapshot',
+        'acknowledged', 'usage', 'usageByCall', 'providerCallCount', 'groupProgress', 'pluginEvents', 'createdAt', 'finishedAt', 'snapshot',
     ].map(key => [key, record[key] ?? null]));
     writeJournal(directories, body);
     record.lastPersistedAt = Date.now();
@@ -307,6 +307,30 @@ function persistOutcome(record) {
 }
 
 export const shouldStopGeneration = record => record.cancelRequested || isTerminal(record.status);
+
+/** Persist the selected speaker order before any group provider request. */
+export function prepareGroupProgress(record, members) {
+    if (record.targetKind !== 'group' || shouldStopGeneration(record) || record.groupProgress || record.providerDispatched) {
+        throw new ApiError(409, 'conflict', 'Group generation progress cannot be initialized.');
+    }
+    if (!Array.isArray(members) || members.length > 1000 || members.some(member => typeof member !== 'string' || !member || Buffer.byteLength(member) > 255)) {
+        throw new ApiError(400, 'validation', 'Invalid group generation member list.');
+    }
+    record.groupProgress = { generationId: Date.now(), members: [...members], completed: [] };
+    persistGenerationIfPossible(record);
+}
+
+/** Record a transcript commit before moving to the next group member. */
+export function recordGroupCommit(record, member, messageIndex) {
+    const progress = record.groupProgress;
+    if (record.targetKind !== 'group' || shouldStopGeneration(record) || !progress || progress.members[progress.completed.length] !== member || !Number.isSafeInteger(messageIndex) || messageIndex < 0) {
+        throw new ApiError(409, 'conflict', 'Group generation commit is out of order.');
+    }
+    progress.completed.push({ member, messageIndex });
+    record.committed = true;
+    persistGenerationIfPossible(record);
+}
+
 export function beginGeneration(record) {
     if (shouldStopGeneration(record)) return false;
     record.workerActive = true;
@@ -604,6 +628,7 @@ export function snapshot(record) {
         cancelOutcome: record.cancelOutcome,
         usage: record.usage ?? null,
         usageByCall: record.targetKind === 'group' ? record.usageByCall ?? [] : undefined,
+        groupProgress: record.targetKind === 'group' ? record.groupProgress ?? null : undefined,
         warnings: record.snapshot?.warnings ?? null,
         pluginEvents: record.pluginEvents ?? [],
         restored: Boolean(record.restored),

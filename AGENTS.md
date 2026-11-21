@@ -47,9 +47,10 @@ from the companion entry point.
 - Group prompt preview is separately advertised as `resources.groupChatPreview`.
   It builds the selected member's prompt with group macros and World Info but
   does not dispatch or persist. Continue/regenerate preview checks the last
-  speaker. Group speaker selection exists independently of a durable group turn;
-  keep `features.groupChats` false until sequential generation, partial commits,
-  cancellation and restart recovery are implemented and verified.
+  speaker. Individually advertised group generation actions execute speakers
+  sequentially and journal progress, per-call usage and partial commits. Keep
+  `features.groupChats` false until the complete lifecycle and native device flow
+  are verified and remaining group compatibility is implemented.
   Group chat filenames are shared across group descriptors, so admissions,
   mutation fences and discovery use the chat ID across groups; discovery returns
   the original group ID so the blocking outcome can be inspected.
