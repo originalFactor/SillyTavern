@@ -5,12 +5,23 @@
     "public/scripts/system-messages.js": "20f947763c5aeaf88cfc0ef560b0408b3875dcc64ef7d6798e78f605c72b2422",
     "public/scripts/power-user.js": "bb62dd0116183cdc2a06a0cf98dd18496da1619c48254053bcf2c69ef97bcb7f",
     "public/script.js": "955c603d0bad84bac5a716f0818d85c2543e44d4c43878e0d63ef1e55ca91855",
-    "public/scripts/utils.js": "2a2cfe240d5a84ce2e09ba053db6c0c71473b6406173f614f3521d89f50ada61"
+    "public/scripts/constants.js": "953a09a8cea181f6d82e2aafbb021e7bc3649a41a144d0e798d8e19b99cf4066",
+    "public/scripts/personas.js": "9cef6f9ad424f9c59628b039a65b8e141ffa71aa4519c7108e8c33b5d97f090c",
+    "public/scripts/utils.js": "2a2cfe240d5a84ce2e09ba053db6c0c71473b6406173f614f3521d89f50ada61",
+    "public/scripts/textgen-settings.js": "216705649b725bfaae557045a04f045d98335bf5b6f80d0609680df8bcec0e3f",
+    "public/scripts/tokenizers.js": "59abb66e4d2ad0ff7171c2ec9f3009d26ed79088e78b87eb0b60638eaae4d6f9",
+    "public/scripts/cfg-scale.js": "2e507b047a34edf552bcba9965c0c8f05823db5bfc44e4c7bddc5dd1e5f86df6",
+    "public/scripts/reasoning.js": "c489812f2598d1a4879b1a7287abde092741adafdf67f5b15cf18f2dd71d82d1"
   },
   "files": {
     "instruct.js": "4a5ca7e9a3b03b20f3f057138a804fa3fbc1a2f1d8927169f460e8acd2e09b11",
-    "context.js": "e320bc20200c4fe27a1d232dc7e4e12815a919ff321b5fa2f151ac10de52be94",
-    "utilities.js": "5d15de34f80124b27274bbc871e91863c05a16d2a69cdb11b55d5c43efa949b7",
-    "defaults.js": "ec4e769e8d80ea0584a54d2a1465abd6827c3155babcad3d05196a0e6ba758d4"
+    "context.js": "72d9d262aa9f6c3b76431f5c6493c6eca10c5ceca21b1d28b464cbecf7542ae3",
+    "utilities.js": "9163a342dda83c75f859680703943ce31fe397a80680a8fccd6ec4181962df9f",
+    "packing.js": "5d2a42d020f98f962c5d8fa71891192adeaf57b3e75a5ecaf6387dd0e8108eed",
+    "defaults.js": "ec4e769e8d80ea0584a54d2a1465abd6827c3155babcad3d05196a0e6ba758d4",
+    "models.js": "99a32ea1e702a7ca1c44a9c9ebe3d053bce7f89a15bc03464fc602259ddd4824",
+    "tokenizers.js": "1e9ee8a8afa72e8e4d448c1d6f78eadcc12ee50b7d522c79571497ce8d65caa3",
+    "cfg.js": "56a37ff4400c86c27049a8cadaed95da7c56b42273af0599b5790b2ca0b332f5",
+    "reasoning.js": "da2513a2f10d897ae6ac6c29c7a1aeb96124b5b8fe5be90b8730080dc7c2d5dd"
   }
 }

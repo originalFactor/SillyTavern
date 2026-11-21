@@ -7,6 +7,7 @@ import { assertChatIdle } from './generation-store.js';
 import { parseExampleIntoIndividual } from './macro-runtime/generated/instruct.js';
 import { evaluateNativeMacros, inMacroFrame, upstreamMacroScript } from './macro-runtime/index.js';
 import { defaultReasoningSettings } from './prompt-runtime/generated/reasoning-defaults.js';
+import { getTextGenModel } from './text-runtime/generated/models.js';
 
 const clone = value => JSON.parse(JSON.stringify(value ?? {}));
 const digest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -39,6 +40,7 @@ export function createMacroContext(session, character, chat, { type = 'normal', 
     const originalGlobals = clone(live.extension_settings?.variables?.global);
     const userName = String(session.userName || 'User');
     const characterName = String(character.name || 'Character');
+    const isText = settings.main_api === 'textgenerationwebui';
     const frame = {
         operations: 0, generatedCharacters: 0, warnings: [], limitExceeded: false,
         localDirty: false, globalDirty: false,
@@ -50,9 +52,9 @@ export function createMacroContext(session, character, chat, { type = 'normal', 
         ui: { input: nativeContext.input ?? input, firstDisplayedMessageId: nativeContext.firstDisplayedMessageId, isMobile: nativeContext.isMobile ?? true },
         now: nativeContext.now,
         lastGenerationType: preview ? nativeContext.lastGenerationType ?? '' : type,
-        maxContext: Number(settings.oai_settings?.openai_max_context ?? settings.max_context ?? 4096),
-        maxResponse: Number(overrides.maxTokens ?? settings.oai_settings?.openai_max_tokens ?? settings.amount_gen ?? 300),
-        model: String(overrides.model ?? (settings.oai_settings?.chat_completion_source === 'custom' ? settings.oai_settings?.custom_model : settings.oai_settings?.openai_model) ?? ''),
+        maxContext: Number((isText ? settings.max_context : settings.oai_settings?.openai_max_context) ?? settings.max_context ?? 4096),
+        maxResponse: Number(overrides.maxTokens ?? (isText ? settings.amount_gen : settings.oai_settings?.openai_max_tokens) ?? settings.amount_gen ?? 300),
+        model: String(overrides.model ?? (isText ? getTextGenModel(settings.textgenerationwebui_settings ?? {}) : settings.oai_settings?.chat_completion_source === 'custom' ? settings.oai_settings?.custom_model : settings.oai_settings?.openai_model) ?? ''),
         oai: { openai_max_context: Number(settings.oai_settings?.openai_max_context ?? 4096), openai_max_tokens: Number(overrides.maxTokens ?? settings.oai_settings?.openai_max_tokens ?? settings.amount_gen ?? 300) },
         powerUser: {
             ...clone(power), experimental_macro_engine: power.experimental_macro_engine !== false,

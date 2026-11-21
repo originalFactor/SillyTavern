@@ -5,14 +5,21 @@ import { nativeRegex, messagePlacement, regex_placement } from './regex-runtime.
 import { listExtensions } from './prompt-settings.js';
 import { scanWorldInfo } from './world-info-runtime/index.js';
 import { assembleSourcePrompt } from './prompt-runtime/index.js';
+import { assembleTextPrompt, selectLocalTextTokenizer } from './text-runtime/index.js';
+import { configureTextRuntime } from './text-runtime/platform.js';
 
 /** One source-derived preparation pipeline for preview and admitted generation. */
 export async function buildPromptInline(session, character, chat, { type, input = '', overrides = {}, ...options }) {
     const settings = session.settings;
-    if (settings.main_api !== 'openai' || !['openai', 'custom'].includes(settings.oai_settings?.chat_completion_source ?? 'openai')) throw new ApiError(422, 'unsupported', 'This native completion source is not supported.');
+    const isText = settings.main_api === 'textgenerationwebui';
+    if (!isText && (settings.main_api !== 'openai' || !['openai', 'custom'].includes(settings.oai_settings?.chat_completion_source ?? 'openai'))) throw new ApiError(422, 'unsupported', 'This native completion source is not supported.');
     const personaPosition = Number(settings.power_user?.persona_description_position ?? 0);
     if (![0, 1, 2, 3, 4, 9].includes(personaPosition) && settings.power_user?.persona_description) throw new ApiError(422, 'unsupported', 'Unknown Persona placement.');
     const context = createMacroContext(session, character, chat, { type, input, overrides, extensions: options.extensions ?? listExtensions(session), ...options });
+    if (isText) {
+        configureTextRuntime({ context, textSettings: settings.textgenerationwebui_settings, warnings: [] });
+        context.frame.textTokenizer = selectLocalTextTokenizer(context);
+    }
     const regex = nativeRegex(session, context, options.characterId);
     let stagedUserMessage;
     if (options.stageUserInput) {
@@ -39,17 +46,21 @@ export async function buildPromptInline(session, character, chat, { type, input 
         const parsed = context.examples(context.expand(entry.content));
         if (entry.position === 0) blocks.unshift(...parsed); else blocks.push(...parsed);
     }
-    const examples = blocks.map(example => context.run(() => context.frame.exampleParser(upstreamMacroScript.substituteParams(example))));
-    const built = await assembleSourcePrompt(session, context, { ...fields, wiBefore: worldInfo.before, wiAfter: worldInfo.after }, history, examples, regex, { type, input, preview: !!options.preview, requireNewestUser: !!options.stageUserInput });
+    const examples = isText ? [] : blocks.map(example => context.run(() => context.frame.exampleParser(upstreamMacroScript.substituteParams(example))));
+    const assemblyFields = { ...fields, wiBefore: worldInfo.before, wiAfter: worldInfo.after };
+    const assemblyOptions = { type, input, preview: !!options.preview, requireNewestUser: !!options.stageUserInput };
+    const built = isText
+        ? await assembleTextPrompt(context, assemblyFields, history, blocks, { ...assemblyOptions, tokenizer: context.frame.textTokenizer, textSettings: settings.textgenerationwebui_settings, extensionSettings: session.extensionSettings, regex })
+        : await assembleSourcePrompt(session, context, assemblyFields, history, examples, regex, assemblyOptions);
     return {
-        messages: built.messages, segments: built.segments, stagedUserMessage,
+        messages: built.messages, prompt: built.prompt, stops: built.stops, negativePrompt: built.negativePrompt, guidanceScale: built.guidanceScale, segments: built.segments, stagedUserMessage,
         macroEffects: context.effects(),
         warnings: {
             worldInfoActivated: worldInfo.activated, worldInfoScanner: true, worldInfoWarnings: worldInfo.warnings,
             macroWarnings: context.frame.warnings, regexWarnings: regex.warnings,
             macroStateChanges: { local: context.frame.localDirty, global: context.frame.globalDirty },
             tokenBudget: built.tokenBudget, promptAssemblyWarnings: built.warnings,
-            promptManagerOrdering: true, sourcePromptAssembly: true, promptTokenBudget: true,
+            promptManagerOrdering: !isText, sourcePromptAssembly: true, sourceStringAssembly: isText, promptTokenBudget: true,
             promptManagerPresets: false, instructMode: false, advancedMacros: false, upstreamMacroEngine: true,
             extensionPrompts: false, groupChats: false, swipes: true,
         },

@@ -20,6 +20,39 @@ export const storage_keys = {
     storyStringValidationCache: 'StoryStringValidationCache',
 };
 export const MAX_INJECTION_DEPTH = 10000;
+export const inject_ids = {
+    STORY_STRING: '__STORY_STRING__',
+    QUIET_PROMPT: 'QUIET_PROMPT',
+    DEPTH_PROMPT: 'DEPTH_PROMPT',
+    DEPTH_PROMPT_INDEX: (index) => `DEPTH_PROMPT_${index}`,
+    CUSTOM_WI_DEPTH: 'customDepthWI',
+    CUSTOM_WI_DEPTH_ROLE: (depth, role) => `customDepthWI_${depth}_${role}`,
+    CUSTOM_WI_OUTLET: (key) => `customWIOutlet_${key}`,
+};
+export const persona_description_positions = {
+    IN_PROMPT: 0,
+    /**
+     * @deprecated Use persona_description_positions.IN_PROMPT instead.
+     */
+    AFTER_CHAR: 1,
+    TOP_AN: 2,
+    BOTTOM_AN: 3,
+    AT_DEPTH: 4,
+    NONE: 9,
+};
+import { collapseNewlines } from './utilities.js';
+export function baseChatReplace(value, name1Override = null, name2Override = null) {
+    if (typeof value === 'string' && value.length > 0) {
+        value = substituteParams(value, { name1Override, name2Override, replaceCharacterCard: false });
+
+        if (power_user.collapse_newlines) {
+            value = collapseNewlines(value);
+        }
+
+        value = value.replace(/\r/g, '');
+    }
+    return value;
+}
 export async function getExtensionPrompt(position = extension_prompt_types.IN_PROMPT, depth = undefined, separator = '\n', role = undefined, wrap = true) {
     const filterByFunction = async (prompt) => {
         const hasFilter = typeof prompt.filter === 'function';

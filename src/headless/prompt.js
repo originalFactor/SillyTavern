@@ -71,6 +71,11 @@ export async function buildPrompt(session, character, chat, options) {
 export function runNativeText(session, character, chat, options) {
     return execute({ operation: 'text', session: evaluationSession(session), character, chat, options: { ...options, extensions: options.extensions ?? listExtensions(session) } });
 }
+/** Bounded string preparation, without provider admission or dispatch. */
+export function buildStringPrompt(session, character, chat, options = {}) {
+    if (session.settings.main_api !== 'textgenerationwebui') throw new ApiError(422, 'unsupported', 'A text-completion profile is required for string preparation.');
+    return execute({ session: evaluationSession(session), character, chat, options: { type: 'normal', ...options, extensions: listExtensions(session), _books: snapshotWorldBooks(session, character, chat, options.characterId) } });
+}
 export function auditPrompt(session, request) {
     const oai = session.settings.oai_settings ?? {};
     const settings = { oai_settings: { chat_completion_source: oai.chat_completion_source ?? 'openai', openai_max_context: Number(oai.openai_max_context ?? session.settings.max_context ?? 4096), openai_max_tokens: Number(oai.openai_max_tokens ?? session.settings.amount_gen ?? 300) } };
@@ -83,7 +88,18 @@ function evaluationSession(session) {
     safeOai.extensions = { regex_scripts: oai.extensions?.regex_scripts ?? [] };
     const extensions = session.extensionSettings ?? {};
     const safeExtensions = Object.fromEntries(['regex', 'disabledExtensions', 'character_allowed_regex', 'preset_allowed_regex', 'note'].filter(key => key in extensions).map(key => [key, extensions[key]]));
+    if (session.settings.main_api === 'textgenerationwebui' && extensions.cfg) {
+        if (typeof extensions.cfg !== 'object' || Array.isArray(extensions.cfg) || (extensions.cfg.chara !== undefined && !Array.isArray(extensions.cfg.chara))) throw new ApiError(422, 'validation', 'CFG settings require a character array and object settings.');
+        const fields = value => {
+            if (value !== undefined && (!value || typeof value !== 'object' || Array.isArray(value))) throw new ApiError(422, 'validation', 'CFG prompt settings must be objects.');
+            return Object.fromEntries(['name', 'guidance_scale', 'positive_prompt', 'negative_prompt', 'useChara'].filter(key => value && key in value).map(key => [key, value[key]]));
+        };
+        safeExtensions.cfg = { global: fields(extensions.cfg.global), chara: (extensions.cfg.chara ?? []).map(fields) };
+    }
     safeExtensions.variables = { global: live.extension_settings?.variables?.global ?? {} };
     const settings = { main_api: session.settings.main_api, max_context: session.settings.max_context, amount_gen: session.settings.amount_gen, oai_settings: safeOai, power_user: publicConfiguration(session.settings.power_user ?? {}), world_info_settings: session.settings.world_info_settings, extension_settings: safeExtensions, tag_map: session.settings.tag_map };
+    const text = session.settings.textgenerationwebui_settings ?? {};
+    settings.textgenerationwebui_settings = Object.fromEntries(['type', 'preset', 'custom_model', 'generic_model', 'mancer_model', 'togetherai_model', 'infermaticai_model', 'dreamgen_model', 'openrouter_model', 'vllm_model', 'aphrodite_model', 'ollama_model', 'featherless_model', 'tabby_model', 'llamacpp_model'].filter(key => key in text).map(key => [key, text[key]]));
+    settings.textgenerationwebui_settings.extensions = { regex_scripts: text.extensions?.regex_scripts ?? [] };
     return { settings, extensionSettings: safeExtensions, userName: session.userName, directories: {} };
 }

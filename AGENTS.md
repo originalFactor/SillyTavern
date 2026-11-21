@@ -168,13 +168,26 @@ Host-side tests do not prove execution of the arm64 Android Node binary.
   group/media/tool/plugin compatibility remains open; do not flip their flags.
 
 
-- In-progress text-completion foundation: generate-headless-text-prompt.mjs derives
-  Instruct chat/story/example/output/stop and context rendering/default helpers
-  from five sources. These are not yet a wired text-completion pipeline; keep
-  Instruct/text provider capabilities false until packing, private transport,
-  native configuration and end-to-end verification exist. The standalone format
-  contract suite is api-v1-instruct-format.test.js. Do not describe passing it as
-  completed Instruct integration.
+- In-progress text completion: generate-headless-text-prompt.mjs derives ten
+  artifacts from eleven authorities, including Generate's actual string fitter,
+  story/history/first-last/quiet/continue/example/depth rules, CFG and reasoning.
+  Check sentinels and source hashes; never hand-edit generated files. Browser
+  inspection may leave mandatory/CFG overflow; the native adapter rejects it,
+  and rejects omitted newest staged input. Both CFG branches are counted.
+  For ordinary joined-string boundary overflow, refit frozen unpinned examples
+  then oldest history without expanding macros/events again. Keep the last
+  control message, trace the original newest row across depth injection, and
+  update the actual context boundary after trimming.
+  buildStringPrompt evaluates this path in the existing bounded worker, with
+  captured books and isolated macro effects; it never admits or dispatches a
+  provider call. Source model/tokenizer matching is offline, explicit remote or
+  estimate choices fail, and old Chat Completion budgets/models cannot override
+  text settings. Preset regex permissions use the actual API namespace.
+  Packaging checks the text generator and ships its full import graph/manifest.
+  Keep Instruct/text provider capabilities false until captured transport,
+  native configuration and complete preview/generate/recovery verification exist.
+  api-v1-instruct-format.test.js and api-v1-text-packing.test.js cover this
+  foundation, not full Instruct integration.
 - encodeLocalTextTokens uses absolute packaged model paths, exact local encoder
   IDs and no download, fallback encoder or character-count estimate. Model choice
   is whitelisted; a missing asset is explicit failure. It correctly distinguishes

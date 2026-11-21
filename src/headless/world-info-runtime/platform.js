@@ -42,9 +42,13 @@ export const substituteParamsExtended = (text, additionalMacros, postProcessFn) 
 let applyRegex;
 export const getRegexedString = (...args) => frame.context.run(() => applyRegex(...args));
 export const regex_placement = { MD_DISPLAY: 0, USER_INPUT: 1, AI_OUTPUT: 2, SLASH_COMMAND: 3, WORLD_INFO: 5, REASONING: 6 };
-export const getPresetManager = () => ({ apiId: 'openai', getSelectedPresetName: () => frame.presetName ?? '', readPresetExtensionField: () => frame.presetRegex ?? [] });
+export const getPresetManager = () => ({ apiId: frame.context.frame.mainApi || 'openai', getSelectedPresetName: () => frame.presetName ?? '', readPresetExtensionField: () => frame.presetRegex ?? [] });
 export async function getTokenCountAsync(text) {
     if (!text) return 0;
+    if (frame.context.frame.mainApi === 'textgenerationwebui') {
+        const { encodeLocalTextTokens } = await import('../../endpoints/tokenizers.js');
+        return (await encodeLocalTextTokens(text, frame.context.frame.textTokenizer)).length;
+    }
     const { countOpenAITokens } = await import('../../endpoints/tokenizers.js');
     return countOpenAITokens([{ content: text }], frame.context.frame.model, { strict: true });
 }

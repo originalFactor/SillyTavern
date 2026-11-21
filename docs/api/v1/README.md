@@ -611,3 +611,30 @@ counts remain real zeros. No monetary amount or billed total is inferred.
 This does not establish full preset/Instruct, group, media, tool or extension
 parity; their separate capability gates remain unchanged. Full Prompt Manager
 preset compatibility stays false while those dependent semantics remain open.
+
+### Internal string-prompt preparation (not an enabled provider API)
+
+`buildStringPrompt` now runs source-derived Instruct/plain string assembly in the
+same bounded evaluation worker. It captures lorebooks, uses the text profile's
+own context/response/model fields, and returns an actual string, stops, isolated
+macro effects and token budgets. The checked generator derives the upstream
+story/context rendering, Generate string fitter, first/last/quiet/continue
+sequences, example priority, depth injection, reasoning and CFG branches.
+Mandatory/CFG overflow and omitted newest staged input fail explicitly.
+When per-message counts underestimate the final joined string, native fitting
+trims frozen unpinned examples then oldest history and updates the context
+boundary. It preserves the last/control message and never replays macros/events.
+
+Tokenizer selection uses source offline model matching or the explicitly chosen
+local tokenizer; it never claims a remote endpoint is connected. Encoding uses
+packaged local assets without model downloads, guessed counts or an alternative
+encoder. Text preset regex uses `textgenerationwebui` permissions and cannot
+inherit an `openai` preset grant with the same name. Browser event subscribers
+are not executed inside this worker; authorized native hooks still need the
+corresponding string lifecycle integration.
+
+This helper does not admit, dispatch or persist a generation. The public
+generation/preview API still rejects non-Chat Completion profiles. Captured text
+transport/credentials, sampler mapping, native configuration and the complete
+preview/generate/recovery flow remain required. Instruct and text-provider
+capabilities remain false.

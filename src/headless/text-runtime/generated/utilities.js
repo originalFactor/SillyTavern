@@ -2,3 +2,8 @@
 export function onlyUnique(value, index, array) {
     return array.indexOf(value) === index;
 }
+export const shiftUpByOne = (e, i, a) => a[i] = e + 1;
+export const shiftDownByOne = (e, i, a) => a[i] = e - 1;
+export function collapseNewlines(x) {
+    return x.replaceAll(/\n+/g, '\n');
+}

@@ -3,6 +3,7 @@ import { getRegexedString } from './generated/regex.js';
 import { configure } from './platform.js';
 import { initializeAuthorNote, setFloatingPrompt, addPersonaDescriptionExtensionPrompt } from './generated/authors-note.js';
 import { ApiError } from '../contract.js';
+import { nativeRegexPreset } from '../regex-runtime.js';
 
 const clone = value => JSON.parse(JSON.stringify(value));
 /** Runs only inside the bounded prompt worker; source scanner settings cannot overlap. */
@@ -28,7 +29,7 @@ export async function scanWorldInfo(session, character, chat, context, fields, o
     extensionSettings.disabledExtensions ??= [];
     extensionSettings.note ??= {};
     extensionSettings.regex = (extensionSettings.regex ?? []).map(script => ({ ...script, placement: Array.isArray(script.placement) ? script.placement : [Number(script.placement ?? 1)], replaceString: String(script.replaceString ?? ''), trimStrings: script.trimStrings ?? [], substituteRegex: script.substituteRegex ?? 0 }));
-    const frame = { context, books, characterId: options.characterId, settings: session.settings.world_info_settings, extensionSettings, loops: 0, diagnostics: [], tagMap: session.settings.tag_map ?? {}, presetName: session.settings.oai_settings?.preset_settings_openai, presetRegex: session.settings.oai_settings?.extensions?.regex_scripts };
+    const frame = { context, books, characterId: options.characterId, settings: session.settings.world_info_settings, extensionSettings, loops: 0, diagnostics: [], tagMap: session.settings.tag_map ?? {}, ...nativeRegexPreset(session.settings) };
     configure(frame, getRegexedString);
     initializeAuthorNote();
     setFloatingPrompt();
