@@ -153,6 +153,14 @@ describe('source-derived World Info execution', () => {
         const preview=await f.build({preview:true});
         expect(preview.warnings.worldInfoActivated).toEqual(['Book:1']); // Upstream dry-run excludes saved sticky/cooldown effects.
     });
+    test('legacy global display regex is migrated for World Info without changing settings', async () => {
+        const f = fixture();
+        f.save([f.entry(1, 'Old lore')]);
+        const legacy = { findRegex: '/Old/g', replaceString: 'Migrated', placement: [0], trimStrings: [] };
+        f.session.extensionSettings.regex = [legacy];
+        expect(contents(await f.build())).toContain('Migrated lore');
+        expect(f.session.extensionSettings.regex).toEqual([legacy]);
+    });
     test('World Info regex uses prompt-only and depth gating, capture trimming and explicit scoped consent', async () => {
         const f=fixture();
         f.save([f.entry(1,'[alpha]',{position:4,depth:2})]);
