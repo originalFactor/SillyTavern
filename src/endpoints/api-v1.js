@@ -5,7 +5,7 @@ import express from 'express';
 
 import { API_V1_VERSION, ApiError, asyncHandler, ensureRequestId, requireObject, requireSafeId, sendApiError } from '../headless/contract.js';
 import { deleteCharacter, exportCharacter, importCharacter, saveCharacter } from '../headless/character-management.js';
-import { createGroupChat, deleteGroup, deleteGroupMessage, getGroup, listGroupChats, listGroups, loadGroupCharacters, readGroupChat, resolveGroupChat, saveGroup, selectGroupSwipe } from '../headless/group-management.js';
+import { createGroupChat, deleteGroup, deleteGroupMessage, editGroupMessage, getGroup, listGroupChats, listGroups, loadGroupCharacters, readGroupChat, resolveGroupChat, saveGroup, selectGroupSwipe } from '../headless/group-management.js';
 import { activePreset, activatePreset, deletePreset, exportPreset, getPreset, listPresets, savePreset } from '../headless/presets.js';
 import { publicConfiguration } from '../headless/redaction.js';
 import { TEXT_COMPLETION_SOURCES } from '../headless/text-provider.js';
@@ -82,6 +82,7 @@ router.get('/capabilities', (_request, response) => {
             groupChatPreview: true,
             groupChatSwipe: true,
             groupChatMessageDelete: true,
+            groupChatMessageEdit: true,
             characterCreate: true,
             characterEdit: true,
             characterDelete: true,
@@ -410,6 +411,11 @@ router.post('/groups/:groupId/chats/:chatId/swipe', asyncHandler(async (request,
 router.post('/groups/:groupId/chats/:chatId/messages/delete', asyncHandler(async (request, response) => {
     const input = requireObject(request.body, 'group message deletion');
     response.json(await deleteGroupMessage(createSession(request), request.params.groupId, request.params.chatId, input.index, input.expectedMessage));
+}));
+
+router.post('/groups/:groupId/chats/:chatId/messages/edit', asyncHandler(async (request, response) => {
+    const input = requireObject(request.body, 'group message edit');
+    response.json(await editGroupMessage(createSession(request), request.params.groupId, request.params.chatId, input.index, input.expectedMessage, input.text, validateNativeMacroContext(input.nativeContext)));
 }));
 
 router.post('/groups/:groupId/chats/:chatId/preview', asyncHandler(async (request, response) => {

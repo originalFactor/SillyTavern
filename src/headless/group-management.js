@@ -7,6 +7,8 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import { ApiError, requireSafeId } from './contract.js';
 import { assertCharacterIdle, assertChatIdle } from './generation-store.js';
 import { listCharacters, pageChat, readCharacter, writeChat } from './session.js';
+import { persistMacroEffects } from './macros.js';
+import { runNativeText } from './prompt.js';
 
 const MAX_GROUP_BYTES = 512 * 1024;
 const MAX_MEMBERS = 32;
@@ -246,6 +248,55 @@ export async function deleteGroupMessage(session, groupId, chatId, index, expect
     chat.splice(index, 1);
     writeChat(file, chat);
     return { groupId: item.id, chatId: id, index };
+}
+
+export async function editGroupMessage(session, groupId, chatId, index, expectedMessage, text, nativeContext = {}) {
+    if (typeof text !== 'string') throw new ApiError(400, 'validation', 'Message text is required.');
+    const item = await readGroup(session, groupId);
+    const { id, file } = chatPath(session, chatId);
+    if (!item.group.chats.includes(id) || !fs.existsSync(file)) throw new ApiError(404, 'not_found', 'Group chat not found.');
+    assertChatIdle(session.handle, item.id, id, session.directories, 'group');
+    const original = parseGroupChat(file);
+    const entry = Number.isInteger(index) && index >= 0 ? original[index] : null;
+    if (!entry || typeof entry.mes !== 'string') throw new ApiError(404, 'not_found', 'Message not found.');
+    if (!expectedMessage || typeof expectedMessage !== 'object' || Array.isArray(expectedMessage)) throw new ApiError(400, 'validation', 'Expected message is required.');
+    const expected = { ...expectedMessage };
+    delete expected.index;
+    if (!isDeepStrictEqual(entry, expected)) throw new ApiError(409, 'conflict', 'Message changed. Reload before editing.');
+    const characters = await loadGroupCharacters(session, item.group);
+    let characterIndex = characters.findIndex(character => character.avatar === entry.original_avatar);
+    if (characterIndex < 0 && !entry.is_user) characterIndex = characters.findIndex(character => character.name === entry.name);
+    if (characterIndex < 0 && entry.is_user) characterIndex = 0;
+    if (!characters[characterIndex]) throw new ApiError(422, 'unsupported', 'The message character is unavailable.');
+    const character = characters[characterIndex];
+    const headerless = !original.length || !Object.hasOwn(original[0], 'chat_metadata');
+    const chat = headerless ? [{ chat_metadata: {} }, ...structuredClone(original)] : structuredClone(original);
+    const messageIndex = index + (headerless ? 1 : 0);
+    const result = await runNativeText(session, character.data, chat, {
+        mode: 'edit', characterId: character.avatar.slice(0, -4), chatId: id, nativeContext,
+        groupContext: { group: { ...item.group, id: item.id }, characters, characterIndex },
+        message: { ...entry, mes: text },
+    });
+    const current = await readGroup(session, groupId);
+    if (!current.group.chats.includes(id) || !fs.existsSync(file)) throw new ApiError(409, 'conflict', 'Group chat changed during editing.');
+    assertChatIdle(session.handle, item.id, id, session.directories, 'group');
+    if (current.revision !== item.revision || !isDeepStrictEqual(parseGroupChat(file), original)) throw new ApiError(409, 'conflict', 'Group or transcript changed during editing. Reload before saving.');
+    try {
+        persistMacroEffects(session, file, chat, result.macroEffects);
+        const edited = chat[messageIndex];
+        edited.mes = result.text;
+        if (Array.isArray(edited.swipes)) {
+            const selected = Number.isInteger(edited.swipe_id) ? edited.swipe_id : 0;
+            if (selected >= 0 && selected < edited.swipes.length) edited.swipes[selected] = result.text;
+        }
+        if (result.warnings.regexWarnings.length || result.warnings.macroWarnings.length || Object.hasOwn(edited.extra ?? {}, 'native_regex_warnings') || Object.hasOwn(edited.extra ?? {}, 'native_macro_warnings')) {
+            edited.extra = { ...edited.extra, native_regex_warnings: result.warnings.regexWarnings, native_macro_warnings: result.warnings.macroWarnings };
+        }
+        writeChat(file, headerless && !result.macroEffects?.localDirty ? chat.slice(1) : chat);
+    } catch {
+        throw new ApiError(500, 'unknown', 'Message publication could not be confirmed. Inspect the transcript and variables before saving again.');
+    }
+    return { groupId: item.id, chatId: id, index: headerless && result.macroEffects?.localDirty ? index + 1 : index };
 }
 
 function parseGroupChat(file) {

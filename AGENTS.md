@@ -58,6 +58,11 @@ from the companion entry point.
   headerless transcripts, and checks the shared chat admission fence before writing.
   Group message deletion also checks that the displayed row matches the stored
   message before deleting, including for chats shared by multiple groups.
+  Group message editing evaluates native regex and macros with the message's
+  character and group context, then rechecks the group revision, transcript and
+  shared admission fence before publishing. For user messages it uses the first
+  available member as the character context. Preserve headerless chat indices
+  unless local macro effects require adding a metadata header.
 
 Focused verification from this checkout:
 

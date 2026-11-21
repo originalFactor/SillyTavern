@@ -137,6 +137,11 @@ message at `index` only when `expectedMessage` still matches the stored row.
 The operation is advertised as `resources.groupChatMessageDelete` and rejects
 active or unresolved turns across groups sharing the chat.
 
+`POST /api/v1/groups/{groupId}/chats/{chatId}/messages/edit` accepts `index`,
+`expectedMessage`, `text` and optional `nativeContext`. It evaluates edit regex
+and macros in group context and checks the transcript and group again before
+publication. Availability is reported by `resources.groupChatMessageEdit`.
+
 `POST /api/v1/groups/{groupId}/chats/{chatId}/generations` admits a group
 turn using `clientRequestId`, `input`, `type`, `overrides` and `nativeContext`.
 Normal, regenerate and continue are advertised separately as

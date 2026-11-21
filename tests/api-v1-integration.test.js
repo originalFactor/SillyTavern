@@ -119,10 +119,17 @@ describe('API v1 routes', () => {
             const invalidSwipe = await fetch(swipeUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: 2, swipeId: 9 }) });
             expect(invalidSwipe.status).toBe(400);
             const message = JSON.parse(fs.readFileSync(chatFile, 'utf8').split('\n').at(-1));
+            const editUrl = `${baseUrl}/api/v1/groups/api-group/chats/api-group-chat/messages/edit`;
+            const edit = expectedMessage => fetch(editUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: 2, expectedMessage, text: 'Edited {{char}}' }) });
+            expect((await edit({ ...message, mes: 'stale' })).status).toBe(409);
+            expect((await edit({ ...message, index: 2 })).status).toBe(200);
+            const edited = JSON.parse(fs.readFileSync(chatFile, 'utf8').split('\n').at(-1));
+            expect(edited.mes).toBe('Edited Aria');
+            expect(edited.swipes[0]).toBe('Edited Aria');
             const deleteUrl = `${baseUrl}/api/v1/groups/api-group/chats/api-group-chat/messages/delete`;
             const remove = expectedMessage => fetch(deleteUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: 2, expectedMessage }) });
             expect((await remove({ ...message, mes: 'outdated' })).status).toBe(409);
-            expect((await remove({ ...message, index: 2 })).status).toBe(200);
+            expect((await remove({ ...edited, index: 2 })).status).toBe(200);
             expect(fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse)).toHaveLength(2);
             const quiet = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientRequestId: 'api-group-quiet', type: 'quiet' }) });
             expect(quiet.status).toBe(422);
@@ -528,9 +535,35 @@ describe('API v1 routes', () => {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: 0, expectedMessage: rows[0] }),
             });
             expect(deletion.status).toBe(409);
+            const edit = await fetch(`${baseUrl}/api/v1/groups/${groupId}/chats/${chatId}/messages/edit`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: 0, expectedMessage: rows[0], text: 'Blocked' }),
+            });
+            expect(edit.status).toBe(409);
             expect(JSON.parse(fs.readFileSync(chatFile, 'utf8'))).toEqual(rows[0]);
         } finally {
             if (record) cancel(record);
+            fs.rmSync(chatFile, { force: true });
+            fs.rmSync(groupFile, { force: true });
+        }
+    });
+
+    test('group message editing preserves a headerless legacy transcript', async () => {
+        const groupId = 'legacy-edit-group';
+        const chatId = 'legacy-edit-chat';
+        const groupFile = path.join(directories.groups, `${groupId}.json`);
+        const chatFile = path.join(directories.groupChats, `${chatId}.jsonl`);
+        const message = { name: 'Aria', original_avatar: 'Aria.png', is_user: false, mes: 'First', swipes: ['First', 'Second'], swipe_id: 1 };
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Legacy', members: ['Aria.png'], chats: [chatId], chat_id: chatId }));
+        fs.writeFileSync(chatFile, JSON.stringify(message));
+        try {
+            const response = await fetch(`${baseUrl}/api/v1/groups/${groupId}/chats/${chatId}/messages/edit`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: 0, expectedMessage: { ...message, index: 0 }, text: 'New {{char}}' }),
+            });
+            expect(response.status).toBe(200);
+            const rows = fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse);
+            expect(rows).toHaveLength(1);
+            expect(rows[0]).toMatchObject({ mes: 'New Aria', swipes: ['First', 'New Aria'], swipe_id: 1 });
+        } finally {
             fs.rmSync(chatFile, { force: true });
             fs.rmSync(groupFile, { force: true });
         }

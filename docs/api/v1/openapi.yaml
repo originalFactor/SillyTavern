@@ -516,6 +516,29 @@ paths:
         '200': { description: Message deleted. }
         '404': { description: Message or chat not found. }
         '409': { description: Message changed or chat has an active or unresolved generation. }
+  /api/v1/groups/{groupId}/chats/{chatId}/messages/edit:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: editGroupMessage
+      summary: Edit an unchanged group message using native text processing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [index, expectedMessage, text]
+              properties:
+                index: { type: integer, minimum: 0 }
+                expectedMessage: { type: object }
+                text: { type: string }
+                nativeContext: { type: object }
+      responses:
+        '200': { description: Message edited. }
+        '409': { description: Group or transcript changed, or generation remains unresolved. }
+        '422': { description: Message character is unavailable. }
   /api/v1/groups/{groupId}/chats/{chatId}/preview:
     parameters:
       - { name: groupId, in: path, required: true, schema: { type: string } }
