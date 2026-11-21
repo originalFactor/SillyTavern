@@ -31,6 +31,25 @@ describe('group member activation', () => {
         await regenerate();
         expect(observed).toEqual({ type: 'normal', messages: ['Question', 'Earlier'] });
     });
+    test.each([
+        ['legacy last reply', [{ is_user: true, mes: 'User' }, { mes: 'Older', extra: { gen_id: 1 } }, { mes: 'Legacy' }], ['User']],
+        ['legacy reply inside a batch', [{ is_user: true, mes: 'User' }, { mes: 'Older', extra: { gen_id: 1 } }, { mes: 'Legacy' }, { mes: 'Latest', extra: { gen_id: 2 } }], ['User', 'Older']],
+        ['system boundary', [{ is_user: true, mes: 'User' }, { is_system: true, mes: 'System' }, { mes: 'Latest', extra: { gen_id: 2 } }], ['User', 'System']],
+        ['zero generation id', [{ is_user: true, mes: 'User' }, { mes: 'Older', extra: { gen_id: 1 } }, { mes: 'Latest', extra: { gen_id: 0 } }], ['User']],
+    ])('upstream regeneration observes the %s boundary', async (_name, chat, expected) => {
+        const source = fs.readFileSync(new URL('../public/scripts/group-chats.js', import.meta.url), 'utf8');
+        const start = source.indexOf('async function regenerateGroup()');
+        const end = source.indexOf('\n}', start);
+        let observed;
+        const regenerate = vm.runInNewContext(`(${source.slice(start, end + 2)})`, {
+            chat, getLastMessageGenerationId: () => chat.at(-1)?.extra?.gen_id,
+            deleteLastMessage: async () => { chat.pop(); }, AbortController,
+            setExternalAbortController: () => {},
+            generateGroupWrapper: async (_auto, type) => { observed = { type, messages: chat.map(message => message.mes) }; },
+        });
+        await regenerate();
+        expect(observed).toEqual({ type: 'normal', messages: expected });
+    });
     test('list, pooled and natural selection match the upstream browser functions', () => {
         const source = fs.readFileSync(new URL('../public/scripts/group-chats.js', import.meta.url), 'utf8');
         const extract = name => {
