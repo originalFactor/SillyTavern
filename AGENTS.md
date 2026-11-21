@@ -46,9 +46,11 @@ from the companion entry point.
   contract/runtime verification.
 - Group prompt preview is separately advertised as `resources.groupChatPreview`.
   It builds the selected member's prompt with group macros and World Info but
-  does not dispatch or persist. Continue/regenerate preview checks the last
-  speaker. Individually advertised group generation actions execute speakers
-  sequentially and journal progress, per-call usage and partial commits. Keep
+  does not dispatch or persist. Continue preview checks the last speaker. Group
+  regeneration removes the trailing generation batch in memory and selects
+  speakers again. The first replacement commits that change atomically, and
+  later failures retain completed replacements. Regenerate preview uses the
+  same batch boundary. Group actions journal per-call usage and partial commits. Keep
   `features.groupChats` false until the complete lifecycle and native device flow
   are verified and remaining group compatibility is implemented.
   Group chat filenames are shared across group descriptors, so admissions,

@@ -251,13 +251,13 @@ describe('API v1 routes', () => {
                 expect((await waitForGeneration((await response.json()).requestId)).status).toBe('done');
             }
             const last = fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse).at(-1);
-            expect(last.swipes).toEqual(['Mock reply', 'Mock replyMock reply']);
+            expect(last.swipes).toEqual(['Mock replyMock reply']);
             const swipeUrl = `${baseUrl}/api/v1/groups/api-group/chats/api-group-chat/swipe`;
             const staleSwipe = await fetch(swipeUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: 2, swipeId: 0, expectedMessage: { ...last, mes: 'stale' } }) });
             expect(staleSwipe.status).toBe(409);
             const swipe = await fetch(swipeUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: 2, swipeId: 0, expectedMessage: { ...last, index: 2 } }) });
             expect(swipe.status).toBe(200);
-            expect(fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse).at(-1)).toMatchObject({ mes: 'Mock reply', swipe_id: 0 });
+            expect(fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse).at(-1)).toMatchObject({ mes: 'Mock replyMock reply', swipe_id: 0 });
             const invalidSwipe = await fetch(swipeUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: 2, swipeId: 9 }) });
             expect(invalidSwipe.status).toBe(400);
             const message = JSON.parse(fs.readFileSync(chatFile, 'utf8').split('\n').at(-1));
@@ -332,6 +332,59 @@ describe('API v1 routes', () => {
         fs.unlinkSync(groupFile);
         fs.unlinkSync(chatFile);
     });
+    test('group regeneration preserves the old batch when the first provider stream fails', async () => {
+        const groupFile = path.join(directories.groups, 'regen-first-failure.json');
+        const chatFile = path.join(directories.groupChats, 'regen-first-failure-chat.jsonl');
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Group', members: ['Aria.png'], disabled_members: [], activation_strategy: 1, chats: ['regen-first-failure-chat'], chat_id: 'regen-first-failure-chat' }));
+        const original = [{ chat_metadata: {} }, { is_user: true, mes: 'Truncated outcome' }, { name: 'Aria', mes: 'Old reply', original_avatar: 'Aria.png', extra: { gen_id: 42 } }];
+        fs.writeFileSync(chatFile, original.map(row => JSON.stringify(row)).join('\n'));
+        const request = { user: { profile: { ...DEFAULT_USER, handle: 'contract-user' }, directories }, headers: {} };
+        const session = await prepareProviderSession(request);
+        const record = createGeneration({ handle: session.handle, clientRequestId: 'regen-first-failure-test', characterId: 'regen-first-failure', chatId: 'regen-first-failure-chat', type: 'regenerate', targetKind: 'group', directories }).record;
+        try {
+            const start = providerRequests.length;
+            await runGroupGeneration(request, session, record, { groupId: 'regen-first-failure', chatId: 'regen-first-failure-chat', type: 'regenerate', overrides: {} });
+            expect(record).toMatchObject({ status: 'unknown', committed: false, groupProgress: { members: ['Aria.png'], completed: [] } });
+            expect(fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse)).toEqual(original);
+            clearGenerations();
+            expect(snapshot(getGeneration(record.requestId, session.handle, directories))).toMatchObject({ status: 'unknown', committed: false, groupProgress: { completed: [] } });
+            expect(providerRequests).toHaveLength(start + 1);
+        } finally {
+            fs.unlinkSync(groupFile);
+            fs.unlinkSync(chatFile);
+        }
+    });
+    test('group regeneration retains the first replacement when the second provider stream fails', async () => {
+        const png = fs.readFileSync(path.join(serverDirectory, 'default', 'content', 'default_Seraphina.png'));
+        const card = { spec: 'chara_card_v2', spec_version: '2.0', data: { name: 'Bob' } };
+        const bobFile = path.join(directories.characters, 'Bob.png');
+        const groupFile = path.join(directories.groups, 'regen-partial.json');
+        const chatFile = path.join(directories.groupChats, 'regen-partial-chat.jsonl');
+        fs.writeFileSync(bobFile, writePngMetadata(png, JSON.stringify(card)));
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Group', members: ['Aria.png', 'Bob.png'], disabled_members: [], activation_strategy: 1, chats: ['regen-partial-chat'], chat_id: 'regen-partial-chat' }));
+        const original = [{ chat_metadata: {} }, { is_user: true, mes: 'Interrupt second group reply' },
+            { name: 'Aria', mes: 'Old Aria', original_avatar: 'Aria.png', extra: { gen_id: 42 } },
+            { name: 'Bob', mes: 'Old Bob', original_avatar: 'Bob.png', extra: { gen_id: 42 } }];
+        fs.writeFileSync(chatFile, original.map(row => JSON.stringify(row)).join('\n'));
+        const request = { user: { profile: { ...DEFAULT_USER, handle: 'contract-user' }, directories }, headers: {} };
+        const session = await prepareProviderSession(request);
+        const record = createGeneration({ handle: session.handle, clientRequestId: 'regen-partial-test', characterId: 'regen-partial', chatId: 'regen-partial-chat', type: 'regenerate', targetKind: 'group', directories }).record;
+        try {
+            const start = providerRequests.length;
+            await runGroupGeneration(request, session, record, { groupId: 'regen-partial', chatId: 'regen-partial-chat', type: 'regenerate', overrides: {} });
+            expect(record).toMatchObject({ status: 'unknown', committed: true, groupProgress: { members: ['Aria.png', 'Bob.png'], completed: [{ member: 'Aria.png', messageIndex: 2 }] } });
+            const chat = fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse);
+            expect(chat.slice(1).map(row => row.mes)).toEqual(['Interrupt second group reply', 'Mock reply']);
+            expect(chat[2].extra.gen_id).not.toBe(42);
+            clearGenerations();
+            expect(snapshot(getGeneration(record.requestId, session.handle, directories))).toMatchObject({ status: 'unknown', committed: true, groupProgress: { completed: [{ member: 'Aria.png', messageIndex: 2 }] } });
+            expect(providerRequests).toHaveLength(start + 2);
+        } finally {
+            fs.unlinkSync(bobFile);
+            fs.unlinkSync(groupFile);
+            fs.unlinkSync(chatFile);
+        }
+    });
     test('group runtime generates and commits speakers sequentially', async () => {
         const secondCard = { spec: 'chara_card_v2', spec_version: '2.0', data: { name: 'Bob', description: 'Bob is the second speaker.' } };
         const png = fs.readFileSync(path.join(serverDirectory, 'default', 'content', 'default_Seraphina.png'));
@@ -358,8 +411,12 @@ describe('API v1 routes', () => {
         }
         const revised = fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse).at(-1);
         expect(revised.original_avatar).toBe('Bob.png');
-        expect(revised.swipes).toEqual(['Mock reply', 'Mock replyMock reply']);
-        expect(revised.swipe_id).toBe(1);
+        expect(revised.swipes).toEqual(['Mock replyMock reply']);
+        expect(revised.swipe_id).toBe(0);
+        const regeneratedChat = fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse);
+        expect(regeneratedChat).toHaveLength(4);
+        expect(regeneratedChat.slice(2).map(message => message.original_avatar)).toEqual(['Aria.png', 'Bob.png']);
+        expect(regeneratedChat[2].extra.gen_id).toBe(regeneratedChat[3].extra.gen_id);
         fs.unlinkSync(path.join(directories.characters, 'Bob.png'));
         fs.unlinkSync(path.join(directories.groups, 'runtime-group.json'));
         fs.unlinkSync(chatFile);
@@ -477,7 +534,8 @@ describe('API v1 routes', () => {
         const wrongRegeneration = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ characterId: 'Aria', type: 'regenerate' }),
         });
-        expect(wrongRegeneration.status).toBe(409);
+        expect(wrongRegeneration.status).toBe(200);
+        expect((await wrongRegeneration.json()).messages.some(message => message.content.includes('Other reply'))).toBe(false);
         fs.writeFileSync(previewFile, Buffer.from([0xff]));
         const invalidPage = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat`);
         expect(invalidPage.status).toBe(422);
@@ -1128,7 +1186,7 @@ function startMockProvider() {
                 response.type('text/event-stream').end('data: {"choices":[{"delta":{"content":"Incomplete"}}]}\n\n');
                 return;
             }
-            if (request.body.messages.some(message => message.content === 'Truncated outcome')) {
+            if (request.body.messages.some(message => message.content?.includes('Truncated outcome'))) {
                 response.type('text/event-stream').end('data: {"choices":[{"delta":{"content":"Incomplete"}}]}\n\n');
                 return;
             }

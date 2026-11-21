@@ -1,5 +1,5 @@
 import { ApiError } from './contract.js';
-import { selectGroupMembers } from './group-activation.js';
+import { removeGroupGenerationBatch, selectGroupMembers } from './group-activation.js';
 import { loadGroupCharacters, resolveGroupChat } from './group-management.js';
 import { beginGeneration, complete, endGeneration, fail, prepareGroupProgress, recordGroupCommit, recordPluginEvents, shouldStopGeneration, stage, withChatLock } from './generation-store.js';
 import { persistMacroEffects } from './macros.js';
@@ -28,14 +28,16 @@ export async function runGroupGeneration(request, session, record, input) {
             if (type !== 'normal' && (chat.length <= 1 || chat.at(-1).is_user || chat.at(-1).is_system || typeof chat.at(-1).mes !== 'string')) {
                 throw new ApiError(409, 'conflict', 'The last message must be an assistant reply.');
             }
-            const members = selectGroupMembers({ group, characters, chat, input: input.input ?? '', type });
-            if (type !== 'normal' && members.length !== 1) throw new ApiError(409, 'conflict', 'The last speaker is not available in this group.');
-            prepareGroupProgress(record, members, chat.map(message => message.extra?.gen_id));
-            const previousReply = type === 'regenerate' ? chat.pop() : null;
+            const previousGenerationIds = chat.map(message => message.extra?.gen_id);
+            if (type === 'regenerate') removeGroupGenerationBatch(chat);
+            const generationType = type === 'regenerate' ? 'normal' : type;
+            const members = selectGroupMembers({ group, characters, chat, input: type === 'regenerate' ? '' : input.input ?? '', type: generationType });
+            if (type === 'continue' && members.length !== 1) throw new ApiError(409, 'conflict', 'The last speaker is not available in this group.');
+            prepareGroupProgress(record, members, previousGenerationIds);
             if (type === 'normal' && input.input) chat.push(createUserMessage(session, input.input));
             if (!members.length) {
                 let macroEffects;
-                if (input.input) {
+                if (type === 'normal' && input.input) {
                     const character = characters[0];
                     const formatted = await runNativeText(session, character?.data ?? {}, chat.slice(0, -1), {
                         mode: 'input', text: input.input, input: input.input, type,
@@ -51,12 +53,12 @@ export async function runGroupGeneration(request, session, record, input) {
                 if (shouldStopGeneration(record)) return;
                 recordPluginEvents(record, effects.events.splice(0));
                 persistPluginSettings(session, effects.settingsPatch);
-                if (input.input) {
+                if ((type === 'normal' && input.input) || type === 'regenerate') {
                     transcriptWriteAttempted = true;
                     persistMacroEffects(session, file, chat, macroEffects);
                     writeChat(file, chat);
                 }
-                complete(record, { groupId: input.groupId, chatId: input.chatId }, { committed: Boolean(input.input) });
+                complete(record, { groupId: input.groupId, chatId: input.chatId }, { committed: (type === 'normal' && Boolean(input.input)) || type === 'regenerate' });
                 return;
             }
             for (const member of members) {
@@ -67,9 +69,9 @@ export async function runGroupGeneration(request, session, record, input) {
                 const groupContext = { group, characters, characterIndex };
                 stage(record, 'prompt');
                 let built = await buildPrompt(session, character.data, chat, {
-                    type, input: input.input, overrides: input.overrides ?? {},
+                    type: generationType, input: type === 'regenerate' ? '' : input.input, overrides: input.overrides ?? {},
                     characterId, chatId: input.chatId, nativeContext: input.nativeContext,
-                    groupContext, macroChat: previousReply ? [...chat, { ...previousReply, swipe_id: previousReply.swipes?.length ?? 1 }] : chat,
+                    groupContext,
                     stageUserInput: type === 'normal' && Boolean(input.input) && record.groupProgress.completed.length === 0,
                 });
                 if (shouldStopGeneration(record)) return;
@@ -93,7 +95,7 @@ export async function runGroupGeneration(request, session, record, input) {
                 const result = await runSessionCompletion(request, built.providerRequest, record, session);
                 if (shouldStopGeneration(record)) return;
                 const formatted = await runNativeText(session, character.data, chat, {
-                    mode: 'output', text: result.text, reasoning: result.reasoning, type,
+                    mode: 'output', text: result.text, reasoning: result.reasoning, type: generationType,
                     characterId, chatId: input.chatId, nativeContext: input.nativeContext, groupContext,
                 });
                 if (shouldStopGeneration(record)) return;
@@ -112,7 +114,7 @@ export async function runGroupGeneration(request, session, record, input) {
                 persistPluginSettings(session, effects.settingsPatch);
                 effects.settingsPatch = {};
                 let messageIndex;
-                if (type === 'normal') {
+                if (generationType === 'normal') {
                     const message = createCharacterMessage(character.name, output.text, formatted.reasoning);
                     message.original_avatar = member;
                     message.extra.gen_id = record.groupProgress.generationId;
@@ -125,7 +127,7 @@ export async function runGroupGeneration(request, session, record, input) {
                     messageIndex = chat.length - 1;
                 } else {
                     transcriptWriteAttempted = true;
-                    messageIndex = commitMessages(file, chat, character.name, output.text, formatted.reasoning, type, previousReply, formatted.warnings.regexWarnings);
+                    messageIndex = commitMessages(file, chat, character.name, output.text, formatted.reasoning, type, null, formatted.warnings.regexWarnings);
                 }
                 recordGroupCommit(record, member, messageIndex);
             }

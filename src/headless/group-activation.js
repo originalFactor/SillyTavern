@@ -1,3 +1,14 @@
+/** Remove the trailing upstream generation batch from an in-memory chat. */
+export function removeGroupGenerationBatch(chat) {
+    const generationId = chat.at(-1)?.extra?.gen_id;
+    while (chat.length) {
+        const last = chat.at(-1);
+        const currentId = last.extra?.gen_id;
+        if (Object.hasOwn(last, 'chat_metadata') || (generationId && currentId && generationId !== currentId) || last.is_user || last.is_system) break;
+        chat.pop();
+    }
+}
+
 /** Select the next group speakers using SillyTavern's activation strategies. */
 export function selectGroupMembers({ group, characters, chat, input = '', auto = false, type = 'normal', forcedCharacterIndex, random = Math.random }) {
     const enabled = group.members.filter(member => !group.disabled_members.includes(member));

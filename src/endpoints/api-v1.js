@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { removeGroupGenerationBatch } from '../headless/group-activation.js';
 import path from 'node:path';
 
 import express from 'express';
@@ -432,19 +433,18 @@ router.post('/groups/:groupId/chats/:chatId/preview', asyncHandler(async (reques
     if (characterIndex < 0) throw new ApiError(404, 'not_found', 'Character is not a group member.');
     const character = characters[characterIndex];
     if (input.type === 'normal' && input.input) chat.push({ name: session.userName, is_user: true, mes: input.input });
-    if (['regenerate', 'continue'].includes(input.type) && (chat.length <= 1 || chat.at(-1).is_user || typeof chat.at(-1).mes !== 'string')) throw new ApiError(409, 'conflict', 'The last message must be an assistant reply.');
-    if (['regenerate', 'continue'].includes(input.type)) {
+    if (['regenerate', 'continue'].includes(input.type) && (chat.length <= 1 || chat.at(-1).is_user || chat.at(-1).is_system || typeof chat.at(-1).mes !== 'string')) throw new ApiError(409, 'conflict', 'The last message must be an assistant reply.');
+    if (input.type === 'continue') {
         const last = chat.at(-1);
         if (last.is_system || (last.original_avatar ? last.original_avatar !== character.avatar : last.name !== character.name)) {
             throw new ApiError(409, 'conflict', 'The selected member did not write the last reply.');
         }
     }
-    const macroChat = input.type === 'regenerate' ? [...chat] : null;
-    if (input.type === 'regenerate') chat.pop();
+    if (input.type === 'regenerate') removeGroupGenerationBatch(chat);
     const built = await buildPrompt(session, character.data, chat, {
-        type: input.type, input: input.input, overrides: input.overrides,
+        type: input.type === 'regenerate' ? 'normal' : input.type, input: input.type === 'regenerate' ? '' : input.input, overrides: input.overrides,
         characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext,
-        groupContext: { group, characters, characterIndex }, preview: true, macroChat,
+        groupContext: { group, characters, characterIndex }, preview: true,
         stageUserInput: input.type === 'normal' && Boolean(input.input),
     });
     response.json({ messages: built.messages, prompt: built.prompt, segments: built.segments, warnings: built.warnings, providerRequest: publicConfiguration(built.providerRequest) });
@@ -624,7 +624,7 @@ router.post('/generations/preview', asyncHandler(async (request, response) => {
     if (input.type === 'normal' && input.input) {
         chat.push({ name: session.userName, is_user: true, mes: input.input });
     }
-    if (['regenerate', 'continue'].includes(input.type) && (chat.length <= 1 || chat.at(-1).is_user || typeof chat.at(-1).mes !== 'string')) throw new ApiError(409, 'conflict', 'The last message must be an assistant reply.');
+    if (['regenerate', 'continue'].includes(input.type) && (chat.length <= 1 || chat.at(-1).is_user || chat.at(-1).is_system || typeof chat.at(-1).mes !== 'string')) throw new ApiError(409, 'conflict', 'The last message must be an assistant reply.');
     const macroChat = input.type === 'regenerate' ? [...chat] : null;
     if (input.type === 'regenerate' && chat.length > 1 && !chat.at(-1).is_user) chat.pop();
     const built = await buildPrompt(session, character.data, chat, {

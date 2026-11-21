@@ -1,7 +1,7 @@
 import { describe, expect, test } from '@jest/globals';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { selectGroupMembers } from '../src/headless/group-activation.js';
+import { removeGroupGenerationBatch, selectGroupMembers } from '../src/headless/group-activation.js';
 
 const characters = [
     { avatar: 'a.png', name: 'Alice', talkativeness: 0 },
@@ -49,6 +49,15 @@ describe('group member activation', () => {
         });
         await regenerate();
         expect(observed).toEqual({ type: 'normal', messages: expected });
+    });
+    test.each([
+        [[{ chat_metadata: {} }, { is_user: true }, { mes: 'old', extra: { gen_id: 1 } }, { mes: 'a', extra: { gen_id: 2 } }, { mes: 'b', extra: { gen_id: 2 } }], ['old']],
+        [[{ chat_metadata: {} }, { is_user: true }, { mes: 'old', extra: { gen_id: 1 } }, { mes: 'legacy' }], []],
+        [[{ is_user: true }, { mes: 'legacy' }], []],
+        [[{ mes: 'legacy' }], []],
+    ])('batch removal follows upstream boundaries and preserves metadata', (chat, remaining) => {
+        removeGroupGenerationBatch(chat);
+        expect(chat.filter(row => typeof row.mes === 'string').map(row => row.mes)).toEqual(remaining);
     });
     test('list, pooled and natural selection match the upstream browser functions', () => {
         const source = fs.readFileSync(new URL('../public/scripts/group-chats.js', import.meta.url), 'utf8');

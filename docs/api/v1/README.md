@@ -127,7 +127,7 @@ generation lifecycle are connected.
 `characterId` and the normal generation preview fields. It prepares that
 member's prompt against the group transcript without dispatching a provider
 request or persisting macro effects. Availability is reported by the
-`resources.groupChatPreview` capability. Continue and regenerate previews
+`resources.groupChatPreview` capability. Continue previews
 require the selected member to be the author of the last assistant reply.
 
 `POST /api/v1/groups/{groupId}/chats/{chatId}/swipe` selects a stored assistant
@@ -152,9 +152,10 @@ Normal, regenerate and continue are advertised separately as
 `generation.groupContinue`. Generation observation, cancellation and unknown
 acknowledgement use the returned generation URLs. Earlier committed replies
 remain in the group transcript if a later member fails or is cancelled.
-Group `regenerate` currently creates a swipe for the last speaker's reply. The
-browser's group regeneration replaces the trailing generation batch and selects
-speakers again, so full group regeneration compatibility remains unavailable.
+Group `regenerate` selects speakers again after removing the trailing generation
+batch from the prompt. The old batch remains on disk until the first replacement
+reply commits atomically. If a later member fails, earlier replacement replies
+remain and the outcome requires inspection. Regeneration preview uses the same truncated chat for the selected member.
 
 ## Extensions and WebViews
 
