@@ -30,7 +30,7 @@ export async function runGroupGeneration(request, session, record, input) {
             }
             const members = selectGroupMembers({ group, characters, chat, input: input.input ?? '', type });
             if (type !== 'normal' && members.length !== 1) throw new ApiError(409, 'conflict', 'The last speaker is not available in this group.');
-            prepareGroupProgress(record, members);
+            prepareGroupProgress(record, members, chat.map(message => message.extra?.gen_id));
             const previousReply = type === 'regenerate' ? chat.pop() : null;
             if (type === 'normal' && input.input) chat.push(createUserMessage(session, input.input));
             if (!members.length) {

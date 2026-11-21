@@ -16,6 +16,13 @@ afterEach(() => { clearGenerations(); jest.useRealTimers(); jest.restoreAllMocks
 const options = (extra = {}) => ({ handle: 'owner', clientRequestId: 'caller-key', characterId: 'Aria', chatId: 'Chat', type: 'normal', directories, requestIdentity: { input: 'private prompt not copied into admission metadata', overrides: { model: 'one', temperature: 0.5 } }, ...extra });
 
 describe('durable caller identity and failure handling', () => {
+    test('group batch IDs avoid collisions with stored transcript IDs', () => {
+        const record = createGeneration(options({ targetKind: 'group' })).record;
+        beginGeneration(record);
+        jest.spyOn(Date, 'now').mockReturnValue(123456);
+        prepareGroupProgress(record, ['Aria.png'], [123456, 123457]);
+        expect(record.groupProgress.generationId).toBe(123458);
+    });
     test('persists the group speaker order and committed replies across interruption', () => {
         const record = createGeneration(options({ targetKind: 'group' })).record;
         beginGeneration(record);

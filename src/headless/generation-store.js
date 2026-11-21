@@ -309,14 +309,17 @@ function persistOutcome(record) {
 export const shouldStopGeneration = record => record.cancelRequested || isTerminal(record.status);
 
 /** Persist the selected speaker order before any group provider request. */
-export function prepareGroupProgress(record, members) {
+export function prepareGroupProgress(record, members, previousGenerationIds = []) {
     if (record.targetKind !== 'group' || shouldStopGeneration(record) || record.groupProgress || record.providerDispatched) {
         throw new ApiError(409, 'conflict', 'Group generation progress cannot be initialized.');
     }
     if (!Array.isArray(members) || members.length > 1000 || members.some(member => typeof member !== 'string' || !member || Buffer.byteLength(member) > 255)) {
         throw new ApiError(400, 'validation', 'Invalid group generation member list.');
     }
-    record.groupProgress = { generationId: Date.now(), members: [...members], completed: [] };
+    const existingIds = new Set(previousGenerationIds);
+    let generationId = Date.now();
+    while (existingIds.has(generationId)) generationId++;
+    record.groupProgress = { generationId, members: [...members], completed: [] };
     persistGenerationIfPossible(record);
 }
 
