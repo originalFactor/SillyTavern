@@ -143,6 +143,24 @@ export async function listGroupChats(session, groupId) {
     });
 }
 
+export async function createGroupChat(session, groupId, chatId, expectedRevision) {
+    const item = await readGroup(session, groupId);
+    const { id, file } = chatPath(session, chatId);
+    const groupFile = groupPath(session, item.id).file;
+    if (!expectedRevision || item.revision !== expectedRevision || revision(fs.readFileSync(groupFile)) !== expectedRevision) {
+        throw new ApiError(409, 'conflict', 'Group changed since it was opened. Reload before creating a chat.');
+    }
+    if (fs.existsSync(file)) throw new ApiError(409, 'conflict', 'Group chat ID already exists.');
+    const attached = item.group.chats.includes(id);
+    if (!attached && item.group.chats.length >= 256) throw new ApiError(400, 'validation', 'Group has too many chats.');
+    fs.mkdirSync(session.directories.groupChats, { recursive: true });
+    const updated = attached ? { id: item.id, revision: item.revision, group: item.group } : saveGroup(session, {
+        groupId: item.id, group: { ...item.group, chats: [...item.group.chats, id], chat_id: id }, expectedRevision, create: false,
+    });
+    writeFileAtomicSync(file, JSON.stringify({ chat_metadata: {}, user_name: 'unused', character_name: 'unused' }) + '\n');
+    return updated;
+}
+
 export async function readGroupChat(session, groupId, chatId, paging = {}) {
     const item = await readGroup(session, groupId);
     if (!item.group.chats.includes(chatId)) throw new ApiError(404, 'not_found', 'Group chat is not attached to this group.');

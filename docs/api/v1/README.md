@@ -106,7 +106,11 @@ native fields. Deleting a group with attached chat files requires the explicit
 
 `GET /api/v1/groups/{groupId}/chats` lists attached group JSONL chats and
 `GET /api/v1/groups/{groupId}/chats/{chatId}` provides the same bounded paging
-shape as ordinary chats. These management and read paths do not claim group
+shape as ordinary chats. `POST /api/v1/groups/{groupId}/chats` accepts a caller-owned
+`chatId` and `expectedRevision`, attaches it and writes an empty JSONL header.
+If file creation fails after attachment, inspect the group and explicitly submit
+the same ID with the current revision to initialize the missing file. Existing
+files are never replaced. These management and read paths do not claim group
 generation parity. The `features.groupChats` capability remains false until
 member activation, per-member prompt context and the durable multi-member
 generation lifecycle are connected.

@@ -124,6 +124,34 @@ describe('API v1 routes', () => {
         expect(document.group.disabled_members).toEqual(['Aria.png']);
         expect(document.revision).toHaveLength(64);
 
+        const newChat = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chatId: 'contract-created-chat', expectedRevision: document.revision }),
+        });
+        expect(newChat.status).toBe(201);
+        const updated = await newChat.json();
+        expect(updated.group.chat_id).toBe('contract-created-chat');
+        fs.unlinkSync(path.join(directories.groupChats, 'contract-created-chat.jsonl'));
+        const recovered = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chatId: 'contract-created-chat', expectedRevision: updated.revision }),
+        });
+        expect(recovered.status).toBe(201);
+        const existingFile = path.join(directories.groupChats, 'contract-created-chat.jsonl');
+        const originalChat = fs.readFileSync(existingFile, 'utf8');
+        const duplicate = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chatId: 'contract-created-chat', expectedRevision: updated.revision }),
+        });
+        expect(duplicate.status).toBe(409);
+        expect(fs.readFileSync(existingFile, 'utf8')).toBe(originalChat);
+        const staleCreate = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chatId: 'contract-stale-chat', expectedRevision: document.revision }),
+        });
+        expect(staleCreate.status).toBe(409);
+        expect(fs.existsSync(path.join(directories.groupChats, 'contract-stale-chat.jsonl'))).toBe(false);
+
         fs.mkdirSync(directories.groupChats, { recursive: true });
         fs.writeFileSync(path.join(directories.groupChats, 'contract-group-chat.jsonl'), [
             JSON.stringify({ chat_metadata: { contract: true } }),
@@ -142,9 +170,9 @@ describe('API v1 routes', () => {
             body: JSON.stringify({ expectedRevision: '0'.repeat(64), group: document.group }),
         });
         expect(stale.status).toBe(409);
-        const refused = await fetch(`${baseUrl}/api/v1/groups/contract-group?expectedRevision=${document.revision}`, { method: 'DELETE' });
+        const refused = await fetch(`${baseUrl}/api/v1/groups/contract-group?expectedRevision=${updated.revision}`, { method: 'DELETE' });
         expect(refused.status).toBe(409);
-        const removed = await fetch(`${baseUrl}/api/v1/groups/contract-group?expectedRevision=${document.revision}&deleteChats=true`, { method: 'DELETE' });
+        const removed = await fetch(`${baseUrl}/api/v1/groups/contract-group?expectedRevision=${updated.revision}&deleteChats=true`, { method: 'DELETE' });
         expect(removed.status).toBe(200);
         expect(fs.existsSync(path.join(directories.groupChats, 'contract-group-chat.jsonl'))).toBe(false);
     });

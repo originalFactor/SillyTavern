@@ -5,7 +5,7 @@ import express from 'express';
 
 import { API_V1_VERSION, ApiError, asyncHandler, ensureRequestId, requireObject, requireSafeId, sendApiError } from '../headless/contract.js';
 import { deleteCharacter, exportCharacter, importCharacter, saveCharacter } from '../headless/character-management.js';
-import { deleteGroup, getGroup, listGroupChats, listGroups, readGroupChat, saveGroup } from '../headless/group-management.js';
+import { createGroupChat, deleteGroup, getGroup, listGroupChats, listGroups, readGroupChat, saveGroup } from '../headless/group-management.js';
 import { activePreset, activatePreset, deletePreset, exportPreset, getPreset, listPresets, savePreset } from '../headless/presets.js';
 import { publicConfiguration } from '../headless/redaction.js';
 import { TEXT_COMPLETION_SOURCES } from '../headless/text-provider.js';
@@ -77,6 +77,7 @@ router.get('/capabilities', (_request, response) => {
             groups: true,
             groupManagement: true,
             groupChatPaging: true,
+            groupChatCreate: true,
             characterCreate: true,
             characterEdit: true,
             characterDelete: true,
@@ -381,6 +382,11 @@ router.delete('/groups/:groupId', asyncHandler(async (request, response) => {
 
 router.get('/groups/:groupId/chats', asyncHandler(async (request, response) => {
     response.json(await listGroupChats(createSession(request), request.params.groupId));
+}));
+
+router.post('/groups/:groupId/chats', asyncHandler(async (request, response) => {
+    const input = requireObject(request.body, 'group chat input');
+    response.status(201).json(await createGroupChat(createSession(request), request.params.groupId, input.chatId, input.expectedRevision));
 }));
 
 router.get('/groups/:groupId/chats/:chatId', asyncHandler(async (request, response) => {

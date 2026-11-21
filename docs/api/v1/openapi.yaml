@@ -448,6 +448,22 @@ paths:
       summary: List group JSONL chats attached to a native group.
       responses:
         '200': { description: Attached group chats. }
+    post:
+      operationId: createGroupChat
+      summary: Attach and initialize a group chat with revision checking.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chatId, expectedRevision]
+              properties:
+                chatId: { type: string }
+                expectedRevision: { type: string }
+      responses:
+        '201': { description: Updated group document. }
+        '409': { description: Revision conflict or existing chat file. }
   /api/v1/groups/{groupId}/chats/{chatId}:
     parameters:
       - { name: groupId, in: path, required: true, schema: { type: string } }
