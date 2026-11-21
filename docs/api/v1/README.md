@@ -642,6 +642,9 @@ completionTokens, totalTokens, cachedTokens and reasoningTokens when present.
 Missing fields are absent, not invented zeros. Partial usage accumulates across
 SSE and survives interruptions or later formatting failure. Known zero cached
 counts remain real zeros. No monetary amount or billed total is inferred.
+Group generation journal snapshots expose `usageByCall` in provider dispatch
+order, retaining null for calls that did not report usage. This journal field
+does not enable the group generation capability.
 
 This does not establish full preset/Instruct, group, media, tool or extension
 parity; their separate capability gates remain unchanged. Full Prompt Manager

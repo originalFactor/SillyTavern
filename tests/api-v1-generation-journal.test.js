@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globa
 import {
     abandonClientGeneration, acknowledgeGeneration, appendToken, assertCharacterIdle, assertChatIdle, beginGeneration, cancel, clearGenerations,
     complete, createGeneration, endGeneration, fail, getGeneration, getGenerationByClient,
-    listGenerations, markProviderDispatched, persistGeneration, restoreGenerations, snapshot,
+    listGenerations, markProviderDispatched, persistGeneration, restoreGenerations, setUsage, snapshot,
 } from '../src/headless/generation-store.js';
 
 let root, directories;
@@ -16,6 +16,35 @@ afterEach(() => { clearGenerations(); jest.useRealTimers(); jest.restoreAllMocks
 const options = (extra = {}) => ({ handle: 'owner', clientRequestId: 'caller-key', characterId: 'Aria', chatId: 'Chat', type: 'normal', directories, requestIdentity: { input: 'private prompt not copied into admission metadata', overrides: { model: 'one', temperature: 0.5 } }, ...extra });
 
 describe('durable caller identity and failure handling', () => {
+    test('retains separate group provider usage and missing usage across restoration', () => {
+        const record = createGeneration(options({ targetKind: 'group' })).record;
+        beginGeneration(record);
+        markProviderDispatched(record);
+        setUsage(record, { prompt_tokens: 10 });
+        setUsage(record, { completion_tokens: 4 });
+        markProviderDispatched(record);
+        markProviderDispatched(record);
+        setUsage(record, { total_tokens: 8 });
+        persistGeneration(directories, record);
+        clearGenerations();
+        const restored = getGeneration(record.requestId, 'owner', directories);
+        expect(restored.providerCallCount).toBe(3);
+        expect(snapshot(restored).usageByCall).toEqual([{ promptTokens: 10, completionTokens: 4 }, null, { totalTokens: 8 }]);
+        expect(restored.status).toBe('unknown');
+    });
+    test('retains character usage behavior and accepts older group records', () => {
+        const character = createGeneration(options()).record;
+        setUsage(character, { prompt_tokens: 2 });
+        setUsage(character, { completion_tokens: 3 });
+        expect(snapshot(character).usage).toEqual({ promptTokens: 2, completionTokens: 3 });
+        expect(snapshot(character).usageByCall).toBeUndefined();
+        const group = createGeneration(options({ clientRequestId: 'group', targetKind: 'group' })).record;
+        delete group.usageByCall;
+        delete group.providerCallCount;
+        markProviderDispatched(group);
+        setUsage(group, { total_tokens: 5 });
+        expect(snapshot(group).usageByCall).toEqual([{ totalTokens: 5 }]);
+    });
     test('keeps group and character admissions distinct across restart', () => {
         const character = createGeneration(options()).record;
         const group = createGeneration(options({ clientRequestId: 'group-key', targetKind: 'group' })).record;

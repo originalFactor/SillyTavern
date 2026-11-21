@@ -1261,6 +1261,10 @@ components:
             providerDispatched: { type: boolean }
             restored: { type: boolean }
             usage: { type: [object, 'null'], additionalProperties: true }
+            usageByCall:
+              type: array
+              items: { type: [object, 'null'], additionalProperties: true }
+              description: Group provider usage in dispatch order, with null for calls without reported usage.
             snapshot: { type: [object, 'null'], additionalProperties: true }
             finishedAt: { type: [string, 'null'], format: date-time }
     GenerationAccepted:

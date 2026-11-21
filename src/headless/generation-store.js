@@ -130,7 +130,7 @@ export function persistGeneration(directories, record) {
         'requestId', 'userKey', 'clientRequestId', 'characterId', 'chatId', 'type', 'targetKind',
         'fingerprint', 'status', 'seq', 'text', 'reasoning', 'error', 'committed',
         'cancelOutcome', 'cancelRequested', 'providerDispatched', 'drained',
-        'acknowledged', 'usage', 'pluginEvents', 'createdAt', 'finishedAt', 'snapshot',
+        'acknowledged', 'usage', 'usageByCall', 'providerCallCount', 'pluginEvents', 'createdAt', 'finishedAt', 'snapshot',
     ].map(key => [key, record[key] ?? null]));
     writeJournal(directories, body);
     record.lastPersistedAt = Date.now();
@@ -152,6 +152,8 @@ function hydrate(body, directories) {
         cancelOutcome: inFlight || legacyAmbiguous ? 'unknown' : body.cancelOutcome,
         committed: quietCommitFix ? false : Boolean(body.committed),
         providerDispatched: body.providerDispatched ?? (inFlight || legacyAmbiguous || body.status === 'done'),
+        usageByCall: Array.isArray(body.usageByCall) ? body.usageByCall : [],
+        providerCallCount: Number.isSafeInteger(body.providerCallCount) && body.providerCallCount >= 0 ? body.providerCallCount : 0,
         events: [], subscribers: new Set(), controller: new AbortController(),
         heartbeat: null, directories, workerActive: false, drained: true,
         acknowledged: inFlight || legacyAmbiguous ? false : body.acknowledged === true || (body.acknowledged == null && body.status === 'done'),
@@ -215,7 +217,7 @@ export function createGeneration({ handle, clientRequestId, characterId, chatId,
         controller: new AbortController(), heartbeat: null, createdAt: Date.now(), error: null,
         cancelOutcome: null, cancelRequested: false, providerDispatched: false,
         workerActive: false, drained: true, acknowledged: false,
-        committed: false, usage: null, pluginEvents: [], restored: false, directories: directories ?? null,
+        committed: false, usage: null, usageByCall: [], providerCallCount: 0, pluginEvents: [], restored: false, directories: directories ?? null,
     };
     // Neither the record nor a billable worker is published before the snapshot
     // and permanent client-key index are both synchronized.
@@ -325,6 +327,11 @@ export function beginGeneration(record) {
 export function markProviderDispatched(record) {
     if (shouldStopGeneration(record)) throw new ApiError(409, 'conflict', 'Generation was cancelled before provider dispatch.');
     record.providerDispatched = true;
+    if (record.targetKind === 'group') {
+        record.providerCallCount = (record.providerCallCount ?? 0) + 1;
+        record.usageByCall ??= [];
+        record.usageByCall.push(null);
+    }
     persistGenerationIfPossible(record);
 }
 export function endGeneration(record) {
@@ -382,7 +389,15 @@ export function setUsage(record, usage) {
         reasoningTokens: usage.completion_tokens_details?.reasoning_tokens ?? usage.reasoningTokens,
     };
     const reported = Object.fromEntries(Object.entries(fields).filter(([, value]) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0));
-    if (Object.keys(reported).length) record.usage = { ...(record.usage ?? {}), ...reported };
+    if (Object.keys(reported).length) {
+        if (record.targetKind === 'group' && record.providerCallCount > 0) {
+            record.usageByCall ??= [];
+            record.usageByCall[record.providerCallCount - 1] = { ...(record.usageByCall[record.providerCallCount - 1] ?? {}), ...reported };
+            record.dirty = true;
+        } else {
+            record.usage = { ...(record.usage ?? {}), ...reported };
+        }
+    }
 }
 
 /**
@@ -588,6 +603,7 @@ export function snapshot(record) {
         providerDispatched: record.providerDispatched === true,
         cancelOutcome: record.cancelOutcome,
         usage: record.usage ?? null,
+        usageByCall: record.targetKind === 'group' ? record.usageByCall ?? [] : undefined,
         warnings: record.snapshot?.warnings ?? null,
         pluginEvents: record.pluginEvents ?? [],
         restored: Boolean(record.restored),
