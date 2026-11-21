@@ -74,6 +74,24 @@ describe('source regex across storage, prompt, editing and read-only display', (
         expect(readSettings(directories).extension_settings.regex).toEqual(before);
         expect(readChat(filename()).at(-1).mes).toBe('Greeting raw');
     });
+    test('editing card regex requires an independent grant before execution', async () => {
+        const current = await req('/characters/Aria');
+        const updated = structuredClone(current.value.raw);
+        const data = updated.data ?? updated;
+        data.extensions = { ...(data.extensions ?? {}), regex_scripts: [script(2, '/Scope raw/g', 'Scope authorized')] };
+        const save = await req('/characters/Aria', 'PUT', { expectedRevision: current.value.revision, card: updated });
+        expect(save.status).toBe(200);
+        expect((await req('/regex-settings')).value.settings.characterAllowed).not.toContain('Aria.png');
+        await req('/characters/Aria/chats', 'POST', { chatId: 'ScopeBefore', firstMessage: 'Scope raw' });
+        expect(readChat(path.join(directories.chats, 'Aria/ScopeBefore.jsonl'))[1].mes).toBe('Scope raw');
+        const settings = (await req('/regex-settings')).value;
+        const grant = { ...settings.settings, characterAllowed: ['Aria.png'] };
+        expect((await req('/regex-settings', 'PUT', { expectedRevision: settings.revision, settings: grant })).status).toBe(409);
+        expect((await req('/regex-settings', 'PUT', { expectedRevision: settings.revision, settings: grant, confirmScopeChanges: true })).status).toBe(200);
+        await req('/characters/Aria/chats', 'POST', { chatId: 'ScopeAfter', firstMessage: 'Scope raw' });
+        expect(readChat(path.join(directories.chats, 'Aria/ScopeAfter.jsonl'))[1].mes).toBe('Scope authorized');
+        expect((await req('/characters/Aria', 'PUT', { expectedRevision: current.value.revision, card: updated })).status).toBe(409);
+    });
     test('input transforms once before storage, prompt-only rules respect roles, and output/reasoning use their own placements', async () => {
         configure([script(1, '/raw/g', 'stored {{incvar::n}}'), script(1, '/stored/g', 'request', { promptOnly: true }), script(2, '/Greeting/g', 'assistantPrompt', { promptOnly: true }), script(2, '/raw/g', 'AI {{incvar::out}}'), script(6, '/trace/g', 'reasoned')]);
         const before = fs.readFileSync(filename(), 'utf8');
