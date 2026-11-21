@@ -56,6 +56,8 @@ from the companion entry point.
   the original group ID so the blocking outcome can be inspected.
   Group swipe selection validates the on-disk paged index, including legacy
   headerless transcripts, and checks the shared chat admission fence before writing.
+  Group message deletion also checks that the displayed row matches the stored
+  message before deleting, including for chats shared by multiple groups.
 
 Focused verification from this checkout:
 

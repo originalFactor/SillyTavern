@@ -116,6 +116,12 @@ describe('API v1 routes', () => {
             expect(fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse).at(-1)).toMatchObject({ mes: 'Mock reply', swipe_id: 0 });
             const invalidSwipe = await fetch(swipeUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: 2, swipeId: 9 }) });
             expect(invalidSwipe.status).toBe(400);
+            const message = JSON.parse(fs.readFileSync(chatFile, 'utf8').split('\n').at(-1));
+            const deleteUrl = `${baseUrl}/api/v1/groups/api-group/chats/api-group-chat/messages/delete`;
+            const remove = expectedMessage => fetch(deleteUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: 2, expectedMessage }) });
+            expect((await remove({ ...message, mes: 'outdated' })).status).toBe(409);
+            expect((await remove({ ...message, index: 2 })).status).toBe(200);
+            expect(fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse)).toHaveLength(2);
             const quiet = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientRequestId: 'api-group-quiet', type: 'quiet' }) });
             expect(quiet.status).toBe(422);
         } finally {
@@ -516,6 +522,10 @@ describe('API v1 routes', () => {
             expect(rows[0]).toMatchObject({ mes: 'Second', swipe_id: 1 });
             record = createGeneration({ handle: 'contract-user', clientRequestId: 'legacy-swipe-fence', characterId: 'another-group', chatId, type: 'normal', targetKind: 'group', directories }).record;
             expect((await select()).status).toBe(409);
+            const deletion = await fetch(`${baseUrl}/api/v1/groups/${groupId}/chats/${chatId}/messages/delete`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: 0, expectedMessage: rows[0] }),
+            });
+            expect(deletion.status).toBe(409);
             expect(JSON.parse(fs.readFileSync(chatFile, 'utf8'))).toEqual(rows[0]);
         } finally {
             if (record) cancel(record);

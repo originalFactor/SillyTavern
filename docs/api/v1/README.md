@@ -131,6 +131,11 @@ require the selected member to be the author of the last assistant reply.
 alternative using its paged message `index` and `swipeId`. The operation is
 advertised as `resources.groupChatSwipe` and rejects active or unresolved turns.
 
+`POST /api/v1/groups/{groupId}/chats/{chatId}/messages/delete` deletes the
+message at `index` only when `expectedMessage` still matches the stored row.
+The operation is advertised as `resources.groupChatMessageDelete` and rejects
+active or unresolved turns across groups sharing the chat.
+
 `POST /api/v1/groups/{groupId}/chats/{chatId}/generations` admits a group
 turn using `clientRequestId`, `input`, `type`, `overrides` and `nativeContext`.
 Normal, regenerate and continue are advertised separately as

@@ -494,6 +494,27 @@ paths:
         '200': { description: Selected reply alternative. }
         '400': { description: Invalid message or alternative. }
         '409': { description: Chat has an active or unresolved generation. }
+  /api/v1/groups/{groupId}/chats/{chatId}/messages/delete:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: deleteGroupMessage
+      summary: Delete an unchanged group message.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [index, expectedMessage]
+              properties:
+                index: { type: integer, minimum: 0 }
+                expectedMessage: { type: object }
+      responses:
+        '200': { description: Message deleted. }
+        '404': { description: Message or chat not found. }
+        '409': { description: Message changed or chat has an active or unresolved generation. }
   /api/v1/groups/{groupId}/chats/{chatId}/preview:
     parameters:
       - { name: groupId, in: path, required: true, schema: { type: string } }

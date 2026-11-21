@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { ApiError, requireSafeId } from './contract.js';
@@ -222,6 +223,23 @@ export async function selectGroupSwipe(session, groupId, chatId, index, swipeId)
     entry.extra = { ...(entry.swipe_info?.[swipeId]?.extra ?? {}) };
     writeChat(file, chat);
     return { groupId: item.id, chatId: id, index, swipeId };
+}
+
+export async function deleteGroupMessage(session, groupId, chatId, index, expectedMessage) {
+    const item = await readGroup(session, groupId);
+    const { id, file } = chatPath(session, chatId);
+    if (!item.group.chats.includes(id) || !fs.existsSync(file)) throw new ApiError(404, 'not_found', 'Group chat not found.');
+    assertChatIdle(session.handle, item.id, id, session.directories, 'group');
+    const chat = parseGroupChat(file);
+    const entry = Number.isInteger(index) && index >= 0 ? chat[index] : null;
+    if (!entry || typeof entry.mes !== 'string') throw new ApiError(404, 'not_found', 'Message not found.');
+    if (!expectedMessage || typeof expectedMessage !== 'object' || Array.isArray(expectedMessage)) throw new ApiError(400, 'validation', 'Expected message is required.');
+    const expected = { ...expectedMessage };
+    delete expected.index;
+    if (!isDeepStrictEqual(entry, expected)) throw new ApiError(409, 'conflict', 'Message changed. Reload before deleting.');
+    chat.splice(index, 1);
+    writeChat(file, chat);
+    return { groupId: item.id, chatId: id, index };
 }
 
 function parseGroupChat(file) {
