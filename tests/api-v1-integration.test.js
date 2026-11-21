@@ -202,6 +202,11 @@ describe('API v1 routes', () => {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ characterId: 'Aria' }),
         });
         expect(invalidUtf8.status).toBe(422);
+        fs.writeFileSync(previewFile, JSON.stringify({ chat_metadata: [] }) + '\n');
+        expect((await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat`)).status).toBe(422);
+        expect((await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ characterId: 'Aria' }),
+        })).status).toBe(422);
         fs.writeFileSync(previewFile, '');
         const emptyPreview = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ characterId: 'Aria' }),

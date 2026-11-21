@@ -196,6 +196,9 @@ function parseGroupChat(file) {
         chat = text.split('\n').filter(line => line.trim()).map(line => JSON.parse(line));
         if (chat.some(row => !row || typeof row !== 'object' || Array.isArray(row))) throw new Error('Invalid row');
     } catch { throw new ApiError(422, 'storage', 'Group chat contains unreadable transcript data.'); }
+    if (chat.length && Object.hasOwn(chat[0], 'chat_metadata') && (!chat[0].chat_metadata || typeof chat[0].chat_metadata !== 'object' || Array.isArray(chat[0].chat_metadata))) {
+        throw new ApiError(422, 'storage', 'Group chat metadata header is invalid.');
+    }
     return chat;
 }
 
@@ -208,8 +211,6 @@ export async function resolveGroupChat(session, groupId, chatId) {
     // Match the browser loader by supplying empty metadata in memory only.
     if (!chat.length || !Object.hasOwn(chat[0], 'chat_metadata')) {
         chat.unshift({ chat_metadata: {} });
-    } else if (!chat[0].chat_metadata || typeof chat[0].chat_metadata !== 'object' || Array.isArray(chat[0].chat_metadata)) {
-        throw new ApiError(422, 'storage', 'Group chat metadata header is invalid.');
     }
     return { group: { ...item.group, id: item.id }, file, chat };
 }
