@@ -62,13 +62,13 @@ export function assertChatIdle(handle, characterId, chatId, directories = null, 
     if (directories) restoreGenerations(directories);
     const userKey = getUserKey(handle);
     for (const record of generations.values()) {
-        if ((record.targetKind ?? 'character') === targetKind && record.userKey === userKey && record.characterId === characterId && record.chatId === chatId && (!isTerminal(record.status) || record.workerActive)) {
+        if ((record.targetKind ?? 'character') === targetKind && record.userKey === userKey && (targetKind === 'group' || record.characterId === characterId) && record.chatId === chatId && (!isTerminal(record.status) || record.workerActive)) {
             throw new ApiError(409, 'conflict', 'This chat has an active generation. Stop it and wait for completion before changing history.');
         }
     }
     for (const entry of directories ? journalEntries(directories) : []) {
         const record = generations.get(entry.requestId) ?? entry;
-        if ((record.targetKind ?? 'character') === targetKind && record.userKey === userKey && record.characterId === characterId && record.chatId === chatId && !record.acknowledged && (record.status === 'unknown' || (record.status === 'cancelled' && record.cancelOutcome === 'unknown'))) throw new ApiError(409, 'conflict', 'This chat has an unresolved generation outcome. Inspect and acknowledge it before changing history.');
+        if ((record.targetKind ?? 'character') === targetKind && record.userKey === userKey && (targetKind === 'group' || record.characterId === characterId) && record.chatId === chatId && !record.acknowledged && (record.status === 'unknown' || (record.status === 'cancelled' && record.cancelOutcome === 'unknown'))) throw new ApiError(409, 'conflict', 'This chat has an unresolved generation outcome. Inspect and acknowledge it before changing history.');
     }
 }
 
@@ -204,7 +204,7 @@ export function createGeneration({ handle, clientRequestId, characterId, chatId,
     }
     if (!reservationOnly) assertChatIdle(handle, characterId, chatId, null, targetKind);
     for (const entry of reservationOnly ? [] : directories ? journalEntries(directories) : generations.values()) {
-        if ((entry.targetKind ?? 'character') !== targetKind || entry.userKey !== userKey || entry.characterId !== characterId || entry.chatId !== chatId) continue;
+        if ((entry.targetKind ?? 'character') !== targetKind || entry.userKey !== userKey || (targetKind !== 'group' && entry.characterId !== characterId) || entry.chatId !== chatId) continue;
         if (isTerminal(entry.status) && !['unknown', 'cancelled'].includes(entry.status)) continue;
         const record = generations.get(entry.requestId) ?? (directories ? hydrate(readJournal(directories, entry.requestId) ?? (() => { throw storageFailure(); })(), directories) : entry);
         if (!record.acknowledged && (record.status === 'unknown' || (record.status === 'cancelled' && record.cancelOutcome === 'unknown'))) throw new ApiError(409, 'conflict', 'This chat has an unresolved generation outcome. Inspect the saved result and acknowledge it before sending again.');
@@ -255,7 +255,7 @@ export function listGenerations(handle, directories, { characterId, chatId, befo
     restoreGenerations(directories);
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new ApiError(400, 'validation', 'Generation page limit must be 1..100.');
     const userKey = getUserKey(handle);
-    let entries = journalEntries(directories).filter(entry => (entry.targetKind ?? 'character') === targetKind && entry.userKey === userKey && entry.characterId === characterId && entry.chatId === chatId);
+    let entries = journalEntries(directories).filter(entry => (entry.targetKind ?? 'character') === targetKind && entry.userKey === userKey && (targetKind === 'group' || entry.characterId === characterId) && entry.chatId === chatId);
     if (before) {
         const offset = entries.findIndex(entry => entry.requestId === before);
         if (offset < 0) throw new ApiError(400, 'validation', 'Generation cursor is not in this chat.');
@@ -267,7 +267,7 @@ export function listGenerations(handle, directories, { characterId, chatId, befo
     });
     const page = entries.slice(0, limit).map(entry => {
         const record = generations.get(entry.requestId) ?? (!isTerminal(entry.status) ? getGeneration(entry.requestId, handle, directories) : entry);
-        return { requestId: entry.requestId, clientRequestId: entry.clientRequestId, targetKind, characterId, chatId,
+        return { requestId: entry.requestId, clientRequestId: entry.clientRequestId, targetKind, characterId: entry.characterId, chatId,
             type: entry.type, status: record.status, seq: record.seq ?? 0, committed: Boolean(record.committed),
             drained: record.drained !== false, acknowledged: record.acknowledged === true,
             createdAt: new Date(entry.createdAt).toISOString() };

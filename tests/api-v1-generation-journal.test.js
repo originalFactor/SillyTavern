@@ -36,6 +36,17 @@ describe('durable caller identity and failure handling', () => {
         expect(() => assertCharacterIdle('owner', 'Aria', directories)).not.toThrow();
         expect(snapshot(getGeneration(group.requestId, 'owner', directories)).status).toBe('unknown');
     });
+    test('shared group chat files remain fenced across group identities and restart', () => {
+        createGeneration(options({ clientRequestId: 'group-key', targetKind: 'group' }));
+        expect(() => createGeneration(options({ clientRequestId: 'other-key', characterId: 'OtherGroup', targetKind: 'group' }))).toThrow('active generation');
+        clearGenerations();
+        expect(() => assertChatIdle('owner', 'OtherGroup', 'Chat', directories, 'group')).toThrow('unresolved generation');
+        const shared = listGenerations('owner', directories, { characterId: 'OtherGroup', chatId: 'Chat', targetKind: 'group', unresolvedOnly: true });
+        expect(shared.generations).toHaveLength(1);
+        expect(shared.generations[0].characterId).toBe('Aria');
+        expect(() => createGeneration(options({ clientRequestId: 'other-key', characterId: 'OtherGroup', targetKind: 'group' }))).toThrow('unresolved generation');
+        expect(() => createGeneration(options({ clientRequestId: 'character-key', characterId: 'OtherGroup' }))).not.toThrow();
+    });
     test('abandoning a group caller key survives restart and prevents delayed admission', () => {
         const abandoned = abandonClientGeneration('owner', directories, 'group-key', 'Aria', 'Chat', 'group');
         expect(abandoned.targetKind).toBe('group');

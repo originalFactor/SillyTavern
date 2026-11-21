@@ -339,6 +339,32 @@ describe('API v1 routes', () => {
         expect(invalid.status).toBe(400);
     });
 
+    test('a group cannot delete a shared chat while another group is generating', async () => {
+        const groupId = 'shared-chat-other-group';
+        const chatId = 'shared-chat-fence';
+        const chatFile = path.join(directories.groupChats, `${chatId}.jsonl`);
+        const created = await fetch(`${baseUrl}/api/v1/groups`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ groupId, group: { name: 'Other', members: ['Aria.png'], chats: [chatId] } }),
+        });
+        const document = await created.json();
+        fs.writeFileSync(chatFile, '{}\n');
+        const { record } = createGeneration({ handle: 'contract-user', clientRequestId: 'shared-chat-fence-test', characterId: 'original-group', chatId, type: 'normal', targetKind: 'group', directories });
+        try {
+            const discovery = await fetch(`${baseUrl}/api/v1/generations?characterId=${groupId}&chatId=${chatId}&targetKind=group`);
+            const page = await discovery.json();
+            expect(page.generations[0].requestId).toBe(record.requestId);
+            expect(page.generations[0].characterId).toBe('original-group');
+            const deletion = await fetch(`${baseUrl}/api/v1/groups/${groupId}?expectedRevision=${document.revision}&deleteChats=true`, { method: 'DELETE' });
+            expect(deletion.status).toBe(409);
+            expect(fs.existsSync(chatFile)).toBe(true);
+        } finally {
+            cancel(record);
+            fs.rmSync(chatFile, { force: true });
+            fs.rmSync(path.join(directories.groups, `${groupId}.json`), { force: true });
+        }
+    });
+
     test('reads and patches settings while preserving unknown fields', async () => {
         await fetch(`${baseUrl}/api/v1/settings`, {
             method: 'PATCH',

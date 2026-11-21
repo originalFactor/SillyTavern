@@ -50,6 +50,9 @@ from the companion entry point.
   speaker. Group speaker selection exists independently of a durable group turn;
   keep `features.groupChats` false until sequential generation, partial commits,
   cancellation and restart recovery are implemented and verified.
+  Group chat filenames are shared across group descriptors, so admissions,
+  mutation fences and discovery use the chat ID across groups; discovery returns
+  the original group ID so the blocking outcome can be inspected.
 
 Focused verification from this checkout:
 
