@@ -4,7 +4,7 @@ import path from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, test } from '@jest/globals';
 import { runChatCompletion, ProviderSseDecoder, prepareProviderSession, runSessionChatCompletion } from '../src/headless/provider.js';
-import { clearGenerations, createGeneration } from '../src/headless/generation-store.js';
+import { clearGenerations, createGeneration, getGeneration, persistGeneration, snapshot } from '../src/headless/generation-store.js';
 import { writeSettings } from '../src/headless/session.js';
 import { publicConfiguration } from '../src/headless/redaction.js';
 import { setConfigFilePath } from '../src/util.js';
@@ -96,6 +96,34 @@ describe('non-replaying bounded provider dispatch', () => {
         expect((await request()).text).toBe('Second');
         expect(record.text).toBe('FirstSecond');
         expect(calls).toBe(2);
+    });
+    test('records group usage per real provider call, including interrupted and unreported usage', async () => {
+        record = createGeneration({ handle: 'provider-test', clientRequestId: 'group', characterId: 'g', chatId: 'c', type: 'normal', targetKind: 'group', directories: { root } }).record;
+        route = (_req, res) => {
+            const usage = calls === 1 ? { prompt_tokens: 4, completion_tokens: 2 } : calls === 3 ? { total_tokens: 9 } : null;
+            const usageEvent = usage ? `data: ${JSON.stringify({ choices: [], usage })}\n\n` : '';
+            res.type('text/event-stream').end(token(`Reply ${calls}`) + usageEvent + (calls === 3 ? '' : 'data: [DONE]\n\n'));
+        };
+        expect((await request()).text).toBe('Reply 1');
+        expect((await request()).text).toBe('Reply 2');
+        await expect(request()).rejects.toMatchObject({ code: 'unknown' });
+        persistGeneration({ root }, record);
+        const requestId = record.requestId;
+        clearGenerations();
+        const restored = getGeneration(requestId, 'provider-test', { root });
+        expect(snapshot(restored).usageByCall).toEqual([{ promptTokens: 4, completionTokens: 2 }, null, { totalTokens: 9 }]);
+        expect(restored.providerCallCount).toBe(3);
+        expect(restored.status).toBe('unknown');
+        expect(calls).toBe(3);
+    });
+    test('does not dispatch a group provider request if its journal cannot be synchronized', async () => {
+        record = createGeneration({ handle: 'provider-test', clientRequestId: 'group', characterId: 'g', chatId: 'c', type: 'normal', targetKind: 'group', directories: { root } }).record;
+        const journal = path.join(root, 'api-v1-generations');
+        fs.rmSync(journal, { recursive: true });
+        fs.writeFileSync(journal, 'unavailable');
+        route = (_req, res) => res.type('text/event-stream').end(token('Unexpected') + 'data: [DONE]\n\n');
+        await expect(request()).rejects.toMatchObject({ code: 'storage' });
+        expect(calls).toBe(0);
     });
     test('rejects an empty later completion even when earlier text exists', async () => {
         record.text = 'Earlier reply';
