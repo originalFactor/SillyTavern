@@ -5,7 +5,7 @@ import path from 'node:path';
 import { getUserKey } from '../src/headless/contract.js';
 import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import {
-    abandonClientGeneration, acknowledgeGeneration, appendToken, beginGeneration, cancel, clearGenerations,
+    abandonClientGeneration, acknowledgeGeneration, appendToken, assertCharacterIdle, assertChatIdle, beginGeneration, cancel, clearGenerations,
     complete, createGeneration, endGeneration, fail, getGeneration, getGenerationByClient,
     listGenerations, markProviderDispatched, persistGeneration, restoreGenerations, snapshot,
 } from '../src/headless/generation-store.js';
@@ -16,6 +16,33 @@ afterEach(() => { clearGenerations(); jest.useRealTimers(); jest.restoreAllMocks
 const options = (extra = {}) => ({ handle: 'owner', clientRequestId: 'caller-key', characterId: 'Aria', chatId: 'Chat', type: 'normal', directories, requestIdentity: { input: 'private prompt not copied into admission metadata', overrides: { model: 'one', temperature: 0.5 } }, ...extra });
 
 describe('durable caller identity and failure handling', () => {
+    test('keeps group and character admissions distinct across restart', () => {
+        const character = createGeneration(options()).record;
+        const group = createGeneration(options({ clientRequestId: 'group-key', targetKind: 'group' })).record;
+        expect(listGenerations('owner', directories, { characterId: 'Aria', chatId: 'Chat' }).generations.map(item => item.requestId)).toEqual([character.requestId]);
+        expect(listGenerations('owner', directories, { characterId: 'Aria', chatId: 'Chat', targetKind: 'group' }).generations.map(item => item.requestId)).toEqual([group.requestId]);
+        clearGenerations();
+        expect(getGeneration(group.requestId, 'owner', directories).targetKind).toBe('group');
+        expect(snapshot(getGeneration(group.requestId, 'owner', directories)).targetKind).toBe('group');
+        expect(snapshot(getGeneration(character.requestId, 'owner', directories)).targetKind).toBe('character');
+        expect(() => createGeneration(options({ clientRequestId: 'group-key' }))).toThrow('different generation payload');
+    });
+    test('an unresolved group turn fences only its own target after restart', () => {
+        const group = createGeneration(options({ clientRequestId: 'group-key', targetKind: 'group' })).record;
+        clearGenerations();
+        expect(() => assertChatIdle('owner', 'Aria', 'Chat', directories, 'group')).toThrow('unresolved generation');
+        expect(() => assertCharacterIdle('owner', 'Aria', directories, 'group')).toThrow('unresolved generation');
+        expect(() => assertChatIdle('owner', 'Aria', 'Chat', directories)).not.toThrow();
+        expect(() => assertCharacterIdle('owner', 'Aria', directories)).not.toThrow();
+        expect(snapshot(getGeneration(group.requestId, 'owner', directories)).status).toBe('unknown');
+    });
+    test('abandoning a group caller key survives restart and prevents delayed admission', () => {
+        const abandoned = abandonClientGeneration('owner', directories, 'group-key', 'Aria', 'Chat', 'group');
+        expect(abandoned.targetKind).toBe('group');
+        clearGenerations();
+        expect(() => createGeneration(options({ clientRequestId: 'group-key', targetKind: 'group' }))).toThrow('different generation payload');
+        expect(() => abandonClientGeneration('owner', directories, 'group-key', 'Aria', 'Chat')).toThrow('different chat');
+    });
     test('synchronizes a permanent index before publishing accepted work without storing prompt input', () => {
         const { record } = createGeneration(options());
         const files = fs.readdirSync(path.join(root, 'api-v1-generations'));

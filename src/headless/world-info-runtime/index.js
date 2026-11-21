@@ -13,8 +13,9 @@ export async function scanWorldInfo(session, character, chat, context, fields, o
     if (Array.isArray(character.character_book?.entries) && (!primary || !books[primary])) {
         primary ||= `__embedded__:${options.characterId ?? ''}`;
         books[primary] = convertCharacterBook(clone(character.character_book));
-        context.frame.characters[0].data.extensions ??= {};
-        context.frame.characters[0].data.extensions.world = primary;
+        const currentCharacter = context.frame.characters[context.frame.characterIndex ?? 0];
+        currentCharacter.data.extensions ??= {};
+        currentCharacter.data.extensions.world = primary;
     }
     let total = 0;
     for (const book of Object.values(books)) {

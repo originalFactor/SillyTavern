@@ -24,13 +24,13 @@ export const eventSource = { async emit(type) { if (type === event_types.WORLDIN
 export const Math = Object.create(globalThis.Math);
 Math.random = () => frame?.random ? frame.random() : globalThis.Math.random();
 export const getContext = () => ({
-    characterId: 0, chat: frame.context.frame.chat,
+    characterId: frame.context.frame.characterIndex ?? 0, chat: frame.context.frame.chat,
     extensionPrompts: frame.context.frame.extensionPrompts, tagMap: frame.tagMap,
     setExtensionPrompt: (key, value, position, depth, scan, role) => { frame.context.frame.extensionPrompts[key] = { value, position, depth, scan, role }; },
 });
 export const setExtensionPrompt = (...args) => getContext().setExtensionPrompt(...args);
 export const getCharaFilename = () => String(frame.characterId || '');
-export const getTagKeyForEntity = () => frame.context.frame.characters[0]?.avatar;
+export const getTagKeyForEntity = () => frame.context.frame.characters[frame.context.frame.characterIndex ?? 0]?.avatar;
 export const loadWorldInfo = async name => {
     const value = frame.books[name];
     if (!value) throw new Error('Selected World Info book is missing.');
@@ -71,7 +71,7 @@ export function configure(value, regexFunction) {
     world_info_budget_cap = Number(config.world_info_budget_cap ?? 0);
     world_info_max_recursion_steps = Number(config.world_info_max_recursion_steps ?? 0);
     chat_metadata = value.context.frame.metadata;
-    characters = value.context.frame.characters; this_chid = 0;
+    characters = value.context.frame.characters; this_chid = value.context.frame.characterIndex ?? 0;
     power_user = value.context.frame.powerUser;
     extension_settings = value.extensionSettings;
     extension_prompts = value.context.frame.extensionPrompts;

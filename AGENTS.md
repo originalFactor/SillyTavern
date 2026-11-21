@@ -44,6 +44,12 @@ from the companion entry point.
   macros, full presets/instruct, group chats, tools, images, TTS and vectors
   remain incomplete; do not mark them supported without implementation and
   contract/runtime verification.
+- Group prompt preview is separately advertised as `resources.groupChatPreview`.
+  It builds the selected member's prompt with group macros and World Info but
+  does not dispatch or persist. Continue/regenerate preview checks the last
+  speaker. Group speaker selection exists independently of a durable group turn;
+  keep `features.groupChats` false until sequential generation, partial commits,
+  cancellation and restart recovery are implemented and verified.
 
 Focused verification from this checkout:
 

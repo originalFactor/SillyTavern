@@ -5,7 +5,7 @@ import express from 'express';
 
 import { API_V1_VERSION, ApiError, asyncHandler, ensureRequestId, requireObject, requireSafeId, sendApiError } from '../headless/contract.js';
 import { deleteCharacter, exportCharacter, importCharacter, saveCharacter } from '../headless/character-management.js';
-import { createGroupChat, deleteGroup, getGroup, listGroupChats, listGroups, readGroupChat, saveGroup } from '../headless/group-management.js';
+import { createGroupChat, deleteGroup, getGroup, listGroupChats, listGroups, loadGroupCharacters, readGroupChat, resolveGroupChat, saveGroup } from '../headless/group-management.js';
 import { activePreset, activatePreset, deletePreset, exportPreset, getPreset, listPresets, savePreset } from '../headless/presets.js';
 import { publicConfiguration } from '../headless/redaction.js';
 import { TEXT_COMPLETION_SOURCES } from '../headless/text-provider.js';
@@ -78,6 +78,7 @@ router.get('/capabilities', (_request, response) => {
             groupManagement: true,
             groupChatPaging: true,
             groupChatCreate: true,
+            groupChatPreview: true,
             characterCreate: true,
             characterEdit: true,
             characterDelete: true,
@@ -395,6 +396,33 @@ router.get('/groups/:groupId/chats/:chatId', asyncHandler(async (request, respon
     }));
 }));
 
+router.post('/groups/:groupId/chats/:chatId/preview', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    const input = validateGenerationInput({ ...requireObject(request.body, 'group preview input'), chatId: request.params.chatId });
+    const { group, chat } = await resolveGroupChat(session, request.params.groupId, input.chatId);
+    const characters = await loadGroupCharacters(session, group);
+    const characterIndex = characters.findIndex(character => character.avatar === `${input.characterId}.png`);
+    if (characterIndex < 0) throw new ApiError(404, 'not_found', 'Character is not a group member.');
+    const character = characters[characterIndex];
+    if (input.type === 'normal' && input.input) chat.push({ name: session.userName, is_user: true, mes: input.input });
+    if (['regenerate', 'continue'].includes(input.type) && (chat.length <= 1 || chat.at(-1).is_user || typeof chat.at(-1).mes !== 'string')) throw new ApiError(409, 'conflict', 'The last message must be an assistant reply.');
+    if (['regenerate', 'continue'].includes(input.type)) {
+        const last = chat.at(-1);
+        if (last.is_system || (last.original_avatar ? last.original_avatar !== character.avatar : last.name !== character.name)) {
+            throw new ApiError(409, 'conflict', 'The selected member did not write the last reply.');
+        }
+    }
+    const macroChat = input.type === 'regenerate' ? [...chat] : null;
+    if (input.type === 'regenerate') chat.pop();
+    const built = await buildPrompt(session, character.data, chat, {
+        type: input.type, input: input.input, overrides: input.overrides,
+        characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext,
+        groupContext: { group, characters, characterIndex }, preview: true, macroChat,
+        stageUserInput: input.type === 'normal' && Boolean(input.input),
+    });
+    response.json({ messages: built.messages, prompt: built.prompt, segments: built.segments, warnings: built.warnings, providerRequest: publicConfiguration(built.providerRequest) });
+}));
+
 router.post('/characters', asyncHandler(async (request, response) => {
     const session = createSession(request);
     const input = requireObject(request.body, 'character input');
@@ -600,6 +628,7 @@ router.get('/generations', asyncHandler(async (request, response) => {
     response.json(listGenerations(session.handle, session.directories, {
         characterId: requireSafeId(request.query.characterId, 'characterId'),
         chatId: requireSafeId(request.query.chatId, 'chatId'),
+        targetKind: request.query.targetKind === undefined ? 'character' : String(request.query.targetKind),
         before: String(request.query.before ?? ''), limit: Number(request.query.limit ?? 20),
         unresolvedOnly: request.query.unresolvedOnly === 'true',
     }));
@@ -611,7 +640,8 @@ router.get('/generations/by-client/:clientRequestId', asyncHandler(async (reques
 router.post('/generations/by-client/:clientRequestId/abandon', asyncHandler(async (request, response) => {
     const session = createSession(request);
     response.json(abandonClientGeneration(session.handle, session.directories, request.params.clientRequestId,
-        requireSafeId(request.body?.characterId, 'characterId'), requireSafeId(request.body?.chatId, 'chatId')));
+        requireSafeId(request.body?.characterId, 'characterId'), requireSafeId(request.body?.chatId, 'chatId'),
+        request.body?.targetKind === undefined ? 'character' : request.body.targetKind));
 }));
 router.post('/generations/:requestId/acknowledge', asyncHandler(async (request, response) => {
     const session = createSession(request);

@@ -4,8 +4,8 @@ import path from 'node:path';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { ApiError, requireSafeId } from './contract.js';
-import { assertChatIdle } from './generation-store.js';
-import { listCharacters, readChatPage } from './session.js';
+import { assertCharacterIdle, assertChatIdle } from './generation-store.js';
+import { listCharacters, readCharacter, readChatPage } from './session.js';
 
 const MAX_GROUP_BYTES = 512 * 1024;
 const MAX_MEMBERS = 32;
@@ -102,6 +102,23 @@ export async function getGroup(session, groupId) {
     return { id: item.id, revision: item.revision, group: item.group };
 }
 
+/** Load the member cards needed for a group prompt in group order. */
+export async function loadGroupCharacters(session, group) {
+    const characters = [];
+    for (const avatar of group.members) {
+        if (!avatar.endsWith('.png')) throw new ApiError(422, 'unsupported', 'Group member avatar format is not supported.');
+        let card;
+        try {
+            card = await readCharacter(session, avatar.slice(0, -4));
+        } catch (error) {
+            if (error instanceof ApiError && error.status === 404) continue;
+            throw error;
+        }
+        characters.push({ ...card.data, name: card.name, avatar: card.avatar, data: card.data });
+    }
+    return characters;
+}
+
 export function saveGroup(session, { groupId, group, expectedRevision, create = true }) {
     const { id, file } = groupPath(session, groupId);
     const validated = validateGroup(group);
@@ -110,6 +127,7 @@ export function saveGroup(session, { groupId, group, expectedRevision, create = 
     if (!create && !exists) throw new ApiError(404, 'not_found', 'Group not found.');
     const previous = exists ? fs.readFileSync(file) : null;
     if (!create && (!expectedRevision || revision(previous) !== expectedRevision)) throw new ApiError(409, 'conflict', 'Group changed since it was opened. Reload before saving.');
+    if (!create) assertCharacterIdle(session.handle, id, session.directories, 'group');
     const bytes = Buffer.from(JSON.stringify({ ...validated, id }, null, 4));
     if (bytes.length > MAX_GROUP_BYTES) throw new ApiError(413, 'validation', 'Group file exceeds 512 KiB.');
     fs.mkdirSync(session.directories.groups, { recursive: true });
@@ -121,10 +139,11 @@ export async function deleteGroup(session, groupId, expectedRevision, deleteChat
     const item = await readGroup(session, groupId);
     const current = fs.readFileSync(groupPath(session, item.id).file);
     if (!expectedRevision || item.revision !== expectedRevision || revision(current) !== expectedRevision) throw new ApiError(409, 'conflict', 'Group changed since it was opened. Reload before deleting.');
+    assertCharacterIdle(session.handle, item.id, session.directories, 'group');
     const active = item.group.chats.filter(chatId => fs.existsSync(chatPath(session, chatId).file));
     if (active.length && !deleteChats) throw new ApiError(409, 'confirmation_required', 'Group chats exist. Set deleteChats=true to remove them explicitly.', { details: { chatIds: active } });
     for (const chatId of active) {
-        assertChatIdle(session.handle, item.id, chatId, session.directories);
+        assertChatIdle(session.handle, item.id, chatId, session.directories, 'group');
     }
     for (const chatId of active) {
         fs.unlinkSync(chatPath(session, chatId).file);
@@ -151,6 +170,7 @@ export async function createGroupChat(session, groupId, chatId, expectedRevision
         throw new ApiError(409, 'conflict', 'Group changed since it was opened. Reload before creating a chat.');
     }
     if (fs.existsSync(file)) throw new ApiError(409, 'conflict', 'Group chat ID already exists.');
+    assertChatIdle(session.handle, item.id, id, session.directories, 'group');
     const attached = item.group.chats.includes(id);
     if (!attached && item.group.chats.length >= 256) throw new ApiError(400, 'validation', 'Group has too many chats.');
     fs.mkdirSync(session.directories.groupChats, { recursive: true });
@@ -167,4 +187,24 @@ export async function readGroupChat(session, groupId, chatId, paging = {}) {
     const { file } = chatPath(session, chatId);
     if (!fs.existsSync(file)) throw new ApiError(404, 'not_found', 'Group chat not found.');
     return { groupId: item.id, chatId, ...readChatPage(file, paging) };
+}
+
+export async function resolveGroupChat(session, groupId, chatId) {
+    const item = await readGroup(session, groupId);
+    const { id, file } = chatPath(session, chatId);
+    if (!item.group.chats.includes(id) || !fs.existsSync(file)) throw new ApiError(404, 'not_found', 'Group chat not found.');
+    let chat;
+    try {
+        const text = new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(file));
+        chat = text.split('\n').filter(line => line.trim()).map(line => JSON.parse(line));
+        if (chat.some(row => !row || typeof row !== 'object' || Array.isArray(row))) throw new Error('Invalid row');
+    } catch { throw new ApiError(422, 'storage', 'Group chat contains unreadable transcript data.'); }
+    // Older group chats can contain messages without a metadata header.
+    // Match the browser loader by supplying empty metadata in memory only.
+    if (!chat.length || !Object.hasOwn(chat[0], 'chat_metadata')) {
+        chat.unshift({ chat_metadata: {} });
+    } else if (!chat[0].chat_metadata || typeof chat[0].chat_metadata !== 'object' || Array.isArray(chat[0].chat_metadata)) {
+        throw new ApiError(422, 'storage', 'Group chat metadata header is invalid.');
+    }
+    return { group: { ...item.group, id: item.id }, file, chat };
 }

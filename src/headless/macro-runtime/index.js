@@ -2,6 +2,7 @@ import { MacroEngine } from './generated/engine/MacroEngine.js';
 import { MacroRegistry } from './generated/engine/MacroRegistry.js';
 import { MacroEnvBuilder } from './generated/engine/MacroEnvBuilder.js';
 import * as script from './generated/script.js';
+import * as groupCards from './generated/group-cards.js';
 import * as variables from './generated/variables.js';
 import * as utils from './generated/utils.js';
 import * as instruct from './generated/instruct.js';
@@ -9,7 +10,7 @@ import { initMacros } from './generated/legacy.js';
 import { activate, activeFrame, installRuntime, moment } from './platform.js';
 import { ApiError } from '../contract.js';
 
-installRuntime({ script, variables, utils, instruct, engine: MacroEngine, envBuilder: MacroEnvBuilder });
+installRuntime({ script, groupCards, variables, utils, instruct, engine: MacroEngine, envBuilder: MacroEnvBuilder });
 initMacros();
 const execute = MacroRegistry.executeMacro.bind(MacroRegistry);
 MacroRegistry.executeMacro = (call, options) => {

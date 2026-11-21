@@ -24,6 +24,10 @@ Headless plugin hooks are a **separate, additional** opt-in: set `api.v1.headles
 
 The chat JSONL is written **once, atomically, at successful completion**. A failed or cancelled generation leaves no unanswered user row on disk. In-flight records are journalled to `api-v1-generations/` under the user root and restored as `unknown` after a server restart — they are never replayed automatically.
 
+Generation snapshots expose `targetKind`. Existing character generations and
+legacy journals use `character`; the group target is reserved for the unfinished
+group-generation lifecycle.
+
 Regenerating preserves the old assistant reply in `swipes` and selects the new
 reply with `swipe_id`. To switch, post `action: "swipe"`, the message `index`
 and a zero-based `swipeId` to the messages endpoint. Continue updates the selected
@@ -114,6 +118,13 @@ files are never replaced. These management and read paths do not claim group
 generation parity. The `features.groupChats` capability remains false until
 member activation, per-member prompt context and the durable multi-member
 generation lifecycle are connected.
+
+`POST /api/v1/groups/{groupId}/chats/{chatId}/preview` accepts a member
+`characterId` and the normal generation preview fields. It prepares that
+member's prompt against the group transcript without dispatching a provider
+request or persisting macro effects. Availability is reported by the
+`resources.groupChatPreview` capability. Continue and regenerate previews
+require the selected member to be the author of the last assistant reply.
 
 ## Extensions and WebViews
 

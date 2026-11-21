@@ -38,6 +38,7 @@ function readJson(file, maxBytes = MAX_SNAPSHOT_BYTES) {
 
 function validate(body) {
     if (!body || !REQUEST_ID.test(body.requestId) || typeof body.userKey !== 'string' || typeof body.clientRequestId !== 'string' || typeof body.characterId !== 'string' || typeof body.chatId !== 'string' || !Number.isFinite(body.createdAt)) throw storageFailure();
+    if (body.targetKind != null && !['character', 'group'].includes(body.targetKind)) throw storageFailure();
     return body;
 }
 
@@ -49,7 +50,7 @@ export function legacyUncertain(body) {
 function summary(body) {
     return {
         requestId: body.requestId, userKey: body.userKey, clientRequestId: body.clientRequestId,
-        characterId: body.characterId, chatId: body.chatId, type: body.type,
+        characterId: body.characterId, chatId: body.chatId, type: body.type, targetKind: body.targetKind ?? 'character',
         fingerprint: body.fingerprint ?? null, status: legacyUncertain(body) && body.status === 'error' ? 'unknown' : body.status,
         createdAt: body.createdAt, finishedAt: body.finishedAt ?? null,
         committed: Boolean(body.committed), drained: body.drained !== false,

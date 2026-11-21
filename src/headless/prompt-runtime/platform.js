@@ -6,7 +6,7 @@ import { countTokensOpenAIAsync } from './generated/tokenizers.js';
 
 export let oai_settings = {}, power_user = {}, extension_prompts = {}, promptManager, tokenHandler;
 export let main_api = 'openai', name1 = 'User', name2 = 'Character';
-export const selected_group = null;
+export let selected_group = null;
 export const IGNORE_SYMBOL = Symbol.for('ignore');
 export const extension_prompt_types = { NONE: -1, IN_PROMPT: 0, IN_CHAT: 1, BEFORE_PROMPT: 2 };
 export const extension_prompt_roles = { SYSTEM: 0, USER: 1, ASSISTANT: 2 };
@@ -19,6 +19,7 @@ export function configurePromptRuntime(value) {
     power_user = value.context?.frame.powerUser ?? {};
     extension_prompts = value.context?.frame.extensionPrompts ?? {};
     name1 = value.context?.frame.userName ?? 'User'; name2 = value.context?.frame.characterName ?? 'Character';
+    selected_group = value.context?.frame.selectedGroup ?? null;
     main_api = 'openai';
     tokenHandler = new TokenHandler(countTokensOpenAIAsync);
     promptManager = new NativePromptManager(oai_settings, tokenHandler);

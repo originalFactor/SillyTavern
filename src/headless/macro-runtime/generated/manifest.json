@@ -2,6 +2,7 @@
   "version": 1,
   "sources": {
     "public/script.js": "955c603d0bad84bac5a716f0818d85c2543e44d4c43878e0d63ef1e55ca91855",
+    "public/scripts/group-chats.js": "862eb24dfe1f596a2bd6d039a69397667829e0fc34471d22d2028d7781a5c73c",
     "public/scripts/instruct-mode.js": "f54feef66a7b9e5b62878ab0189aefa60f8f8e178d2faa338501b4bb3228baae",
     "public/scripts/macros.js": "1926c394e22a35827f594a4c4bfb044ed4c80dcc911680875991a880f8e53f11",
     "public/scripts/macros/definitions/chat-macros.js": "0e5c005533b64e8a93bc0cff4e58bc33a9710db49b5cb279b2e1451e9d31f4e0",
@@ -46,6 +47,7 @@
     "variables.js": "f31150cbb9fb94c7a447b635f1846b5143868bfd82433d70cefc24d271154d30",
     "utils.js": "411ad99a93c671027f7f1181c45e78ab9a6abcea608227b63e0c9cd2bec946cb",
     "script.js": "3e1aef23d6b05a9d167e941d7a5580be8084ca5b4ed4a746f62508288c045f0f",
+    "group-cards.js": "0fa434a89ed5c4e04e22cbcdb639ad1e2b48d30ab9a374d32848894353760df0",
     "instruct.js": "069251dd4505ac7ae4bf9b212792462d3f066c2b980499798c9d761ddc583791"
   }
 }

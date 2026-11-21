@@ -58,17 +58,17 @@ const chatLocks = new Map();
  * @param {string} chatId Chat identifier
  * @returns {void}
  */
-export function assertChatIdle(handle, characterId, chatId, directories = null) {
+export function assertChatIdle(handle, characterId, chatId, directories = null, targetKind = 'character') {
     if (directories) restoreGenerations(directories);
     const userKey = getUserKey(handle);
     for (const record of generations.values()) {
-        if (record.userKey === userKey && record.characterId === characterId && record.chatId === chatId && (!isTerminal(record.status) || record.workerActive)) {
+        if ((record.targetKind ?? 'character') === targetKind && record.userKey === userKey && record.characterId === characterId && record.chatId === chatId && (!isTerminal(record.status) || record.workerActive)) {
             throw new ApiError(409, 'conflict', 'This chat has an active generation. Stop it and wait for completion before changing history.');
         }
     }
     for (const entry of directories ? journalEntries(directories) : []) {
         const record = generations.get(entry.requestId) ?? entry;
-        if (record.userKey === userKey && record.characterId === characterId && record.chatId === chatId && !record.acknowledged && (record.status === 'unknown' || (record.status === 'cancelled' && record.cancelOutcome === 'unknown'))) throw new ApiError(409, 'conflict', 'This chat has an unresolved generation outcome. Inspect and acknowledge it before changing history.');
+        if ((record.targetKind ?? 'character') === targetKind && record.userKey === userKey && record.characterId === characterId && record.chatId === chatId && !record.acknowledged && (record.status === 'unknown' || (record.status === 'cancelled' && record.cancelOutcome === 'unknown'))) throw new ApiError(409, 'conflict', 'This chat has an unresolved generation outcome. Inspect and acknowledge it before changing history.');
     }
 }
 
@@ -78,17 +78,17 @@ export function assertChatIdle(handle, characterId, chatId, directories = null) 
  * @param {string} characterId Character identifier
  * @returns {void}
  */
-export function assertCharacterIdle(handle, characterId, directories = null) {
+export function assertCharacterIdle(handle, characterId, directories = null, targetKind = 'character') {
     if (directories) restoreGenerations(directories);
     const userKey = getUserKey(handle);
     for (const record of generations.values()) {
-        if (record.userKey === userKey && record.characterId === characterId && (!isTerminal(record.status) || record.workerActive)) {
-            throw new ApiError(409, 'conflict', 'This character has an active generation. Wait for it to finish before changing the card.');
+        if ((record.targetKind ?? 'character') === targetKind && record.userKey === userKey && record.characterId === characterId && (!isTerminal(record.status) || record.workerActive)) {
+            throw new ApiError(409, 'conflict', `This ${targetKind} has an active generation. Wait for it to finish before changing it.`);
         }
     }
     for (const entry of directories ? journalEntries(directories) : []) {
         const record = generations.get(entry.requestId) ?? entry;
-        if (record.userKey === userKey && record.characterId === characterId && !record.acknowledged && (record.status === 'unknown' || (record.status === 'cancelled' && record.cancelOutcome === 'unknown'))) throw new ApiError(409, 'conflict', 'This character has an unresolved generation outcome. Inspect and acknowledge it before changing the card.');
+        if ((record.targetKind ?? 'character') === targetKind && record.userKey === userKey && record.characterId === characterId && !record.acknowledged && (record.status === 'unknown' || (record.status === 'cancelled' && record.cancelOutcome === 'unknown'))) throw new ApiError(409, 'conflict', `This ${targetKind} has an unresolved generation outcome. Inspect and acknowledge it before changing it.`);
     }
 }
 
@@ -127,7 +127,7 @@ function canonical(value) {
 export function persistGeneration(directories, record) {
     if (globalThis.DATA_ROOT) acquireGenerationOwner(globalThis.DATA_ROOT);
     const body = Object.fromEntries([
-        'requestId', 'userKey', 'clientRequestId', 'characterId', 'chatId', 'type',
+        'requestId', 'userKey', 'clientRequestId', 'characterId', 'chatId', 'type', 'targetKind',
         'fingerprint', 'status', 'seq', 'text', 'reasoning', 'error', 'committed',
         'cancelOutcome', 'cancelRequested', 'providerDispatched', 'drained',
         'acknowledged', 'usage', 'pluginEvents', 'createdAt', 'finishedAt', 'snapshot',
@@ -184,8 +184,9 @@ export function restoreGenerations(directories) {
     return restored;
 }
 
-export function createGeneration({ handle, clientRequestId, characterId, chatId, type, directories, requestIdentity, reservationOnly = false }) {
+export function createGeneration({ handle, clientRequestId, characterId, chatId, type, directories, requestIdentity, reservationOnly = false, targetKind = 'character' }) {
     clientId(clientRequestId);
+    if (!['character', 'group'].includes(targetKind)) throw new ApiError(400, 'validation', 'Unknown generation target kind.');
     if (directories) restoreGenerations(directories);
     const userKey = getUserKey(handle);
     const key = memoryKey(directories, userKey, clientRequestId);
@@ -198,18 +199,18 @@ export function createGeneration({ handle, clientRequestId, characterId, chatId,
     }
     if (existing) {
         if (!existing.fingerprint) throw new ApiError(409, 'conflict', 'A legacy request identity already exists. Inspect it with a read-only lookup instead of submitting another payload.');
-        if (existing.characterId !== characterId || existing.chatId !== chatId || existing.type !== type || (existing.fingerprint && existing.fingerprint !== fingerprint)) throw new ApiError(409, 'conflict', 'clientRequestId was already used for a different generation payload.');
+        if ((existing.targetKind ?? 'character') !== targetKind || existing.characterId !== characterId || existing.chatId !== chatId || existing.type !== type || (existing.fingerprint && existing.fingerprint !== fingerprint)) throw new ApiError(409, 'conflict', 'clientRequestId was already used for a different generation payload.');
         return { record: existing, existing: true };
     }
-    if (!reservationOnly) assertChatIdle(handle, characterId, chatId);
+    if (!reservationOnly) assertChatIdle(handle, characterId, chatId, null, targetKind);
     for (const entry of reservationOnly ? [] : directories ? journalEntries(directories) : generations.values()) {
-        if (entry.userKey !== userKey || entry.characterId !== characterId || entry.chatId !== chatId) continue;
+        if ((entry.targetKind ?? 'character') !== targetKind || entry.userKey !== userKey || entry.characterId !== characterId || entry.chatId !== chatId) continue;
         if (isTerminal(entry.status) && !['unknown', 'cancelled'].includes(entry.status)) continue;
         const record = generations.get(entry.requestId) ?? (directories ? hydrate(readJournal(directories, entry.requestId) ?? (() => { throw storageFailure(); })(), directories) : entry);
         if (!record.acknowledged && (record.status === 'unknown' || (record.status === 'cancelled' && record.cancelOutcome === 'unknown'))) throw new ApiError(409, 'conflict', 'This chat has an unresolved generation outcome. Inspect the saved result and acknowledge it before sending again.');
     }
     const record = {
-        requestId: crypto.randomUUID(), userKey, clientRequestId, characterId, chatId, type, fingerprint,
+        requestId: crypto.randomUUID(), userKey, clientRequestId, characterId, chatId, type, targetKind, fingerprint,
         status: 'accepted', seq: 0, text: '', reasoning: '', events: [], subscribers: new Set(),
         controller: new AbortController(), heartbeat: null, createdAt: Date.now(), error: null,
         cancelOutcome: null, cancelRequested: false, providerDispatched: false,
@@ -249,11 +250,12 @@ export function getGenerationByClient(clientRequestId, handle, directories) {
     return hydrate(body, directories);
 }
 
-export function listGenerations(handle, directories, { characterId, chatId, before = '', limit = 20, unresolvedOnly = false }) {
+export function listGenerations(handle, directories, { characterId, chatId, before = '', limit = 20, unresolvedOnly = false, targetKind = 'character' }) {
+    if (!['character', 'group'].includes(targetKind)) throw new ApiError(400, 'validation', 'Unknown generation target kind.');
     restoreGenerations(directories);
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new ApiError(400, 'validation', 'Generation page limit must be 1..100.');
     const userKey = getUserKey(handle);
-    let entries = journalEntries(directories).filter(entry => entry.userKey === userKey && entry.characterId === characterId && entry.chatId === chatId);
+    let entries = journalEntries(directories).filter(entry => (entry.targetKind ?? 'character') === targetKind && entry.userKey === userKey && entry.characterId === characterId && entry.chatId === chatId);
     if (before) {
         const offset = entries.findIndex(entry => entry.requestId === before);
         if (offset < 0) throw new ApiError(400, 'validation', 'Generation cursor is not in this chat.');
@@ -265,7 +267,7 @@ export function listGenerations(handle, directories, { characterId, chatId, befo
     });
     const page = entries.slice(0, limit).map(entry => {
         const record = generations.get(entry.requestId) ?? (!isTerminal(entry.status) ? getGeneration(entry.requestId, handle, directories) : entry);
-        return { requestId: entry.requestId, clientRequestId: entry.clientRequestId, characterId, chatId,
+        return { requestId: entry.requestId, clientRequestId: entry.clientRequestId, targetKind, characterId, chatId,
             type: entry.type, status: record.status, seq: record.seq ?? 0, committed: Boolean(record.committed),
             drained: record.drained !== false, acknowledged: record.acknowledged === true,
             createdAt: new Date(entry.createdAt).toISOString() };
@@ -273,18 +275,19 @@ export function listGenerations(handle, directories, { characterId, chatId, befo
     return { generations: page, hasMore: entries.length > limit, nextBefore: entries.length > limit ? page.at(-1).requestId : null };
 }
 
-export function abandonClientGeneration(handle, directories, clientRequestId, characterId, chatId) {
+export function abandonClientGeneration(handle, directories, clientRequestId, characterId, chatId, targetKind = 'character') {
     clientId(clientRequestId);
+    if (!['character', 'group'].includes(targetKind)) throw new ApiError(400, 'validation', 'Unknown generation target kind.');
     let existing;
     try { existing = getGenerationByClient(clientRequestId, handle, directories); } catch (error) { if (!(error instanceof ApiError) || error.status !== 404) throw error; }
     if (existing) {
-        if (existing.characterId !== characterId || existing.chatId !== chatId) throw new ApiError(409, 'conflict', 'Request identity belongs to a different chat.');
+        if ((existing.targetKind ?? 'character') !== targetKind || existing.characterId !== characterId || existing.chatId !== chatId) throw new ApiError(409, 'conflict', 'Request identity belongs to a different chat.');
         cancel(existing);
         return snapshot(existing);
     }
     // This synchronous durable reservation wins against any not-yet-admitted
     // delayed POST using the same caller key. It never dispatches a provider.
-    const created = createGeneration({ handle, directories, clientRequestId, characterId, chatId, type: 'abandoned', reservationOnly: true });
+    const created = createGeneration({ handle, directories, clientRequestId, characterId, chatId, type: 'abandoned', reservationOnly: true, targetKind });
     cancel(created.record);
     return snapshot(created.record);
 }
@@ -570,6 +573,7 @@ export function snapshot(record) {
     return {
         requestId: record.requestId,
         clientRequestId: record.clientRequestId,
+        targetKind: record.targetKind ?? 'character',
         characterId: record.characterId,
         chatId: record.chatId,
         type: record.type,

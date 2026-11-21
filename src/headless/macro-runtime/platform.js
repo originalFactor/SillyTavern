@@ -57,11 +57,14 @@ export const getMaxPromptTokens = (...args) => hooks.script.getMaxPromptTokens(.
 export const getCurrentLocale = () => frame?.locale ?? 'en';
 export const getGeneratingModel = () => frame?.model ?? '';
 export const getCurrentChatId = () => frame?.chatId ?? '';
-export const getGroupNames = () => frame?.groupNames ?? [];
+export const getGroupNames = () => {
+    const group = groups.find(item => item.id === selected_group);
+    return group?.members?.map(member => characters.find(character => character.avatar === member)?.name).filter(Boolean) ?? [];
+};
 export const isMobile = () => frame?.ui?.isMobile !== false;
 export const collapseNewlines = text => text.replace(/\n{3,}/g, '\n\n');
 export const getKayraMaxContextTokens = () => frame?.maxContext ?? max_context;
-export function getGroupCharacterCardsLazy() { throw new Error('Group-card macro environment is not configured.'); }
+export const getGroupCharacterCardsLazy = (...args) => hooks.groupCards.getGroupCharacterCardsLazy(...args);
 export function saveMetadataDebounced() { if (frame) frame.localDirty = true; }
 export function saveSettingsDebounced() { if (frame) frame.globalDirty = true; }
 export function validateVariableIndex(args) {

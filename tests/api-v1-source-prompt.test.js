@@ -17,6 +17,18 @@ afterEach(() => roots.splice(0).forEach(root => fs.rmSync(root, { recursive: tru
 const rows = (count, content = i => `Line ${i}`) => Array.from({ length: count }, (_, index) => ({ name: index % 2 ? 'Aria' : 'Reader', is_user: index % 2 === 0, mes: content(index) }));
 const history = result => result.messages.filter(message => ['user', 'assistant'].includes(message.role));
 describe('source-derived Chat Completion packing', () => {
+    test('group prompt assembly includes the group nudge and speaker names', async () => {
+        const f = fixture({ prompts: [{ identifier: 'main', content: 'Members: {{group}}' }], oai: { group_nudge_prompt: 'Speak as {{char}}', new_group_chat_prompt: 'Members: {{group}}' } });
+        const groupContext = {
+            group: { id: 'group', members: ['first.png', 'second.png'], disabled_members: [], generation_mode: 0 },
+            characters: [{ ...f.character, avatar: 'first.png', data: f.character }, { name: 'Bob', avatar: 'second.png', data: { name: 'Bob' } }],
+            characterIndex: 0,
+        };
+        const built = await f.build([...f.chat, { name: 'Bob', is_user: false, mes: 'Hello' }], { groupContext });
+        expect(built.messages.some(message => message.content.includes('Bob: Hello'))).toBe(true);
+        expect(built.messages.some(message => message.content.includes('Speak as Aria'))).toBe(true);
+        expect(built.messages.some(message => message.content.includes('Members: Aria, Bob'))).toBe(true);
+    });
     test('generated classes, helpers, defaults and reasoning match ten authoritative inputs', () => { expect(() => generateHeadlessPromptManager({ check: true })).not.toThrow(); });
     test('a real token budget retains more than 64 short history rows without row-count heuristics', async () => {
         const f = fixture({ context: 8192 }); const all = rows(96);

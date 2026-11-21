@@ -5,6 +5,7 @@ import express from 'express';
 import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
 
 import { router as apiV1Router } from '../src/endpoints/api-v1.js';
+import { loadGroupCharacters } from '../src/headless/group-management.js';
 import { cancel, clearGenerations, createGeneration } from '../src/headless/generation-store.js';
 import { readSettings, writeSettings } from '../src/headless/session.js';
 import { write as writePngMetadata } from '../src/character-card-parser.js';
@@ -83,6 +84,20 @@ afterAll(async () => {
 });
 
 describe('API v1 routes', () => {
+    test('loads group member cards while skipping missing members', async () => {
+        const session = { directories };
+        const members = await loadGroupCharacters(session, { members: ['Aria.png'] });
+        expect(members).toHaveLength(1);
+        expect(members[0]).toMatchObject({ name: 'Aria', avatar: 'Aria.png', data: { name: 'Aria' } });
+        expect(await loadGroupCharacters(session, { members: ['missing.png', 'Aria.png'] })).toMatchObject([{ avatar: 'Aria.png' }]);
+        const corruptFile = path.join(directories.characters, 'corrupt-group-member.png');
+        fs.writeFileSync(corruptFile, 'invalid card');
+        try {
+            await expect(loadGroupCharacters(session, { members: ['corrupt-group-member.png'] })).rejects.toMatchObject({ status: 422 });
+        } finally {
+            fs.unlinkSync(corruptFile);
+        }
+    });
     test('capabilities advertise unsupported features as false', async () => {
         const response = await fetch(`${baseUrl}/api/v1/capabilities`);
         const body = await response.json();
@@ -98,6 +113,7 @@ describe('API v1 routes', () => {
         expect(body.resources.groups).toBe(true);
         expect(body.resources.groupManagement).toBe(true);
         expect(body.resources.groupChatPaging).toBe(true);
+        expect(body.resources.groupChatPreview).toBe(true);
         expect(body.providers.chatCompletionsOpenAI).toBe(true);
         expect(body.providers.chatCompletionsOpenAICompatible).toBe(true);
         expect(body.providers.textCompletionSources).toEqual(['generic', 'vllm', 'ooba', 'aphrodite', 'tabby', 'koboldcpp']);
@@ -137,6 +153,60 @@ describe('API v1 routes', () => {
             body: JSON.stringify({ chatId: 'contract-created-chat', expectedRevision: updated.revision }),
         });
         expect(recovered.status).toBe(201);
+        const previewFile = path.join(directories.groupChats, 'contract-created-chat.jsonl');
+        const beforePreview = fs.readFileSync(previewFile);
+        const providerCount = providerRequests.length;
+        const preview = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ characterId: 'Aria', input: 'Hello group' }),
+        });
+        expect(preview.status).toBe(200);
+        expect((await preview.json()).messages.some(message => message.content.includes('Hello group'))).toBe(true);
+        expect(providerRequests).toHaveLength(providerCount);
+        expect(fs.readFileSync(previewFile)).toEqual(beforePreview);
+        const unknownMember = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ characterId: 'Unknown' }),
+        });
+        expect(unknownMember.status).toBe(404);
+        const validPreviewChat = fs.readFileSync(previewFile);
+        fs.appendFileSync(previewFile, '{invalid json}\n');
+        const invalidPreview = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ characterId: 'Aria' }),
+        });
+        expect(invalidPreview.status).toBe(422);
+        fs.writeFileSync(previewFile, JSON.stringify({ name: 'Aria', is_user: false, mes: 'Legacy greeting' }) + '\n');
+        const legacyBytes = fs.readFileSync(previewFile);
+        const legacyPreview = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ characterId: 'Aria' }),
+        });
+        expect(legacyPreview.status).toBe(200);
+        expect((await legacyPreview.json()).messages.some(message => message.content.includes('Legacy greeting'))).toBe(true);
+        expect(fs.readFileSync(previewFile)).toEqual(legacyBytes);
+        const continuePreview = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ characterId: 'Aria', type: 'continue' }),
+        });
+        expect(continuePreview.status).toBe(200);
+        fs.writeFileSync(previewFile, JSON.stringify({ name: 'Other', original_avatar: 'other.png', is_user: false, mes: 'Other reply' }) + '\n');
+        const wrongSpeaker = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ characterId: 'Aria', type: 'continue' }),
+        });
+        expect(wrongSpeaker.status).toBe(409);
+        const wrongRegeneration = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ characterId: 'Aria', type: 'regenerate' }),
+        });
+        expect(wrongRegeneration.status).toBe(409);
+        fs.writeFileSync(previewFile, Buffer.from([0xff]));
+        const invalidUtf8 = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ characterId: 'Aria' }),
+        });
+        expect(invalidUtf8.status).toBe(422);
+        fs.writeFileSync(previewFile, '');
+        const emptyPreview = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ characterId: 'Aria' }),
+        });
+        expect(emptyPreview.status).toBe(200);
+        expect(fs.statSync(previewFile).size).toBe(0);
+        fs.writeFileSync(previewFile, validPreviewChat);
         const existingFile = path.join(directories.groupChats, 'contract-created-chat.jsonl');
         const originalChat = fs.readFileSync(existingFile, 'utf8');
         const duplicate = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats`, {
@@ -225,8 +295,23 @@ describe('API v1 routes', () => {
         });
         const document = await created.json();
         for (const chatId of chatIds) fs.writeFileSync(path.join(directories.groupChats, `${chatId}.jsonl`), '{}\n');
-        const { record } = createGeneration({ handle: 'contract-user', clientRequestId: 'fenced-group-test', characterId: groupId, chatId: chatIds[1], type: 'normal' });
+        const { record } = createGeneration({ handle: 'contract-user', clientRequestId: 'fenced-group-test', characterId: groupId, chatId: chatIds[1], type: 'normal', targetKind: 'group' });
         try {
+            const update = await fetch(`${baseUrl}/api/v1/groups/${groupId}`, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ expectedRevision: document.revision, group: { ...document.group, name: 'Changed' } }),
+            });
+            expect(update.status).toBe(409);
+            expect(JSON.parse(fs.readFileSync(path.join(directories.groups, `${groupId}.json`))).name).toBe('Fenced');
+            const missingChat = path.join(directories.groupChats, `${chatIds[1]}.jsonl`);
+            fs.unlinkSync(missingChat);
+            const initialize = await fetch(`${baseUrl}/api/v1/groups/${groupId}/chats`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chatId: chatIds[1], expectedRevision: document.revision }),
+            });
+            expect(initialize.status).toBe(409);
+            expect(fs.existsSync(missingChat)).toBe(false);
+            fs.writeFileSync(missingChat, '{}\n');
             const response = await fetch(`${baseUrl}/api/v1/groups/${groupId}?expectedRevision=${document.revision}&deleteChats=true`, { method: 'DELETE' });
             expect(response.status).toBe(409);
             for (const chatId of chatIds) expect(fs.existsSync(path.join(directories.groupChats, `${chatId}.jsonl`))).toBe(true);
@@ -236,6 +321,22 @@ describe('API v1 routes', () => {
             for (const chatId of chatIds) fs.rmSync(path.join(directories.groupChats, `${chatId}.jsonl`), { force: true });
             fs.rmSync(path.join(directories.groups, `${groupId}.json`), { force: true });
         }
+    });
+
+    test('discovers and abandons group request identities without affecting character discovery', async () => {
+        const base = `${baseUrl}/api/v1/generations`;
+        const response = await fetch(`${base}/by-client/group-abandon-contract/abandon`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ characterId: 'same-id', chatId: 'same-chat', targetKind: 'group' }),
+        });
+        expect(response.status).toBe(200);
+        expect((await response.json()).targetKind).toBe('group');
+        const characters = await fetch(`${base}?characterId=same-id&chatId=same-chat`);
+        expect((await characters.json()).generations).toHaveLength(0);
+        const groups = await fetch(`${base}?characterId=same-id&chatId=same-chat&targetKind=group`);
+        expect((await groups.json()).generations[0].targetKind).toBe('group');
+        const invalid = await fetch(`${base}?characterId=same-id&chatId=same-chat&targetKind=invalid`);
+        expect(invalid.status).toBe(400);
     });
 
     test('reads and patches settings while preserving unknown fields', async () => {

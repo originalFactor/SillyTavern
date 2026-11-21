@@ -26,6 +26,51 @@ afterEach(() => roots.splice(0).forEach(root => fs.rmSync(root, { recursive:true
 const contents = built => built.messages.map(message => message.content).join('\n');
 
 describe('source-derived World Info execution', () => {
+    test('embedded lore follows the selected group character', async () => {
+        const f = fixture();
+        f.session.settings.world_info_settings.world_info.globalSelect = [];
+        f.character.name = 'Bob';
+        f.character.character_book = { entries: [{ id: 7, keys: ['alpha'], content: 'Bob lore', enabled: true, position: 'before_char', insertion_order: 10 }] };
+        const groupContext = {
+            group: { id: 'group', members: ['Aria.png', 'Bob.png'], disabled_members: [], generation_mode: 0 },
+            characters: [{ name: 'Aria', avatar: 'Aria.png', data: { name: 'Aria' } }, { ...f.character, avatar: 'Bob.png', data: f.character }],
+            characterIndex: 1,
+        };
+        const built = await f.build({ characterId: 'Bob', groupContext });
+        expect(built.warnings.worldInfoActivated).toContain('__embedded__:Bob:7');
+        expect(contents(built)).toContain('Bob lore');
+    });
+    test('group lore character and tag filters use the selected speaker', async () => {
+        const f = fixture();
+        f.character.name = 'Bob';
+        f.session.settings.tag_map = { 'Aria.png': ['aria-tag'], 'Bob.png': ['bob-tag'] };
+        f.save([
+            f.entry(1, 'Bob tag', { characterFilter: { names: [], tags: ['bob-tag'], isExclude: false } }),
+            f.entry(2, 'Aria tag', { characterFilter: { names: [], tags: ['aria-tag'], isExclude: false } }),
+            f.entry(3, 'Bob name', { characterFilter: { names: ['Bob'], tags: [], isExclude: false } }),
+        ]);
+        const groupContext = {
+            group: { id: 'group', members: ['Aria.png', 'Bob.png'], disabled_members: [], generation_mode: 0 },
+            characters: [{ name: 'Aria', avatar: 'Aria.png', data: { name: 'Aria' } }, { ...f.character, avatar: 'Bob.png', data: f.character }],
+            characterIndex: 1,
+        };
+        const built = await f.build({ characterId: 'Bob', groupContext });
+        expect(built.warnings.worldInfoActivated.sort()).toEqual(['Book:1', 'Book:3']);
+    });
+    test('group lore loads books bound to the selected speaker', async () => {
+        const f = fixture();
+        f.character.name = 'Bob';
+        f.session.settings.world_info_settings.world_info.globalSelect = [];
+        f.session.settings.world_info_settings.world_info.charLore = [{ name: 'Bob', extraBooks: ['BobBook'] }];
+        f.save([f.entry(1, 'Bob bound lore')], 'BobBook');
+        const groupContext = {
+            group: { id: 'group', members: ['Aria.png', 'Bob.png'], disabled_members: [], generation_mode: 0 },
+            characters: [{ name: 'Aria', avatar: 'Aria.png', data: { name: 'Aria' } }, { ...f.character, avatar: 'Bob.png', data: f.character }],
+            characterIndex: 1,
+        };
+        const built = await f.build({ characterId: 'Bob', groupContext });
+        expect(built.warnings.worldInfoActivated).toContain('BobBook:1');
+    });
     test('generated scanner, regex and author-note code match authoritative browser sources', () => {
         expect(() => generateHeadlessWorldInfo({check:true})).not.toThrow();
     });

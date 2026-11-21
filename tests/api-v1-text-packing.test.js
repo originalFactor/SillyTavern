@@ -21,6 +21,19 @@ function fixture(history = [assistant('Greeting'), user('Latest input')], power 
     return { context, history, session, chat, run: (fields = {}, examples = [], options = {}) => assembleTextPrompt(context, fields, history, examples, options) };
 }
 describe('source-derived string context packing', () => {
+    test('group Instruct names apply only to group context', async () => {
+        const f = fixture([{ name: 'Bob', is_user: false, mes: 'Hello' }, user('Question')], { instruct: { enabled: true, names_behavior: 'force', output_sequence: '[OUT]', input_sequence: '[IN]' }, context: { chat_start: '' } });
+        const groupContext = {
+            group: { id: 'group', members: ['Aria.png', 'Bob.png'], disabled_members: [], generation_mode: 0 },
+            characters: [{ name: 'Aria', avatar: 'Aria.png', data: { name: 'Aria' } }, { name: 'Bob', avatar: 'Bob.png', data: { name: 'Bob' } }],
+            characterIndex: 0,
+        };
+        const group = createMacroContext(f.session, { name: 'Aria' }, f.chat, { groupContext });
+        const groupPrompt = await assembleTextPrompt(group, {}, f.history, [], {});
+        expect(groupPrompt.prompt).toContain('Bob: Hello');
+        const singlePrompt = await f.run();
+        expect(singlePrompt.prompt).not.toContain('Bob: Hello');
+    });
     test('plain context/story, source names, example order and output head', async () => {
         const f = fixture(undefined, { always_force_name2: true, context: { story_string: 'Bio: {{description}}', chat_start: 'CHAT' } });
         const built = await f.run({ description: 'Pilot' }, ['EXAMPLE\n']);

@@ -32,7 +32,7 @@ function variableMap(value, frame) {
 }
 
 /** One isolated evaluation frame shared by all parts of a single prompt. */
-export function createMacroContext(session, character, chat, { type = 'normal', input = '', overrides = {}, characterId = '', chatId = '', nativeContext = {}, macroChat = null, preview = false, extensions = [] } = {}) {
+export function createMacroContext(session, character, chat, { type = 'normal', input = '', overrides = {}, characterId = '', chatId = '', nativeContext = {}, macroChat = null, preview = false, extensions = [], groupContext = null } = {}) {
     const settings = session.settings;
     const power = settings.power_user ?? {};
     const metadata = clone(chat[0]?.chat_metadata);
@@ -65,7 +65,10 @@ export function createMacroContext(session, character, chat, { type = 'normal', 
             reasoning: { ...defaultReasoningSettings, ...clone(power.reasoning) },
         },
         exampleParser: parseExampleIntoIndividual,
-        characters: [{ ...clone(character), name: characterName, avatar: characterId ? `${characterId}.png` : '', data: clone(character) }],
+        characters: groupContext?.characters ? clone(groupContext.characters) : [{ ...clone(character), name: characterName, avatar: characterId ? `${characterId}.png` : '', data: clone(character) }],
+        characterIndex: groupContext?.characterIndex ?? 0,
+        selectedGroup: groupContext?.group?.id ?? null,
+        groups: groupContext?.group ? [clone(groupContext.group)] : [],
     };
     frame.metadata.variables = variableMap(metadata.variables, frame);
     frame.extensionSettings.variables.global = variableMap(originalGlobals, frame);

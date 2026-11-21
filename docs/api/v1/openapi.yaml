@@ -473,6 +473,29 @@ paths:
       summary: Read a bounded paged group JSONL transcript.
       responses:
         '200': { description: Paged group transcript. }
+  /api/v1/groups/{groupId}/chats/{chatId}/preview:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: previewGroupPrompt
+      summary: Prepare a group member's prompt without dispatching a provider request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [characterId]
+              properties:
+                characterId: { type: string }
+                input: { type: string }
+                type: { type: string, enum: [normal, quiet, regenerate, continue] }
+                overrides: { type: object }
+                nativeContext: { type: object }
+      responses:
+        '200': { description: Prepared prompt and warnings. }
+        '404': { description: Group, chat or member was not found. }
   /csrf-token:
     get:
       operationId: getCsrfToken
@@ -905,6 +928,7 @@ paths:
       parameters:
         - { name: characterId, in: query, required: true, schema: { type: string } }
         - { name: chatId, in: query, required: true, schema: { type: string } }
+        - { name: targetKind, in: query, schema: { type: string, enum: [character, group], default: character } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
         - { name: before, in: query, schema: { type: string, format: uuid } }
         - { name: unresolvedOnly, in: query, schema: { type: boolean, default: false } }
@@ -976,6 +1000,7 @@ paths:
               properties:
                 characterId: { type: string }
                 chatId: { type: string }
+                targetKind: { type: string, enum: [character, group], default: character }
       responses:
         '200':
           description: Snapshot of the original task or a no-dispatch cancelled tombstone.
@@ -1213,6 +1238,7 @@ components:
       properties:
         requestId: { type: string, format: uuid }
         clientRequestId: { type: string }
+        targetKind: { type: string, enum: [character, group] }
         characterId: { type: string }
         chatId: { type: string }
         type: { type: string }
@@ -1227,6 +1253,7 @@ components:
         - $ref: '#/components/schemas/GenerationReference'
         - type: object
           properties:
+            targetKind: { type: string, enum: [character, group] }
             text: { type: string }
             reasoning: { type: string }
             error: { type: [object, 'null'], additionalProperties: true }

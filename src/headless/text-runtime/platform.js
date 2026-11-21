@@ -7,10 +7,10 @@ export { DYNATEMP_BLOCK } from './generated/dynamic.js';
 export { Handlebars } from '../macro-runtime/platform.js';
 
 export let power_user = {}, extension_prompts = {}, name1 = 'User', name2 = 'Character', main_api = 'textgenerationwebui', nai_settings = {}, textgen_settings = {}, extension_settings = {}, chat_metadata = {};
-export const selected_group = null;
-export const groups = [];
+export let selected_group = null;
+export let groups = [];
 export let chat = [], characters = [], max_context = 4096;
-export const this_chid = 0;
+export let this_chid = 0;
 export const getCharaFilename = () => String(frame.context.frame.characterId ?? '');
 export const IGNORE_SYMBOL = Symbol.for('ignore');
 export const extension_prompt_types = { NONE: -1, IN_PROMPT: 0, IN_CHAT: 1, BEFORE_PROMPT: 2 };
@@ -25,6 +25,9 @@ export function configureTextRuntime(value) {
     extension_settings = value.extensionSettings ?? {};
     chat_metadata = value.context.frame.metadata;
     chat = value.context.frame.chat; characters = value.context.frame.characters; max_context = value.context.frame.maxContext;
+    selected_group = value.context.frame.selectedGroup ?? null;
+    groups = value.context.frame.groups ?? [];
+    this_chid = value.context.frame.characterIndex ?? 0;
     frame.cache = new Map(); frame.storage = new Map(); frame.warnings ??= [];
 }
 export const substituteParams = (text, options, name2Override) => frame.context.expand(String(text ?? ''), typeof options === 'string' || options === null ? { name1Override: options, name2Override } : options ?? {});

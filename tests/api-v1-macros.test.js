@@ -32,6 +32,31 @@ function fixture(experimental = true) {
 afterEach(() => roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true })));
 
 describe('source-derived native macro runtime', () => {
+    test.each([true, false])('engine=%s expands group macros with the selected speaker and muted members', engine => {
+        const { session, character, chat, options } = fixture(engine);
+        const groupContext = {
+            group: { id: 'group', members: ['Aria.png', 'Bob.png'], disabled_members: ['Bob.png'] },
+            characters: [
+                { ...character, avatar: 'Aria.png', data: character },
+                { name: 'Bob', avatar: 'Bob.png', data: { name: 'Bob' } },
+            ],
+            characterIndex: 0,
+        };
+        const context = createMacroContext(session, character, chat, { ...options, groupContext });
+        expect(context.expand('{{group}}')).toBe('Aria, Bob');
+        expect(context.expand('{{groupNotMuted}}')).toBe('Aria');
+        expect(context.expand('{{char}}')).toBe('Aria');
+    });
+    test.each([true, false])('engine=%s joins group card fields using upstream modes', engine => {
+        const { session, character, chat, options } = fixture(engine);
+        const group = { id: 'group', members: ['Aria.png', 'Bob.png'], disabled_members: ['Bob.png'], generation_mode: 1, generation_mode_join_prefix: '<FIELDNAME> {{char}}: ', generation_mode_join_suffix: '' };
+        const characters = [{ ...character, avatar: 'Aria.png', data: character }, { name: 'Bob', avatar: 'Bob.png', description: 'Bob description', data: { name: 'Bob' } }];
+        const context = createMacroContext(session, character, chat, { ...options, groupContext: { group, characters, characterIndex: 0 } });
+        expect(context.fields().description).toBe('Description Aria: Card for 读者🙂');
+        group.generation_mode = 2;
+        const includingMuted = createMacroContext(session, character, chat, { ...options, groupContext: { group, characters, characterIndex: 0 } });
+        expect(includingMuted.fields().description).toBe('Description Aria: Card for 读者🙂\nDescription Bob: Bob description');
+    });
     test('generated engine and definitions match every authoritative upstream input', async () => {
         expect(() => generateHeadlessMacros({ check: true })).not.toThrow();
     });
