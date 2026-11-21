@@ -5,6 +5,7 @@ import express from 'express';
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from '@jest/globals';
 import { cancel, clearGenerations, createGeneration, setFinalText, snapshot, subscribe } from '../src/headless/generation-store.js';
 import { runGeneration } from '../src/headless/runtime.js';
+import { runGroupGeneration } from '../src/headless/group-runtime.js';
 import { readChat, readSettings, writeChat, writeSettings } from '../src/headless/session.js';
 import { USER_DIRECTORY_TEMPLATE } from '../src/constants.js';
 import { write as writePng } from '../src/character-card-parser.js';
@@ -72,6 +73,24 @@ async function entered(signal) {
 }
 
 describe('cancellation admission through asynchronous hooks', () => {
+    test('cancelled manual group input does not publish macro effects or a message', async () => {
+        const groupFile = path.join(directories.groups, 'Manual.json');
+        const chatFile = path.join(directories.groupChats, 'ManualChat.jsonl');
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Manual', members: ['Aria.png'], disabled_members: [], activation_strategy: 2, chats: ['ManualChat'], chat_id: 'ManualChat' }));
+        writeChat(chatFile, [{ chat_metadata: {} }]);
+        record = createGeneration({ handle: session.handle, clientRequestId: 'manual-cancel', characterId: 'Manual', chatId: 'ManualChat', type: 'normal', targetKind: 'group', directories }).record;
+        const signal = extension('onGenerationEvent', 'generation_completed');
+        work = runGroupGeneration({ user: { directories }, headers: {} }, session, record, {
+            groupId: 'Manual', chatId: 'ManualChat', type: 'normal', input: 'Hi {{setvar::pending::value}}', overrides: {},
+        });
+        await entered(signal);
+        cancel(record);
+        await work;
+        expect(record.status).toBe('cancelled');
+        expect(readChat(chatFile)).toEqual([{ chat_metadata: {} }]);
+        expect(readSettings(directories).extension_settings['cancellation-race']).toBeUndefined();
+        expect(calls).toBe(0);
+    });
     test('cancellation during worker preparation cannot publish computed macro metadata or call a provider', async () => {
         session.settings.oai_settings.prompts[0].content = '{{incvar::mustNotPersist}}{{setglobalvar::mustNotPersist::value}}';
         const observer = {

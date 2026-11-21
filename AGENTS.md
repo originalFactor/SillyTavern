@@ -69,6 +69,10 @@ from the companion entry point.
   shared admission fence before publishing. For user messages it uses the first
   available member as the character context. Preserve headerless chat indices
   unless local macro effects require adding a metadata header.
+  When no group member is activated, a submitted user message still receives
+  input regex and macro processing. The first available member supplies the
+  character context; missing cards use an empty character context. Cancellation
+  during the completion hook prevents publishing the computed message or effects.
 
 Focused verification from this checkout:
 

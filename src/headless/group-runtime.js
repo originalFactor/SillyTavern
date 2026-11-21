@@ -34,12 +34,26 @@ export async function runGroupGeneration(request, session, record, input) {
             const previousReply = type === 'regenerate' ? chat.pop() : null;
             if (type === 'normal' && input.input) chat.push(createUserMessage(session, input.input));
             if (!members.length) {
+                let macroEffects;
+                if (input.input) {
+                    const character = characters[0];
+                    const formatted = await runNativeText(session, character?.data ?? {}, chat.slice(0, -1), {
+                        mode: 'input', text: input.input, input: input.input, type,
+                        characterId: character?.avatar.slice(0, -4) ?? '', chatId: input.chatId,
+                        nativeContext: input.nativeContext, groupContext: { group, characters, characterIndex: 0 },
+                    });
+                    if (shouldStopGeneration(record)) return;
+                    chat.at(-1).mes = formatted.text;
+                    chat.at(-1).swipes = [formatted.text];
+                    macroEffects = formatted.macroEffects;
+                }
                 mergeEffects(effects, await emitHeadlessEvent(session, 'generation_completed', { requestId: record.requestId, status: 'done' }));
                 if (shouldStopGeneration(record)) return;
                 recordPluginEvents(record, effects.events.splice(0));
                 persistPluginSettings(session, effects.settingsPatch);
                 if (input.input) {
                     transcriptWriteAttempted = true;
+                    persistMacroEffects(session, file, chat, macroEffects);
                     writeChat(file, chat);
                 }
                 complete(record, { groupId: input.groupId, chatId: input.chatId }, { committed: Boolean(input.input) });

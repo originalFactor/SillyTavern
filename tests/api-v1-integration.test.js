@@ -87,6 +87,46 @@ afterAll(async () => {
 });
 
 describe('API v1 routes', () => {
+    test('manual group input works when all member cards are missing', async () => {
+        const groupFile = path.join(directories.groups, 'missing-members.json');
+        const chatFile = path.join(directories.groupChats, 'missing-members-chat.jsonl');
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Missing', members: ['absent.png'], disabled_members: [], activation_strategy: 2, chats: ['missing-members-chat'], chat_id: 'missing-members-chat' }));
+        fs.writeFileSync(chatFile, JSON.stringify({ chat_metadata: {} }));
+        const request = { user: { profile: { ...DEFAULT_USER, handle: 'contract-user' }, directories }, headers: {} };
+        const session = await prepareProviderSession(request);
+        const record = createGeneration({ handle: session.handle, clientRequestId: 'missing-members-input', characterId: 'missing-members', chatId: 'missing-members-chat', type: 'normal', targetKind: 'group', directories }).record;
+        await runGroupGeneration(request, session, record, { groupId: 'missing-members', chatId: 'missing-members-chat', input: 'Hello {{user}}', overrides: {} });
+        expect(record.status).toBe('done');
+        expect(fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse).at(-1).mes).toBe('Hello Native User');
+        fs.unlinkSync(groupFile);
+        fs.unlinkSync(chatFile);
+    });
+
+    test('manual group input applies macros when no member is activated', async () => {
+        const groupFile = path.join(directories.groups, 'manual-input.json');
+        const chatFile = path.join(directories.groupChats, 'manual-input-chat.jsonl');
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Manual', members: ['Aria.png'], disabled_members: [], activation_strategy: 2, chats: ['manual-input-chat'], chat_id: 'manual-input-chat' }));
+        fs.writeFileSync(chatFile, JSON.stringify({ chat_metadata: {} }));
+        const originalSettings = readSettings(directories);
+        const settings = structuredClone(originalSettings);
+        settings.extension_settings ??= {};
+        settings.extension_settings.regex = [{ placement: [1], findRegex: '/Hello/g', replaceString: 'Welcome', trimStrings: [] }];
+        writeSettings(directories, settings);
+        const request = { user: { profile: { ...DEFAULT_USER, handle: 'contract-user' }, directories }, headers: {} };
+        const session = await prepareProviderSession(request);
+        const record = createGeneration({ handle: session.handle, clientRequestId: 'manual-input-test', characterId: 'manual-input', chatId: 'manual-input-chat', type: 'normal', targetKind: 'group', directories }).record;
+        const start = providerRequests.length;
+        await runGroupGeneration(request, session, record, { groupId: 'manual-input', chatId: 'manual-input-chat', input: 'Hello {{user}} {{setvar::visits::1}}', overrides: {} });
+        expect(record.status).toBe('done');
+        expect(providerRequests).toHaveLength(start);
+        const chat = fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse);
+        expect(chat.at(-1).mes).toBe('Welcome Native User ');
+        expect(chat[0].chat_metadata.variables.visits).toBe('1');
+        writeSettings(directories, originalSettings);
+        fs.unlinkSync(groupFile);
+        fs.unlinkSync(chatFile);
+    });
+
     test('restores the group reference when deleting its chat file fails', async () => {
         const groupFile = path.join(directories.groups, 'delete-failure.json');
         const chatFile = path.join(directories.groupChats, 'delete-failure-chat.jsonl');

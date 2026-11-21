@@ -8,7 +8,9 @@ export function evaluateNativeText(session, character, chat, options) {
     const context = createMacroContext(session, character, chat, { ...options, preview: mode === 'display' || mode === 'edit' || mode === 'append' });
     const regex = nativeRegex(session, context, options.characterId);
     let text, reasoning;
-    if (mode === 'greeting') {
+    if (mode === 'input') {
+        text = context.expand(regex.apply(options.text, regex_placement.USER_INPUT));
+    } else if (mode === 'greeting') {
         text = regex.apply(context.expand(options.text), regex_placement.AI_OUTPUT);
     } else if (mode === 'output') {
         text = regex.apply(options.text, regex_placement.AI_OUTPUT);
