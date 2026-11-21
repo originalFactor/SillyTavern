@@ -5,6 +5,7 @@ import express from 'express';
 
 import { API_V1_VERSION, ApiError, asyncHandler, ensureRequestId, requireObject, requireSafeId, sendApiError } from '../headless/contract.js';
 import { deleteCharacter, exportCharacter, importCharacter, saveCharacter } from '../headless/character-management.js';
+import { deleteGroup, getGroup, listGroupChats, listGroups, readGroupChat, saveGroup } from '../headless/group-management.js';
 import { activePreset, activatePreset, deletePreset, exportPreset, getPreset, listPresets, savePreset } from '../headless/presets.js';
 import { publicConfiguration } from '../headless/redaction.js';
 import { TEXT_COMPLETION_SOURCES } from '../headless/text-provider.js';
@@ -73,6 +74,9 @@ router.get('/capabilities', (_request, response) => {
             settingsRead: true,
             settingsPatch: true,
             characters: true,
+            groups: true,
+            groupManagement: true,
+            groupChatPaging: true,
             characterCreate: true,
             characterEdit: true,
             characterDelete: true,
@@ -346,6 +350,43 @@ router.patch('/extensions/:extensionId/settings', asyncHandler(async (request, r
 router.get('/characters', asyncHandler(async (request, response) => {
     const session = createSession(request);
     response.json(await listCharacters(session));
+}));
+
+router.get('/groups', asyncHandler(async (request, response) => {
+    response.json(listGroups(createSession(request)));
+}));
+
+router.post('/groups', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    const input = requireObject(request.body, 'group input');
+    response.status(201).json(saveGroup(session, { groupId: input.groupId, group: input.group }));
+}));
+
+router.get('/groups/:groupId', asyncHandler(async (request, response) => {
+    response.json(getGroup(createSession(request), request.params.groupId));
+}));
+
+router.put('/groups/:groupId', asyncHandler(async (request, response) => {
+    const input = requireObject(request.body, 'group input');
+    response.json(saveGroup(createSession(request), {
+        groupId: request.params.groupId, group: input.group,
+        expectedRevision: input.expectedRevision, create: false,
+    }));
+}));
+
+router.delete('/groups/:groupId', asyncHandler(async (request, response) => {
+    response.json(deleteGroup(createSession(request), request.params.groupId,
+        String(request.query.expectedRevision ?? ''), request.query.deleteChats === 'true'));
+}));
+
+router.get('/groups/:groupId/chats', asyncHandler(async (request, response) => {
+    response.json(listGroupChats(createSession(request), request.params.groupId));
+}));
+
+router.get('/groups/:groupId/chats/:chatId', asyncHandler(async (request, response) => {
+    response.json(readGroupChat(createSession(request), request.params.groupId, request.params.chatId, {
+        limit: request.query.limit, before: request.query.before, after: request.query.after,
+    }));
 }));
 
 router.post('/characters', asyncHandler(async (request, response) => {

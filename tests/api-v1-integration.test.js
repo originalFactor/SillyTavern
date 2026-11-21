@@ -95,6 +95,9 @@ describe('API v1 routes', () => {
         expect(body.resources.chatPaging).toBe(true);
         expect(body.resources.chatRename).toBe(true);
         expect(body.resources.providerCredentials).toBe(true);
+        expect(body.resources.groups).toBe(true);
+        expect(body.resources.groupManagement).toBe(true);
+        expect(body.resources.groupChatPaging).toBe(true);
         expect(body.providers.chatCompletionsOpenAI).toBe(true);
         expect(body.providers.chatCompletionsOpenAICompatible).toBe(true);
         expect(body.providers.textCompletionSources).toEqual(['generic', 'vllm', 'ooba', 'aphrodite', 'tabby', 'koboldcpp']);
@@ -104,6 +107,45 @@ describe('API v1 routes', () => {
         expect(body.features.swipes).toBe(true);
         expect(body.features.upstreamMacroEngine).toBe(true);
         expect(body.features.advancedMacros).toBe(false);
+    });
+
+    test('creates and revision-checks native groups and their independent chats', async () => {
+        const created = await fetch(`${baseUrl}/api/v1/groups`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ groupId: 'contract-group', group: {
+                name: 'Contract Group', members: ['Aria'], disabled_members: [],
+                activation_strategy: 1, generation_mode: 0, chats: ['contract-group-chat'],
+                chat_id: 'contract-group-chat', allow_self_responses: false,
+            } }),
+        });
+        expect(created.status).toBe(201);
+        const document = await created.json();
+        expect(document.group.members).toEqual(['Aria']);
+        expect(document.revision).toHaveLength(64);
+
+        fs.mkdirSync(directories.groupChats, { recursive: true });
+        fs.writeFileSync(path.join(directories.groupChats, 'contract-group-chat.jsonl'), [
+            JSON.stringify({ chat_metadata: { contract: true } }),
+            JSON.stringify({ name: 'Aria', is_user: false, mes: 'Group greeting' }),
+        ].join('\n'));
+        const chats = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats`);
+        expect(chats.status).toBe(200);
+        expect((await chats.json())[0].id).toBe('contract-group-chat');
+
+        const page = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-group-chat?limit=1`);
+        expect(page.status).toBe(200);
+        expect((await page.json()).messages).toHaveLength(1);
+
+        const stale = await fetch(`${baseUrl}/api/v1/groups/contract-group`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ expectedRevision: '0'.repeat(64), group: document.group }),
+        });
+        expect(stale.status).toBe(409);
+        const refused = await fetch(`${baseUrl}/api/v1/groups/contract-group?expectedRevision=${document.revision}`, { method: 'DELETE' });
+        expect(refused.status).toBe(409);
+        const removed = await fetch(`${baseUrl}/api/v1/groups/contract-group?expectedRevision=${document.revision}&deleteChats=true`, { method: 'DELETE' });
+        expect(removed.status).toBe(200);
+        expect(fs.existsSync(path.join(directories.groupChats, 'contract-group-chat.jsonl'))).toBe(false);
     });
 
     test('reads and patches settings while preserving unknown fields', async () => {

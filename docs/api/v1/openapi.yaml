@@ -409,6 +409,54 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+  /api/v1/groups:
+    get:
+      operationId: listGroups
+      summary: List native SillyTavern group descriptors.
+      responses:
+        '200': { description: Group documents with revision and bounded invalid-file diagnostics. }
+    post:
+      operationId: createGroup
+      summary: Create a native group descriptor.
+      responses:
+        '201': { description: Created group document with revision. }
+  /api/v1/groups/{groupId}:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getGroup
+      summary: Read a native group descriptor and its SHA-256 revision.
+      responses:
+        '200': { description: Group document. }
+    put:
+      operationId: updateGroup
+      summary: Replace a group descriptor with revision checking.
+      responses:
+        '200': { description: Updated group document. }
+        '409': { description: Revision conflict. }
+    delete:
+      operationId: deleteGroup
+      summary: Delete a group and optionally its explicitly confirmed group chats.
+      responses:
+        '200': { description: Deleted group. }
+        '409': { description: Revision conflict or deleteChats confirmation required. }
+  /api/v1/groups/{groupId}/chats:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: listGroupChats
+      summary: List group JSONL chats attached to a native group.
+      responses:
+        '200': { description: Attached group chats. }
+  /api/v1/groups/{groupId}/chats/{chatId}:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getGroupChat
+      summary: Read a bounded paged group JSONL transcript.
+      responses:
+        '200': { description: Paged group transcript. }
   /csrf-token:
     get:
       operationId: getCsrfToken

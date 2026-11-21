@@ -93,6 +93,24 @@ and 9 (no automatic injection) work. Author-note placements require the
 `personaAuthorNote` capability. Persona-specific lorebooks join chat, character,
 embedded and global books through the source-derived World Info scanner.
 
+## Native groups
+
+`GET /api/v1/groups` lists native group descriptors. `POST /api/v1/groups`,
+`GET` and `PUT /api/v1/groups/{groupId}`, and `DELETE /api/v1/groups/{groupId}`
+manage the group JSON under the user's normal SillyTavern directories. Updates
+and deletes require the SHA-256 revision returned by the last read. Group
+members, disabled members, activation strategy, generation mode, self-response
+setting, join prefix/suffix and attached chat identifiers are retained as
+native fields. Deleting a group with attached chat files requires the explicit
+`deleteChats=true` query parameter.
+
+`GET /api/v1/groups/{groupId}/chats` lists attached group JSONL chats and
+`GET /api/v1/groups/{groupId}/chats/{chatId}` provides the same bounded paging
+shape as ordinary chats. These management and read paths do not claim group
+generation parity. The `features.groupChats` capability remains false until
+member activation, per-member prompt context and the durable multi-member
+generation lifecycle are connected.
+
 ## Extensions and WebViews
 
 `GET /api/v1/extensions` classifies manifests by optional fields:
