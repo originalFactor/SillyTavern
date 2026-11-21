@@ -90,6 +90,19 @@ describe('non-replaying bounded provider dispatch', () => {
         expect(record.usage).toEqual({ totalTokens: 4, reasoningTokens: 1 });
         expect(calls).toBe(1);
     });
+    test('returns each completion independently while retaining the combined stream', async () => {
+        route = (_req, res) => res.type('text/event-stream').end(token(calls === 1 ? 'First' : 'Second') + 'data: [DONE]\n\n');
+        expect((await request()).text).toBe('First');
+        expect((await request()).text).toBe('Second');
+        expect(record.text).toBe('FirstSecond');
+        expect(calls).toBe(2);
+    });
+    test('rejects an empty later completion even when earlier text exists', async () => {
+        record.text = 'Earlier reply';
+        route = (_req, res) => res.type('text/event-stream').end('data: [DONE]\n\n');
+        await expect(request()).rejects.toMatchObject({ code: 'provider' });
+        expect(record.text).toBe('Earlier reply');
+    });
     test('reported usage survives an interrupted stream without inventing absent zero counts', async () => {
         route = (_req, res) => { res.type('text/event-stream'); res.end(token('Partial') + 'data: {"choices":[],"usage":{"prompt_tokens":5,"prompt_tokens_details":{"cached_tokens":0}}}\n\ndata: {"choices":[],"usage":{"completion_tokens":2,"completion_tokens_details":{"reasoning_tokens":1}}}\n\n'); };
         await expect(request()).rejects.toMatchObject({ code: 'unknown' });

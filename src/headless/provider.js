@@ -133,7 +133,7 @@ export async function runChatCompletion(originalRequest, providerRequest, record
         const stream = new ProviderSseDecoder(record, secrets);
         let bytes = 0;
         for await (const chunk of response.body) {
-            if (isTerminal(record.status)) return { text: record.text, reasoning: record.reasoning, usage: stream.usage };
+            if (isTerminal(record.status)) return { text: stream.text, reasoning: stream.reasoning, usage: stream.usage };
             bytes += chunk.length;
             if (bytes > 16_777_216) {
                 response.body.destroy();
@@ -143,8 +143,8 @@ export async function runChatCompletion(originalRequest, providerRequest, record
         }
         stream.push(decoder.decode(), true);
         if (!stream.completed) throw new ApiError(502, 'unknown', 'Provider stream ended without a completion marker. Partial text was not saved; the generation may have been billed.');
-        if (!record.text) throw new ApiError(502, 'provider', 'Provider completed without text. The request may have been billed.');
-        return { text: record.text, reasoning: record.reasoning, usage: stream.usage, tokenBudget };
+        if (!stream.text) throw new ApiError(502, 'provider', 'Provider completed without text. The request may have been billed.');
+        return { text: stream.text, reasoning: stream.reasoning, usage: stream.usage, tokenBudget };
     } catch (error) {
         if (error instanceof ApiError) throw error;
         // A transport failure after dispatch cannot prove that the provider did
@@ -163,6 +163,8 @@ export class ProviderSseDecoder {
         this.secrets = secrets;
         this.buffer = '';
         this.usage = null;
+        this.text = '';
+        this.reasoning = '';
         this.completed = false;
         this.done = false;
         this.outputBytes = 0;
@@ -204,6 +206,8 @@ export class ProviderSseDecoder {
             const reasoning = extractText(delta.reasoning_content ?? delta.reasoning ?? choice.reasoning);
             this.outputBytes += Buffer.byteLength(content) + Buffer.byteLength(reasoning);
             if (this.outputBytes > 8_388_608) throw new ApiError(502, 'unknown', 'Provider output exceeded its size limit; the generation outcome is unknown.');
+            this.reasoning += reasoning;
+            this.text += content;
             appendToken(this.record, reasoning, true);
             appendToken(this.record, content);
         }
