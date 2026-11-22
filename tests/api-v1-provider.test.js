@@ -217,6 +217,17 @@ describe('non-replaying bounded provider dispatch', () => {
         expect(JSON.stringify(restored)).not.toContain('private-password');
         expect(calls).toBe(1);
     });
+    test('redacts credentials containing JSON escape characters before saving tool proposals', async () => {
+        const unusualSecret = 'quoted"key\\private';
+        writeSecret({ root }, SECRET_KEYS.CUSTOM, unusualSecret);
+        const argumentsJson = JSON.stringify({ nested: [{ value: unusualSecret }], [unusualSecret]: 'value' });
+        route = (_req, res) => res.type('text/event-stream').end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', function: { name: 'lookup', arguments: argumentsJson } }] }, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`);
+        await expect(request()).rejects.toMatchObject({ code: 'unsupported' });
+        const saved = snapshot(record).toolCalls[0].arguments;
+        expect(saved).not.toContain('private');
+        expect(JSON.parse(saved).nested[0].value).toBe('[redacted]');
+        expect(JSON.parse(saved)['[redacted]']).toBe('value');
+    });
     test('interrupted and malformed tool calls remain unknown without dispatching again', async () => {
         route = (_req, res) => res.type('text/event-stream').end('data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"lookup","arguments":"{"}}]}}]}\n\n');
         await expect(request()).rejects.toMatchObject({ code: 'unknown', retryable: false });

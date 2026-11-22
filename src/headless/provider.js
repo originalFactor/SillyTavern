@@ -149,7 +149,7 @@ export async function runChatCompletion(originalRequest, providerRequest, record
             const redacted = toolCalls.map(call => ({
                 id: redactProviderText(call.id, secrets),
                 name: redactProviderText(call.function.name, secrets),
-                arguments: redactProviderText(JSON.stringify(publicConfiguration(JSON.parse(call.function.arguments))), secrets),
+                arguments: JSON.stringify(redactToolValue(publicConfiguration(JSON.parse(call.function.arguments)), secrets)),
             }));
             setToolCalls(record, redacted);
             throw new ApiError(422, 'unsupported', 'Provider requested tool execution, but the native tool authorization lifecycle is not configured.');
@@ -165,6 +165,15 @@ export async function runChatCompletion(originalRequest, providerRequest, record
         clearTimeout(timeout);
         record.controller.signal.removeEventListener('abort', abort);
     }
+}
+
+function redactToolValue(value, secrets) {
+    if (typeof value === 'string') return redactProviderText(value, secrets);
+    if (Array.isArray(value)) return value.map(item => redactToolValue(item, secrets));
+    if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.entries(value).map(([key, item]) => [redactProviderText(key, secrets), redactToolValue(item, secrets)]));
+    }
+    return value;
 }
 
 /** Incremental bounded SSE decoder. A socket EOF alone is never success. */
