@@ -1,12 +1,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import express from 'express';
 import { afterEach, beforeAll, beforeEach, expect, test } from '@jest/globals';
 import { router } from '../src/endpoints/api-v1.js';
 import { DEFAULT_USER, USER_DIRECTORY_TEMPLATE } from '../src/constants.js';
 import { write as writeCard } from '../src/character-card-parser.js';
-import { claimClientToolBatch, declineClientToolBatch, submitClientToolResults, validateClientTools, runCompletionWithClientTools } from '../src/headless/client-tools.js';
+import { claimClientToolBatch, clientToolCatalogDigest, declineClientToolBatch, submitClientToolResults, validateClientTools, runCompletionWithClientTools } from '../src/headless/client-tools.js';
 import { beginGeneration, cancel, clearGenerations, createGeneration, endGeneration, getGeneration, snapshot } from '../src/headless/generation-store.js';
 import { prepareProviderSession } from '../src/headless/provider.js';
 import { writeSettings } from '../src/headless/session.js';
@@ -72,6 +73,7 @@ test('waits for an exact claim and ordered results before a single follow-up, wi
     packet.custom_include_body = JSON.stringify({ messages: [{ role: 'user', content: 'Wrong context' }], tools: [{ type: 'function', function: { name: 'wrong' } }], functions: [{ name: 'legacy' }] });
     const batch = await startBatch();
     expect(batch.status).toBe('awaiting_approval');
+    expect(batch.catalogRevision).toBe(clientToolCatalogDigest(tools));
     expect(packets).toHaveLength(1);
     expect(packets[0].tools).toEqual(tools);
     expect(packets[0].messages).toEqual(packet.messages);
@@ -125,6 +127,10 @@ test('catalog bounds and duplicate function identities are rejected', () => {
     expect(validateClientTools(tools)).toEqual(tools);
     expect(() => validateClientTools([...tools, ...tools])).toThrow('unique function');
     expect(() => validateClientTools([{ type: 'function', function: { name: 'invalid name', parameters: {} } }])).toThrow();
+    expect(clientToolCatalogDigest(tools)).toBe(crypto.createHash('sha256').update(JSON.stringify(tools)).digest('hex'));
+    const keyOrder = [{ 10: 'ten', 2: 'two', 1: 'one', a: 'last', 0: 'zero' }];
+    expect(clientToolCatalogDigest(keyOrder)).toBe(crypto.createHash('sha256').update(JSON.stringify(keyOrder)).digest('hex'));
+    expect(() => validateClientTools([{ type: 'function', function: { name: 'huge', parameters: { type: 'x'.repeat(262_145) } } }])).toThrow('256 KiB');
 });
 test('restoring an in-flight claimed journal yields an inspectable unknown outcome without execution authority', async () => {
     const batch = await startBatch();
@@ -186,6 +192,7 @@ test('the public generation entry commits ordered ST invocation history and a re
     }
     expect(state.toolBatches).toHaveLength(1);
     const batch = state.toolBatches[0];
+    expect(batch.catalogRevision).toBe(clientToolCatalogDigest(tools));
     expect((await api('/generations', input, 202)).idempotent).toBe(true);
     const action = { expectedRevision: batch.revision, executionId: 'api-execution' };
     const route = `/generations/${accepted.requestId}/tool-batches/${batch.id}`;

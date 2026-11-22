@@ -24,7 +24,13 @@ paths:
     post:
       operationId: updateClientToolBatch
       summary: Claim, decline or submit complete results for an inspected tool batch.
-      description: A fresh durable claim authorizes one execution. Duplicate claims return dispatchAuthorized false. Complete result receipts may continue the admitted provider conversation once. Restarted workers cannot resume execution.
+      description: >-
+        A fresh durable claim authorizes one execution. Duplicate claims return
+        dispatchAuthorized false. Complete result receipts may continue the
+        admitted provider conversation once. Restarted workers cannot resume
+        execution. The inspected batch contains catalogRevision, the SHA-256 of
+        the ECMAScript JSON.stringify representation of the admitted tools
+        array. It identifies definitions and does not authorize execution.
       parameters:
         - $ref: '#/components/parameters/requestId'
         - { name: batchId, in: path, required: true, schema: { type: string } }

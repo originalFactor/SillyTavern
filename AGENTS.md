@@ -53,6 +53,11 @@ from the companion entry point.
   are idempotent. A restarted/interrupted worker cannot resume tools or provider
   calls. Keep full `toolCalling` false until the native authorization/executor,
   durable local execution ownership and remaining tool flows are implemented.
+  Each batch also has `catalogRevision`, the SHA-256 of the ECMAScript
+  `JSON.stringify` representation of the admitted tools array. Object keys use
+  JavaScript enumeration order; the native catalog computes the same value and
+  rejects approval when the current executor catalog no longer matches. The
+  digest identifies definitions and never grants execution authority.
   `resources.clientToolBatches` describes the backend contract only. Follow-ups
   retain the admitted connection, run token audits without rerunning macros and
   preserve source ST invocation rows on final commit. Five executed tool rounds

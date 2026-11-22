@@ -9,9 +9,29 @@ const MAX_RESULT_BYTES = 1_048_576;
 const activeBatches = new WeakMap();
 const digest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
+/** ECMAScript JSON.stringify order for parsed JSON data, independent of hidden metadata. */
+function canonicalJson(value) {
+    if (Array.isArray(value)) return `[${value.map(item => canonicalJson(item) ?? 'null').join(',')}]`;
+    if (value && typeof value === 'object') {
+        const keys = Object.keys(value);
+        const integerKeys = keys.filter(key => /^(?:0|[1-9][0-9]*)$/.test(key) && Number(key) < 4294967295)
+            .sort((left, right) => Number(left) - Number(right));
+        const entries = [...integerKeys, ...keys.filter(key => !integerKeys.includes(key))].flatMap(key => {
+            const serialized = canonicalJson(value[key]);
+            return serialized === undefined ? [] : [`${JSON.stringify(key)}:${serialized}`];
+        });
+        return `{${entries.join(',')}}`;
+    }
+    return JSON.stringify(value);
+}
+
+export function clientToolCatalogDigest(value) {
+    return crypto.createHash('sha256').update(canonicalJson(value)).digest('hex');
+}
+
 /** A supplied catalog describes callable functions. Each invocation needs its own claim. */
 export function validateClientTools(value) {
-    if (!Array.isArray(value) || value.length > 32 || Buffer.byteLength(JSON.stringify(value)) > MAX_TOOL_BYTES) {
+    if (!Array.isArray(value) || value.length > 32) {
         throw new ApiError(400, 'validation', 'tools must contain at most 32 function definitions within 256 KiB.');
     }
     const names = new Set();
@@ -24,7 +44,11 @@ export function validateClientTools(value) {
         }
         names.add(definition.name);
     }
-    return structuredClone(value);
+    const catalog = structuredClone(value);
+    if (Buffer.byteLength(canonicalJson(catalog)) > MAX_TOOL_BYTES) {
+        throw new ApiError(400, 'validation', 'tools must contain at most 32 function definitions within 256 KiB.');
+    }
+    return catalog;
 }
 
 export function assertClientToolsProfile(session, input) {
@@ -118,7 +142,7 @@ export function submitClientToolResults(record, batchId, input) {
 
 async function awaitClientToolResults(record, calls, tools, protect) {
     if (shouldStopGeneration(record)) throw new ApiError(409, 'conflict', 'Generation stopped before tool approval.');
-    const batch = { id: crypto.randomUUID(), revision: digest({ requestId: record.requestId, calls, tools }),
+    const batch = { id: crypto.randomUUID(), revision: digest({ requestId: record.requestId, calls, tools }), catalogRevision: clientToolCatalogDigest(tools),
         status: 'awaiting_approval', calls: calls.map(call => ({ id: call.id, name: call.function.name, arguments: call.function.arguments })) };
     let resolve, reject;
     const pending = new Promise((done, failed) => { resolve = done; reject = failed; });

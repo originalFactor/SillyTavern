@@ -346,6 +346,12 @@ ownership remain unfinished, and full `features.toolCalling` remains false.
 
 Completed calls appear in `toolBatches` with an ID, immutable revision, status
 and ordered calls. A batch waits up to five minutes for approval and results.
+Each batch also carries `catalogRevision`: the SHA-256 of the ECMAScript
+`JSON.stringify` serialization of the admitted `tools` array. Object keys follow
+JavaScript enumeration order (integer-like keys ascending, then insertion
+order). Native clients use it to verify that the selected executor catalog
+still matches the proposal before claiming or dispatching tools. This value
+identifies definitions only; it never authorizes execution.
 Actions use `POST /api/v1/generations/{requestId}/tool-batches/{batchId}/{action}`.
 
 - `claim` takes `expectedRevision` and a caller-owned `executionId`. The first
