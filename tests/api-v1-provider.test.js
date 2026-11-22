@@ -164,7 +164,7 @@ describe('non-replaying bounded provider dispatch', () => {
     test('retains partial text and usage when a streamed tool call is unsupported', async () => {
         route = (_req, res) => {
             res.type('text/event-stream');
-            res.end('data: {"choices":[{"index":0,"delta":{"content":"Before tool"}}],"usage":{"prompt_tokens":4}}\n\ndata: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"untrusted"}}]}}]}\n\ndata: [DONE]\n\n');
+            res.end('data: {"choices":[{"index":0,"delta":{"content":"Before tool"}}],"usage":{"prompt_tokens":4}}\n\ndata: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"untrusted","arguments":"{}"}}]}}]}\n\ndata: [DONE]\n\n');
         };
         await expect(request()).rejects.toMatchObject({ code: 'unsupported', retryable: false });
         expect(record.text).toBe('Before tool');
@@ -175,7 +175,7 @@ describe('non-replaying bounded provider dispatch', () => {
     test('retains text and reasoning that share a streamed tool-call frame', async () => {
         route = (_req, res) => {
             res.type('text/event-stream');
-            res.end('data: {"choices":[{"index":0,"delta":{"content":"Same frame","reasoning_content":"Thinking","tool_calls":[{"index":0,"function":{"name":"untrusted"}}]}}],"usage":{"prompt_tokens":4}}\n\ndata: [DONE]\n\n');
+            res.end('data: {"choices":[{"index":0,"delta":{"content":"Same frame","reasoning_content":"Thinking","tool_calls":[{"index":0,"id":"call_1","function":{"name":"untrusted","arguments":"{}"}}]}}],"usage":{"prompt_tokens":4}}\n\ndata: [DONE]\n\n');
         };
         await expect(request()).rejects.toMatchObject({ code: 'unsupported', retryable: false });
         expect(record.text).toBe('Same frame');
@@ -185,12 +185,45 @@ describe('non-replaying bounded provider dispatch', () => {
         expect(calls).toBe(1);
     });
     test('unsupported tool calls fail visibly without executing anything', async () => {
-        route = (_req, res) => { res.type('text/event-stream'); res.end('data: {"choices":[{"delta":{"tool_calls":[{"function":{"name":"untrusted"}}]}}]}\n\ndata: [DONE]\n\n'); };
+        route = (_req, res) => { res.type('text/event-stream'); res.end('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"untrusted","arguments":"{}"}}]}}]}\n\ndata: [DONE]\n\n'); };
         await expect(request()).rejects.toMatchObject({ code: 'unsupported' });
+    });
+    test('reads interleaved tool-call fragments and final usage before reporting unsupported execution', async () => {
+        const frame = delta => `data: ${JSON.stringify({ choices: [{ index: 0, delta }] })}\n\n`;
+        route = (_req, res) => res.type('text/event-stream').end(
+            frame({ tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'look', arguments: '{"q":' } }, { index: 1, id: 'call_2', type: 'function', function: { name: 'read', arguments: '{}' } }] })
+            + frame({ tool_calls: [{ index: 0, function: { name: 'up', arguments: '"x"}' } }] })
+            + 'data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+            + 'data: {"choices":[],"usage":{"completion_tokens":7}}\n\ndata: [DONE]\n\n',
+        );
+        await expect(request()).rejects.toMatchObject({ code: 'unsupported', retryable: false });
+        expect(record.usage.completionTokens).toBe(7);
+        expect(record.committed).toBe(false);
+        expect(calls).toBe(1);
+    });
+    test('interrupted and malformed tool calls remain unknown without dispatching again', async () => {
+        route = (_req, res) => res.type('text/event-stream').end('data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"lookup","arguments":"{"}}]}}]}\n\n');
+        await expect(request()).rejects.toMatchObject({ code: 'unknown', retryable: false });
+        expect(calls).toBe(1);
+        route = (_req, res) => res.type('text/event-stream').end('data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"lookup","arguments":"{"}}]}}]}\n\ndata: [DONE]\n\n');
+        await expect(request()).rejects.toMatchObject({ code: 'unknown', retryable: false });
+        expect(calls).toBe(2);
     });
 });
 
 describe('SSE and public settings boundaries', () => {
+    test('assembles interleaved tool calls without executing them', () => {
+        const decoder = new ProviderSseDecoder(record);
+        const event = delta => `data: ${JSON.stringify({ choices: [{ index: 0, delta }] })}\n\n`;
+        decoder.push(event({ tool_calls: [{ index: 1, id: 'second', function: { name: 'read', arguments: '{}' } }, { index: 0, id: 'first', function: { name: 'look', arguments: '{"q":' } }] }));
+        decoder.push(event({ tool_calls: [{ index: 0, function: { name: 'up', arguments: '"x"}' } }] }));
+        decoder.push('data: [DONE]\n\n');
+        expect(decoder.validatedToolCalls()).toEqual([
+            { id: 'first', type: 'function', function: { name: 'lookup', arguments: '{"q":"x"}' } },
+            { id: 'second', type: 'function', function: { name: 'read', arguments: '{}' } },
+        ]);
+        expect(record.committed).toBe(false);
+    });
     test('preserves Unicode split between network chunks and fragmented CRLF frames', () => {
         const decoder = new ProviderSseDecoder(record);
         for (const char of token('文字🙂').replaceAll('\n', '\r\n') + 'data: [DONE]\r\n\r\n') decoder.push(char);

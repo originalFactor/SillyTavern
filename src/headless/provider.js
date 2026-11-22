@@ -143,6 +143,7 @@ export async function runChatCompletion(originalRequest, providerRequest, record
         }
         stream.push(decoder.decode(), true);
         if (!stream.completed) throw new ApiError(502, 'unknown', 'Provider stream ended without a completion marker. Partial text was not saved; the generation may have been billed.');
+        if (stream.validatedToolCalls().length) throw new ApiError(422, 'unsupported', 'Provider requested tool execution, but the native tool authorization lifecycle is not configured.');
         if (!stream.text) throw new ApiError(502, 'provider', 'Provider completed without text. The request may have been billed.');
         return { text: stream.text, reasoning: stream.reasoning, usage: stream.usage, tokenBudget };
     } catch (error) {
@@ -168,6 +169,22 @@ export class ProviderSseDecoder {
         this.completed = false;
         this.done = false;
         this.outputBytes = 0;
+        this.toolCalls = [];
+        this.toolBytes = 0;
+    }
+
+    validatedToolCalls() {
+        const ids = new Set();
+        for (let index = 0; index < this.toolCalls.length; index++) {
+            const call = this.toolCalls[index];
+            let argumentsObject;
+            try { argumentsObject = JSON.parse(call?.function.arguments); } catch { /* reported below */ }
+            if (!call?.id || ids.has(call.id) || !call.function.name || !argumentsObject || typeof argumentsObject !== 'object' || Array.isArray(argumentsObject)) {
+                throw new ApiError(502, 'unknown', 'Provider returned incomplete or invalid tool calls; the generation outcome is unknown.');
+            }
+            ids.add(call.id);
+        }
+        return this.toolCalls;
     }
 
     push(text, flush = false) {
@@ -205,9 +222,28 @@ export class ProviderSseDecoder {
             this.text += content;
             appendToken(this.record, reasoning, true);
             appendToken(this.record, content);
-            if (delta.tool_calls?.length || delta.function_call || choice.finish_reason === 'tool_calls' || choice.finish_reason === 'function_call') throw new ApiError(422, 'unsupported', 'Provider requested tool execution, but the native tool authorization lifecycle is not configured.');
+            if (delta.function_call || choice.finish_reason === 'function_call') throw new ApiError(422, 'unsupported', 'Provider requested legacy function execution, but the native tool authorization lifecycle is not configured.');
+            if (delta.tool_calls !== undefined && delta.tool_calls !== null) {
+                if (!Array.isArray(delta.tool_calls)) throw new ApiError(502, 'unknown', 'Provider returned malformed tool calls; the generation outcome is unknown.');
+                for (const part of delta.tool_calls) {
+                    const invalidPart = !part || !Number.isInteger(part.index) || part.index < 0 || part.index >= 128
+                        || (part.type != null && part.type !== 'function') || (part.id != null && typeof part.id !== 'string')
+                        || (part.function != null && (typeof part.function !== 'object' || Array.isArray(part.function)))
+                        || (part.function?.name != null && typeof part.function.name !== 'string')
+                        || (part.function?.arguments != null && typeof part.function.arguments !== 'string');
+                    if (invalidPart) throw new ApiError(502, 'unknown', 'Provider returned malformed tool calls; the generation outcome is unknown.');
+                    const call = this.toolCalls[part.index] ??= { id: '', type: 'function', function: { name: '', arguments: '' } };
+                    const id = part.id ?? '', name = part.function?.name ?? '', args = part.function?.arguments ?? '';
+                    this.toolBytes += Buffer.byteLength(id) + Buffer.byteLength(name) + Buffer.byteLength(args);
+                    if (this.toolBytes > 1_048_576) throw new ApiError(502, 'unknown', 'Provider tool calls exceeded their size limit; the generation outcome is unknown.');
+                    call.id += id;
+                    call.function.name += name;
+                    call.function.arguments += args;
+                }
+            }
             if (choice.finish_reason) {
-                if (!['stop', 'length', 'content_filter'].includes(choice.finish_reason)) throw new ApiError(502, 'unknown', 'Provider returned an unrecognized completion reason.');
+                if (!['stop', 'length', 'content_filter', 'tool_calls'].includes(choice.finish_reason)) throw new ApiError(502, 'unknown', 'Provider returned an unrecognized completion reason.');
+                if (choice.finish_reason === 'tool_calls' && !this.toolCalls.length) throw new ApiError(502, 'unknown', 'Provider returned an empty tool-call completion; the generation outcome is unknown.');
                 this.completed = true;
             }
         }
