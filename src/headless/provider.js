@@ -90,7 +90,11 @@ export async function runChatCompletion(originalRequest, providerRequest, record
     let tokenBudget = null;
     if (acceptedSession) {
         const { auditPrompt } = await import('./prompt.js');
-        tokenBudget = await auditPrompt(acceptedSession, { ...request, ...body });
+        tokenBudget = await auditPrompt(acceptedSession, {
+            ...request, ...body,
+            tools: body.tools, tool_choice: body.tool_choice, parallel_tool_calls: body.parallel_tool_calls,
+            functions: body.functions, function_call: body.function_call,
+        });
     }
     const secrets = [apiKey, originalRequest.headers?.authorization];
     for (const [key, value] of headers) if (/authorization|api.?key|cookie|token|secret/i.test(key)) secrets.push(value, value.replace(/^Bearer\s+/i, ''));

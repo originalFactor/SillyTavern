@@ -1489,6 +1489,18 @@ components:
             providerDispatched: { type: boolean }
             restored: { type: boolean }
             usage: { type: [object, 'null'], additionalProperties: true }
+            warnings:
+              type: [object, 'null']
+              additionalProperties: true
+              properties:
+                tokenBudget:
+                  type: object
+                  additionalProperties: true
+                  properties:
+                    toolTokens:
+                      type: integer
+                      minimum: 0
+                      description: Optional tokenizer estimate for tool definitions and controls retained in the outbound body. Included in usedTokens. Excludes custom body fields removed before dispatch.
             toolCalls:
               type: array
               description: Redacted, observational tool proposals. These values do not authorize execution.

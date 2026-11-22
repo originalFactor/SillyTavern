@@ -17,6 +17,44 @@ afterEach(() => roots.splice(0).forEach(root => fs.rmSync(root, { recursive: tru
 const rows = (count, content = i => `Line ${i}`) => Array.from({ length: count }, (_, index) => ({ name: index % 2 ? 'Aria' : 'Reader', is_user: index % 2 === 0, mes: content(index) }));
 const history = result => result.messages.filter(message => ['user', 'assistant'].includes(message.role));
 describe('source-derived Chat Completion packing', () => {
+    test('audits outgoing tool definitions and controls with the source tool-data reservation', async () => {
+        const f = fixture();
+        const built = await f.build([...f.chat, ...rows(1)]);
+        const plain = await auditPrompt(f.session, built.providerRequest);
+        const packet = {
+            ...built.providerRequest,
+            tools: [{ type: 'function', function: { name: 'lookup', description: 'Look up a record', parameters: { type: 'object', properties: { query: { type: 'string' } } } } }],
+            tool_choice: 'auto', parallel_tool_calls: false,
+        };
+        const before = structuredClone(packet);
+        const withTools = await auditPrompt(f.session, packet);
+        expect(plain.toolTokens).toBe(0);
+        expect(withTools.toolTokens).toBeGreaterThan(0);
+        expect(withTools.usedTokens).toBe(plain.usedTokens + withTools.toolTokens);
+        expect(withTools.remainingTokens).toBe(plain.remainingTokens - withTools.toolTokens);
+        expect(withTools.messageCount).toBe(plain.messageCount);
+        expect(packet).toEqual(before);
+        packet.tools[0].function.description = 'definition '.repeat(100);
+        expect((await auditPrompt(f.session, packet)).toolTokens).toBeGreaterThan(withTools.toolTokens);
+    });
+    test('counts legacy function definitions and controls in the outgoing audit', async () => {
+        const f = fixture();
+        const built = await f.build([...f.chat, ...rows(1)]);
+        const audit = await auditPrompt(f.session, {
+            ...built.providerRequest,
+            functions: [{ name: 'lookup', description: 'Look up a record', parameters: { type: 'object' } }],
+            function_call: { name: 'lookup' },
+        });
+        expect(audit.toolTokens).toBeGreaterThan(0);
+    });
+    test('rejects tool-schema overflow without expanding schema macros or publishing effects', async () => {
+        const f = fixture({ context: 256, response: 32 });
+        const built = await f.build([...f.chat, ...rows(1)]);
+        const tools = [{ type: 'function', function: { name: 'lookup', description: '{{incvar::mustNotRun}}' + 'definition '.repeat(500), parameters: { type: 'object' } } }];
+        await expect(auditPrompt(f.session, { ...built.providerRequest, tools, tool_choice: 'auto' }))
+            .rejects.toThrow('final outgoing prompt exceeds');
+        expect(f.chat[0].chat_metadata).toEqual({});
+    });
     test('reconstructs stored tool invocations and audits the resulting prompt without executing tools', async () => {
         const f = fixture({ oai: { function_calling: true } });
         const chat = [...f.chat, { name: 'Reader', is_user: true, mes: 'Question' }, {

@@ -133,7 +133,7 @@ describe('headless prompt assembly', () => {
     });
 
     test('global regex only runs at matching placement', async () => {
-        const settings = { regex: [{ findRegex: '/a/g', replaceString: 'b', placement: regex_placement.USER_INPUT }] };
+        const settings = { regex: [{ findRegex: '/a/g', replaceString: 'b', placement: [regex_placement.USER_INPUT] }] };
         const session = makeSession({ extensionSettings: settings });
         expect((await runNativeText(session, { name: 'Aria' }, [], { mode: 'append', message: { is_user: true, mes: 'a' } })).text).toBe('b');
         expect((await runNativeText(session, { name: 'Aria' }, [], { mode: 'output', text: 'a' })).text).toBe('a');

@@ -335,6 +335,14 @@ Completed unsupported tool proposals are retained in generation snapshots as
 for observation and cannot authorize or execute a tool. Interrupted or invalid
 tool streams retain their unknown outcome.
 
+The final Chat Completion token audit includes tool definitions and controls
+from the outbound body after custom inclusion and exclusion. It uses the source
+tool-data reservation method and reports `toolTokens` within the total prompt
+estimate. This covers `tools`, `tool_choice`, `parallel_tool_calls`, `functions`
+and `function_call`. An overflow fails before provider dispatch. These counts
+are tokenizer estimates. Tool execution still requires authorization and its
+execution lifecycle.
+
 ### Named preset storage and selection
 
 `GET /presets/{kind}` lists built-in and user presets with individual file

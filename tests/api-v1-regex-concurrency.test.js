@@ -9,7 +9,10 @@ import { clearGenerations, createGeneration } from '../src/headless/generation-s
 import { write as writeCard } from '../src/character-card-parser.js';
 
 let enter, resolve, entered;
-jest.unstable_mockModule('../src/headless/prompt.js', () => ({ runNativeText: () => { enter(); return new Promise(done => { resolve = done; }); } }));
+jest.unstable_mockModule('../src/headless/prompt.js', () => ({
+    runNativeText: () => { enter(); return new Promise(done => { resolve = done; }); },
+    runNativeDisplayBatch: () => { throw new Error('Unexpected batch rendering during a message-edit test.'); },
+}));
 const { mutateNativeMessage } = await import('../src/headless/message-text.js');
 const { editGroupMessage } = await import('../src/headless/group-management.js');
 let root, session, file, pending;

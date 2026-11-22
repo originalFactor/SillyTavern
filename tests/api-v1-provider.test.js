@@ -40,6 +40,38 @@ const request = () => runChatCompletion({ user: { directories: { root } }, heade
 const token = content => `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content } }] })}\n\n`;
 
 describe('non-replaying bounded provider dispatch', () => {
+    test('rejects oversized custom tool definitions before provider dispatch', async () => {
+        writeSettings({ root }, { main_api: 'openai', oai_settings: { chat_completion_source: 'custom', custom_model: 'gpt-4', custom_url: base, openai_max_context: 256, openai_max_tokens: 32 } });
+        const sourceRequest = { user: { directories: { root }, profile: { handle: 'owner' } }, headers: {} };
+        const session = await prepareProviderSession(sourceRequest);
+        route = (_req, res) => res.type('text/event-stream').end(token('Unexpected') + 'data: [DONE]\n\n');
+        const tools = [{ type: 'function', function: { name: 'lookup', description: 'definition '.repeat(500), parameters: { type: 'object' } } }];
+        await expect(runSessionChatCompletion(sourceRequest, {
+            chat_completion_source: 'custom', custom_url: base, model: 'gpt-4', max_tokens: 32,
+            messages: [{ role: 'user', content: 'Hello' }],
+            custom_include_body: JSON.stringify({ tools, tool_choice: 'auto' }),
+        }, record, session)).rejects.toMatchObject({ code: 'validation' });
+        expect(calls).toBe(0);
+        expect(record.providerDispatched).toBe(false);
+    });
+    test('audits only tool fields retained after custom body exclusions', async () => {
+        writeSettings({ root }, { main_api: 'openai', oai_settings: { chat_completion_source: 'custom', custom_model: 'gpt-4', custom_url: base, openai_max_context: 256, openai_max_tokens: 32 } });
+        const sourceRequest = { user: { directories: { root }, profile: { handle: 'owner' } }, headers: {} };
+        const session = await prepareProviderSession(sourceRequest);
+        let body;
+        route = (req, res) => { body = req.body; res.type('text/event-stream').end(token('Complete') + 'data: [DONE]\n\n'); };
+        const tools = [{ type: 'function', function: { name: 'lookup', description: 'definition '.repeat(500), parameters: { type: 'object' } } }];
+        const result = await runSessionChatCompletion(sourceRequest, {
+            chat_completion_source: 'custom', custom_url: base, model: 'gpt-4', max_tokens: 32,
+            messages: [{ role: 'user', content: 'Hello' }], tools,
+            custom_include_body: JSON.stringify({ tools, tool_choice: 'auto' }),
+            custom_exclude_body: '[tools, tool_choice]',
+        }, record, session);
+        expect(body.tools).toBeUndefined();
+        expect(body.tool_choice).toBeUndefined();
+        expect(result.tokenBudget.toolTokens).toBe(0);
+        expect(calls).toBe(1);
+    });
     test('accepted workers keep the captured key even if provider settings and credentials later change', async () => {
         writeSettings({ root }, { main_api: 'openai', oai_settings: { chat_completion_source: 'custom', custom_model: 'old-model', custom_url: base } });
         const sourceRequest = { user: { directories: { root }, profile: { handle: 'owner' } }, headers: {} };

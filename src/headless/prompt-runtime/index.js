@@ -91,6 +91,13 @@ export async function auditSourcePrompt(session, request) {
         if (countable.tool_calls) countable.tool_calls = JSON.stringify(countable.tool_calls);
         usedTokens += await countTokensOpenAIAsync(countable);
     }
+    // Match source preparePromptsForChatCompletion's tool-data reservation.
+    // Count the actual packet, including custom/legacy definition fields, once.
+    const toolData = Object.fromEntries(['tools', 'tool_choice', 'parallel_tool_calls', 'functions', 'function_call']
+        .filter(key => request[key] !== undefined).map(key => [key, request[key]]));
+    const toolTokens = Object.keys(toolData).length
+        ? await countTokensOpenAIAsync([{ role: 'user', content: JSON.stringify(toolData) }]) : 0;
+    usedTokens += toolTokens;
     if (usedTokens + responseTokens > contextTokens) throw new ApiError(422, 'validation', 'The final outgoing prompt exceeds the configured context after request hooks. No model request was sent.');
-    return { contextTokens, responseTokens, usedTokens, remainingTokens: contextTokens - responseTokens - usedTokens, tokenizerModel: getTokenizerModel(), messageCount: request.messages.length };
+    return { contextTokens, responseTokens, usedTokens, toolTokens, remainingTokens: contextTokens - responseTokens - usedTokens, tokenizerModel: getTokenizerModel(), messageCount: request.messages.length };
 }

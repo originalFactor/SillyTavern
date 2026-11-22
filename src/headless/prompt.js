@@ -97,7 +97,11 @@ export function auditPrompt(session, request) {
     }
     const oai = session.settings.oai_settings ?? {};
     const settings = { oai_settings: { chat_completion_source: oai.chat_completion_source ?? 'openai', openai_max_context: Number(oai.openai_max_context ?? session.settings.max_context ?? 4096), openai_max_tokens: Number(oai.openai_max_tokens ?? session.settings.amount_gen ?? 300) } };
-    return execute({ operation: 'audit', session: { settings }, request: { model: request.model, max_tokens: request.max_tokens, max_completion_tokens: request.max_completion_tokens, messages: request.messages } });
+    return execute({ operation: 'audit', session: { settings }, request: {
+        model: request.model, max_tokens: request.max_tokens, max_completion_tokens: request.max_completion_tokens,
+        messages: request.messages, tools: request.tools, tool_choice: request.tool_choice,
+        parallel_tool_calls: request.parallel_tool_calls, functions: request.functions, function_call: request.function_call,
+    } });
 }
 function evaluationSession(session, overrides = {}) {
     const live = session.directories?.root && fs.existsSync(path.join(session.directories.root, 'settings.json')) ? readSettings(session.directories) : session.settings;

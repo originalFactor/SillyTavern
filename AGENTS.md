@@ -204,6 +204,13 @@ Host-side tests do not prove execution of the arm64 Android Node binary.
   reasoning must match stored transformed reasoning. Native UI labels tokenizer
   estimates and backend-reported usage separately. Full dependent preset/Instruct,
   group/media/tool/plugin compatibility remains open; do not flip their flags.
+- Final Chat Completion audits include outgoing tool definitions and controls,
+  including legacy function fields, using the source tool-data reservation's
+  synthetic user message. `toolTokens` is included in the prompt estimate.
+  Provider audits use the retained body fields after custom exclusions, so
+  excluded definitions cannot reappear from the pre-merge request. Oversized
+  definitions fail before provider dispatch. Tool execution requires explicit
+  authorization and its execution lifecycle.
 
 
 - In-progress text completion: generate-headless-text-prompt.mjs derives ten
