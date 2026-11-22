@@ -598,6 +598,16 @@ export async function afterGeneration(context) { return context.generation.type;
                 expect(blocked.status).toBe(409);
             } finally { cancel(active); }
         } finally { fs.unlinkSync(sharedGroupFile); }
+        const currentSampling = await (await fetch(samplingUrl)).json();
+        const concurrent = await Promise.all([0.4, 0.5].map(temperature => fetch(samplingUrl, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ expectedRevision: currentSampling.revision, overrides: { temperature, maxTokens: 48 } }),
+        })));
+        expect(concurrent.map(response => response.status).sort()).toEqual([200, 409]);
+        const updatedSampling = await (await fetch(samplingUrl)).json();
+        const restoredSampling = await fetch(samplingUrl, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ expectedRevision: updatedSampling.revision, overrides: samplingBody.overrides }) });
+        expect(restoredSampling.status).toBe(200);
         const beforePreview = fs.readFileSync(previewFile);
         const providerCount = providerRequests.length;
         const preview = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
