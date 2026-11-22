@@ -75,20 +75,26 @@ Use `Content-Type: application/json` for JSON requests and `application/merge-pa
 ## Native character cards and personas
 
 `POST /characters` accepts a caller-owned `characterId` and the opaque `card`
-object. `POST /characters/import` accepts `characterId`, `format: json|png`,
-and canonical `dataBase64` file bytes. JSON is limited to 1 MiB and PNG/APNG to
-4 MiB including metadata. V1/V2/V3 schema, unknown extension fields and embedded
-lorebooks survive editing and export. `GET /characters/{id}` returns `raw`,
+object. `POST /characters/import` accepts `characterId`, `format: json|png|charx`,
+and canonical `dataBase64` file bytes. JSON is limited to 1 MiB, PNG/APNG to
+4 MiB including metadata, and CHARX archives to 7 MiB. V1/V2/V3 schema, unknown
+extension fields and embedded lorebooks survive editing and export. `GET /characters/{id}` returns `raw`,
 normalized `data`, and a SHA-256 `revision` of the PNG. `PUT /characters/{id}`
 requires the inspected `expectedRevision`; it preserves the existing image and
 rejects stale writes with 409. `PUT /characters/{id}/avatar` accepts a canonical
 base64 PNG/APNG and the inspected revision, retaining the existing card metadata.
 It is advertised by `characterAvatar` and rejects stale or active characters.
-`GET /characters/{id}/export?format=json|png`
+`GET /characters/{id}/export?format=json|png|charx`
 returns `{fileName,mimeType,dataBase64}` for a native save picker. Deletion
 requires the revision and, when chats exist, explicit `deleteChats=true`.
 Admitted generations fence card replacement/deletion across all its chats.
-CHARX, WebP card imports and auxiliary asset transfer remain unimplemented.
+CHARX uses `card.json`, an `embedded://assets/main.png` PNG icon and declared
+`embedded://` image assets. The server validates entry paths, entry counts and
+uncompressed sizes before extracting; it preserves versioned card fields,
+stores normalized auxiliary images under the character's owned user-images
+directory, and exports a canonical archive from the current PNG icon and stored
+assets. CHARX export requires a versioned V2/V3 card with a `data` object.
+WebP card metadata and arbitrary non-image asset execution remain unsupported.
 
 `GET /personas` returns `{personas,selectedId,revision}`. Writes to
 `PUT /personas/{id}`, `POST /personas/{id}/select` and

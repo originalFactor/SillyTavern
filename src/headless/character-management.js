@@ -6,9 +6,12 @@ import { ApiError, requireSafeId } from './contract.js';
 import { assertCharacterIdle } from './generation-store.js';
 import { normalizeCharacterData, readCharacter } from './session.js';
 import { serverDirectory } from '../server-directory.js';
+import { isPathUnderParent } from '../util.js';
+import { parseCharX, buildCharX, stripCardMetadata } from './charx.js';
 
 const MAX_CARD_BYTES = 1024 * 1024;
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const MAX_CHARX_BYTES = 7 * 1024 * 1024;
 const DEFAULT_IMAGE = path.join(serverDirectory, 'default', 'content', 'default_Seraphina.png');
 
 /**
@@ -43,6 +46,67 @@ function decode(value, limit) {
     if (bytes.toString('base64') !== value) throw new ApiError(400, 'validation', 'Invalid base64 encoding.');
     if (!bytes.length || bytes.length > limit) throw new ApiError(413, 'validation', 'Imported file exceeds its size limit.');
     return bytes;
+}
+
+function charxDirectory(session, characterId) {
+    const id = requireSafeId(characterId, 'characterId');
+    const root = path.resolve(session.directories.userImages);
+    const directory = path.resolve(root, 'charx', id);
+    if (!isPathUnderParent(root, directory)) throw new ApiError(400, 'validation', 'Invalid CHARX asset directory.');
+    return directory;
+}
+
+/** Persist only normalized, bounded CHARX image bytes under the character's owned asset directory. */
+function saveCharXAssets(session, characterId, assets) {
+    const directory = charxDirectory(session, characterId);
+    const auxiliary = assets.filter(asset => asset.type.toLowerCase() !== 'icon' && asset.type.toLowerCase() !== 'user_icon');
+    if (!auxiliary.length) return;
+    fs.mkdirSync(directory, { recursive: true });
+    if (fs.lstatSync(directory).isSymbolicLink() || !fs.statSync(directory).isDirectory()) {
+        throw new ApiError(400, 'validation', 'Invalid CHARX asset directory.');
+    }
+    const manifest = auxiliary.map(asset => ({
+        path: path.posix.basename(asset.path), type: asset.type, name: asset.name, extension: asset.extension,
+    }));
+    manifest.forEach(item => {
+        if (!/^\d{3}\.[a-z0-9]+$/.test(item.path)) {
+            throw new ApiError(422, 'validation', 'Invalid CHARX asset name.');
+        }
+    });
+    for (const asset of auxiliary) {
+        const target = path.resolve(directory, path.posix.basename(asset.path));
+        if (!isPathUnderParent(directory, target)) throw new ApiError(422, 'validation', 'Invalid CHARX asset path.');
+        writeFileAtomicSync(target, Buffer.from(asset.bytes));
+    }
+    writeFileAtomicSync(path.join(directory, 'manifest.json'), JSON.stringify(manifest));
+}
+
+function loadCharXAssets(session, characterId) {
+    const directory = charxDirectory(session, characterId);
+    const manifestFile = path.join(directory, 'manifest.json');
+    if (!fs.existsSync(manifestFile)) return [];
+    if (fs.lstatSync(manifestFile).isSymbolicLink() || !fs.statSync(manifestFile).isFile()) {
+        throw new ApiError(400, 'validation', 'Invalid CHARX asset manifest.');
+    }
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+    if (!Array.isArray(manifest) || manifest.length > 64) throw new ApiError(400, 'validation', 'Invalid CHARX asset manifest.');
+    let total = 0;
+    return manifest.map(item => {
+        const name = path.posix.basename(String(item?.path ?? ''));
+        const target = path.resolve(directory, name);
+        if (name !== item.path || !isPathUnderParent(directory, target) || !fs.existsSync(target) || fs.lstatSync(target).isSymbolicLink()) {
+            throw new ApiError(400, 'validation', 'Invalid CHARX asset manifest entry.');
+        }
+        const bytes = fs.readFileSync(target);
+        total += bytes.length;
+        if (!bytes.length || bytes.length > MAX_IMAGE_BYTES || total > MAX_CHARX_BYTES) {
+            throw new ApiError(413, 'validation', 'CHARX assets exceed 7 MiB.');
+        }
+        return {
+            path: `assets/${name}`, bytes: Uint8Array.from(bytes), extension: String(item.extension ?? path.extname(name).slice(1)),
+            type: String(item.type ?? ''), name: String(item.name ?? ''),
+        };
+    });
 }
 
 /**
@@ -98,16 +162,28 @@ export async function replaceCharacterAvatar(session, characterId, expectedRevis
  * @returns {Promise<Record<string, any>>} Imported card
  */
 export async function importCharacter(session, { characterId, format, dataBase64 }) {
-    if (!['json', 'png'].includes(format)) throw new ApiError(422, 'unsupported', 'Import supports JSON and PNG/APNG character cards.');
-    const bytes = decode(dataBase64, format === 'json' ? MAX_CARD_BYTES : MAX_IMAGE_BYTES);
+    if (!['json', 'png', 'charx'].includes(format)) throw new ApiError(422, 'unsupported', 'Import supports JSON, PNG/APNG and CHARX character cards.');
+    const bytes = decode(dataBase64, format === 'json' ? MAX_CARD_BYTES : format === 'charx' ? MAX_CHARX_BYTES : MAX_IMAGE_BYTES);
     let card;
-    try {
-        if (format === 'png') {
-            const { read } = await import('../character-card-parser.js');
-            card = JSON.parse(read(bytes));
-        } else card = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/^\uFEFF/, ''));
-    } catch { throw new ApiError(422, 'validation', 'File does not contain a valid character card.'); }
-    return saveCharacter(session, { characterId, card, image: format === 'png' ? bytes : undefined });
+    let image;
+    let charxAssets = [];
+    if (format === 'charx') {
+        const parsed = await parseCharX(bytes);
+        card = parsed.card;
+        image = parsed.icon;
+        charxAssets = parsed.assets;
+    } else {
+        try {
+            if (format === 'png') {
+                const { read } = await import('../character-card-parser.js');
+                card = JSON.parse(read(bytes));
+                image = bytes;
+            } else card = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/^\uFEFF/, ''));
+        } catch { throw new ApiError(422, 'validation', 'File does not contain a valid character card.'); }
+    }
+    const saved = await saveCharacter(session, { characterId, card, image });
+    saveCharXAssets(session, saved.id, charxAssets);
+    return saved;
 }
 
 /**
@@ -119,9 +195,21 @@ export async function importCharacter(session, { characterId, format, dataBase64
  */
 export async function exportCharacter(session, characterId, format) {
     const card = await readCharacter(session, characterId);
-    if (!['json', 'png'].includes(format)) throw new ApiError(422, 'unsupported', 'Export format must be json or png.');
-    const bytes = format === 'json' ? Buffer.from(JSON.stringify(card.raw, null, 2)) : fs.readFileSync(path.join(session.directories.characters, card.avatar));
-    return { fileName: `${card.id}.${format}`, mimeType: format === 'json' ? 'application/json' : 'image/png', dataBase64: bytes.toString('base64') };
+    if (!['json', 'png', 'charx'].includes(format)) throw new ApiError(422, 'unsupported', 'Export format must be json, png or charx.');
+    const png = fs.readFileSync(path.join(session.directories.characters, card.avatar));
+    const bytes = whenFormat(format, {
+        json: () => Buffer.from(JSON.stringify(card.raw, null, 2)),
+        png: () => png,
+        charx: () => buildCharX(card.raw, stripCardMetadata(png), loadCharXAssets(session, card.id)),
+    });
+    const mimeType = format === 'json' ? 'application/json' : format === 'png' ? 'image/png' : 'application/zip';
+    return { fileName: `${card.id}.${format}`, mimeType, dataBase64: bytes.toString('base64') };
+}
+
+function whenFormat(format, actions) {
+    const action = actions[format];
+    if (!action) throw new ApiError(422, 'unsupported', 'Unsupported character card format.');
+    return action();
 }
 
 /**

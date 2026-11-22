@@ -32,7 +32,11 @@ from the companion entry point.
   replacements/deletion require the inspected PNG digest. Avatar replacement
   preserves card metadata and checks the same digest. Active generation
   admissions fence card mutation. Associated chat deletion needs an explicit
-  flag. CHARX/WebP and auxiliary asset transfer remain incomplete.
+  flag. `src/headless/charx.js` adds bounded CHARX import/export: `card.json`,
+  a PNG icon and declared `embedded://` image assets. ZIP entries, paths and
+  uncompressed sizes are checked before reading; auxiliary images are stored
+  under the character's owned user-images directory and exported canonically.
+  Versioned card fields are preserved. WebP card metadata remains unsupported.
 - `src/headless/persona-management.js` uses standard ST persona settings and a
   persona-only revision, preserving provider settings and unknown descriptor
   fields. In-prompt, depth/role and excluded description placements work;

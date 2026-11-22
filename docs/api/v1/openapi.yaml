@@ -837,8 +837,8 @@ paths:
   /api/v1/characters/import:
     post:
       operationId: importCharacter
-      summary: Import one JSON or PNG/APNG card using a caller-owned character ID.
-      description: JSON is bounded to 1 MiB, PNG/APNG to 4 MiB including metadata. No imported code is executed.
+      summary: Import one JSON, PNG/APNG or CHARX card using a caller-owned character ID.
+      description: JSON is bounded to 1 MiB, PNG/APNG to 4 MiB, and CHARX ZIP archives to 7 MiB with bounded entry paths and uncompressed sizes. No imported code is executed.
       requestBody:
         required: true
         content:
@@ -848,7 +848,7 @@ paths:
               required: [characterId, format, dataBase64]
               properties:
                 characterId: { type: string }
-                format: { type: string, enum: [json, png] }
+                format: { type: string, enum: [json, png, charx] }
                 dataBase64: { type: string, contentEncoding: base64 }
       responses:
         '201': { description: Imported card document with revision. }
@@ -916,12 +916,12 @@ paths:
   /api/v1/characters/{characterId}/export:
     get:
       operationId: exportCharacter
-      summary: Export the current character as JSON or a PNG containing its original card schema.
+      summary: Export the current character as JSON, PNG or a bounded CHARX archive.
       parameters:
         - $ref: '#/components/parameters/characterId'
         - name: format
           in: query
-          schema: { type: string, enum: [json, png], default: json }
+          schema: { type: string, enum: [json, png, charx], default: json }
       responses:
         '200':
           description: Native file-picker envelope.
