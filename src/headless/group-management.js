@@ -418,7 +418,7 @@ export async function editGroupMessage(session, groupId, chatId, index, expected
     return { groupId: item.id, chatId: id, index: headerless && result.macroEffects?.localDirty ? index + 1 : index };
 }
 
-function parseGroupChat(file) {
+export function parseGroupChat(file) {
     let chat;
     try {
         const text = new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(file));

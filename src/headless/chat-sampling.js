@@ -1,8 +1,9 @@
 import crypto from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { ApiError, requireObject } from './contract.js';
 import { assertChatIdle, withChatLock } from './generation-store.js';
 import { localChat } from './macro-management.js';
-import { resolveGroupChat } from './group-management.js';
+import { parseGroupChat, resolveGroupChat } from './group-management.js';
 import { writeChat } from './session.js';
 
 const FIELD = 'messenger_sampling';
@@ -63,6 +64,9 @@ export async function saveGroupSampling(session, groupId, chatId, body) {
         if (Object.keys(body).some(key => !['expectedRevision', 'overrides'].includes(key))) throw new ApiError(400, 'validation', 'Unknown chat sampling field.');
         if (body.expectedRevision !== document(chat[0].chat_metadata?.[FIELD]).revision) throw new ApiError(409, 'conflict', 'Chat sampling changed. Reload before saving.');
         const overrides = validate(body.overrides);
+        const current = parseGroupChat(file);
+        if (!current.length || !Object.hasOwn(current[0], 'chat_metadata')) current.unshift({ chat_metadata: {} });
+        if (!isDeepStrictEqual(current, chat)) throw new ApiError(409, 'conflict', 'Group chat changed. Reload before saving.');
         chat[0].chat_metadata = { ...(chat[0].chat_metadata ?? {}), [FIELD]: overrides };
         writeChat(file, chat);
         return document(overrides);
