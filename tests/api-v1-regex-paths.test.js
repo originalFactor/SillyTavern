@@ -76,6 +76,21 @@ describe('source regex across storage, prompt, editing and read-only display', (
         expect(edited.extra.native_regex_warnings.join(' ')).toContain('character-scoped');
         expect((await req('/groups/Display/chats/DisplayChat/messages/edit', 'POST', { index: 0, expectedMessage, text: 'stale' })).status).toBe(409);
     });
+    test('group display keeps variable effects isolated across a paged batch', async () => {
+        configure([script(2, '/raw/g', '{{incvar::displayCount}}', { markdownOnly: true })]);
+        fs.writeFileSync(path.join(directories.groups, 'Batch.json'), JSON.stringify({ name: 'Batch', members: ['Aria.png'], disabled_members: [], chats: ['BatchChat'], chat_id: 'BatchChat' }));
+        const file = path.join(directories.groupChats, 'BatchChat.jsonl');
+        const rows = [{ chat_metadata: { variables: { displayCount: 0 } } }, ...Array.from({ length: 120 }, () => ({ name: 'Aria', original_avatar: 'Aria.png', is_user: false, mes: 'raw' }))];
+        const original = rows.map(row => JSON.stringify(row)).join('\n');
+        fs.writeFileSync(file, original);
+        const response = await req('/groups/Batch/chats/BatchChat/render', 'POST', { before: 121, limit: 100 });
+        expect(response.status).toBe(200);
+        expect(response.value.views).toHaveLength(100);
+        expect(response.value.views.every(view => view.display === '1')).toBe(true);
+        expect(response.value.views[0].index).toBe(21);
+        expect(response.value.warnings.join(' ')).toContain('never save');
+        expect(fs.readFileSync(file, 'utf8')).toBe(original);
+    });
     test('group display uses each member scoped rules and handles a group without available members', async () => {
         const png = fs.readFileSync(path.join(serverDirectory, 'default/content/default_Seraphina.png'));
         fs.writeFileSync(path.join(directories.characters, 'Second.png'), writeCard(png, JSON.stringify({ name: 'Second', extensions: { regex_scripts: [{ ...script(2, '/raw/g', 'second', { markdownOnly: true }), placement: ['2'] }, script(2, '/editable/g', 'scoped-edit', { runOnEdit: true })] } }), { preserveSpec: true }));

@@ -12,7 +12,7 @@ const { auditStringPrompt } = await import('./text-runtime/index.js');
 console.log = console.info = console.debug = console.warn = console.error = () => {};
 parentPort.on('message', async ({ id, payload }) => {
     try {
-        const result = payload.operation === 'auditString' ? await auditStringPrompt(payload.session, payload.request) : payload.operation === 'audit' ? await auditSourcePrompt(payload.session, payload.request) : payload.operation === 'text'
+        const result = payload.operation === 'displayBatch' ? payload.rows.map(row => evaluateNativeText(payload.session, row.character, payload.chat, { ...payload.options, ...row.options })) : payload.operation === 'auditString' ? await auditStringPrompt(payload.session, payload.request) : payload.operation === 'audit' ? await auditSourcePrompt(payload.session, payload.request) : payload.operation === 'text'
             ? evaluateNativeText(payload.session, payload.character, payload.chat, payload.options)
             : await buildPromptInline(payload.session, payload.character, payload.chat, payload.options);
         if (Buffer.byteLength(JSON.stringify(result)) > 33_554_432) throw new Error('Prompt result exceeds its size limit.');

@@ -81,6 +81,10 @@ export async function buildPrompt(session, character, chat, options) {
 export function runNativeText(session, character, chat, options) {
     return execute({ operation: 'text', session: evaluationSession(session), character, chat, options: { ...options, extensions: options.extensions ?? listExtensions(session) } });
 }
+/** Evaluate display rows in one worker admission with an independent macro frame per row. */
+export function runNativeDisplayBatch(session, chat, rows, options) {
+    return execute({ operation: 'displayBatch', session: evaluationSession(session), chat, rows, options: { ...options, extensions: listExtensions(session) } });
+}
 /** Bounded string preparation, without provider admission or dispatch. */
 export function buildStringPrompt(session, character, chat, options = {}) {
     if (session.settings.main_api !== 'textgenerationwebui') throw new ApiError(422, 'unsupported', 'A text-completion profile is required for string preparation.');

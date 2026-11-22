@@ -8,7 +8,7 @@ import { ApiError, requireSafeId } from './contract.js';
 import { assertCharacterIdle, assertChatIdle } from './generation-store.js';
 import { listCharacters, pageChat, readCharacter, writeChat } from './session.js';
 import { persistMacroEffects } from './macros.js';
-import { runNativeText } from './prompt.js';
+import { runNativeDisplayBatch, runNativeText } from './prompt.js';
 
 const MAX_GROUP_BYTES = 512 * 1024;
 const MAX_MEMBERS = 32;
@@ -301,19 +301,24 @@ export async function renderGroupChat(session, groupId, chatId, options = {}) {
     const chat = headerless ? [{ chat_metadata: {} }, ...original] : original;
     const page = pageChat(original, options);
     const characters = await loadGroupCharacters(session, item.group);
-    const views = [], warnings = [];
+    const views = [], warnings = [], rows = [];
     const historicalCards = new Map();
     for (const message of page.messages) {
         if (typeof message.mes !== 'string') continue;
         const { character, characterIndex, messageCharacters, missingSpeaker } = await messageCharacter(session, characters, message, historicalCards);
         if (missingSpeaker) warnings.push('The message character is unavailable; character-scoped display rules cannot be applied.');
-        const result = await runNativeText(session, character.data, chat, {
-            mode: 'display', characterId: character.avatar.endsWith('.png') ? character.avatar.slice(0, -4) : '', chatId: id,
-            nativeContext: options.nativeContext ?? {}, groupContext: { group: { ...item.group, id: item.id }, characters: messageCharacters, characterIndex },
+        rows.push({ character: character.data, options: {
+            characterId: character.avatar.endsWith('.png') ? character.avatar.slice(0, -4) : '',
+            groupContext: { group: { ...item.group, id: item.id }, characters: messageCharacters, characterIndex },
             messages: [{ ...message, index: message.index + (headerless ? 1 : 0) }],
-        });
+        }, index: message.index });
+    }
+    const results = rows.length ? await runNativeDisplayBatch(session, chat, rows, {
+        mode: 'display', chatId: id, nativeContext: options.nativeContext ?? {},
+    }) : [];
+    for (const [index, result] of results.entries()) {
         const view = result.messages[0];
-        views.push({ index: message.index, display: view.display, displayReasoning: view.displayReasoning });
+        views.push({ index: rows[index].index, display: view.display, displayReasoning: view.displayReasoning });
         warnings.push(...result.warnings);
         if (result.discardedVariableEffects) warnings.push('Display regex proposed variable changes; transcript reads never save these effects.');
     }
