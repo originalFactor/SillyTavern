@@ -238,6 +238,13 @@ describe('non-replaying bounded provider dispatch', () => {
         expect(record.text).toBe('Partial');
         expect(calls).toBe(1);
     });
+    test('rejects tool fragments arriving after a completion reason', async () => {
+        route = (_req, res) => res.type('text/event-stream').end(token('Partial') + 'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"lookup","arguments":"{}"}}]}}]}\n\ndata: [DONE]\n\n');
+        await expect(request()).rejects.toMatchObject({ code: 'unknown', retryable: false });
+        expect(record.text).toBe('Partial');
+        expect(snapshot(record).toolCalls).toEqual([]);
+        expect(calls).toBe(1);
+    });
 });
 
 describe('SSE and public settings boundaries', () => {

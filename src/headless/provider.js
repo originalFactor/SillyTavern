@@ -227,6 +227,9 @@ export class ProviderSseDecoder {
             const delta = choice.delta ?? choice.message ?? choice;
             const content = extractText(delta.content ?? choice.text);
             const reasoning = extractText(delta.reasoning_content ?? delta.reasoning ?? choice.reasoning);
+            if (this.finishReason && (content || reasoning || delta.tool_calls?.length || delta.function_call)) {
+                throw new ApiError(502, 'unknown', 'Provider sent output after its completion reason; the generation outcome is unknown.');
+            }
             this.outputBytes += Buffer.byteLength(content) + Buffer.byteLength(reasoning);
             if (this.outputBytes > 8_388_608) throw new ApiError(502, 'unknown', 'Provider output exceeded its size limit; the generation outcome is unknown.');
             this.reasoning += reasoning;
