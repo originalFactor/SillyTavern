@@ -328,6 +328,10 @@ same-named built-ins without modifying the bundled original.
 
 - `GET /preset-settings/{kind}` snapshots active settings using upstream preset
   field names (for example `temperature`, not internal `temp_openai`).
+- `PUT /instruct-mode` accepts `enabled` and the active Instruct
+  `expectedRevision`. It updates the text-completion formatting switch while
+  retaining the selected template. The `textInstructSettings` resource flag
+  advertises this operation independently of full Instruct compatibility.
 - `GET /presets/{kind}/{name}` reads portable JSON plus origin, revision,
   credential-redaction notice and pending connection-field changes.
 - `PUT /presets/{kind}/{name}` accepts `{preset,expectedRevision?}`. Creation

@@ -7,7 +7,7 @@ import express from 'express';
 import { API_V1_VERSION, ApiError, asyncHandler, ensureRequestId, requireObject, requireSafeId, sendApiError } from '../headless/contract.js';
 import { deleteCharacter, exportCharacter, importCharacter, replaceCharacterAvatar, saveCharacter } from '../headless/character-management.js';
 import { createGroupChat, deleteGroup, deleteGroupChat, deleteGroupMessage, editGroupMessage, getGroup, listGroupChats, listGroups, loadGroupCharacters, readGroupChat, resolveGroupChat, saveGroup, selectGroupSwipe } from '../headless/group-management.js';
-import { activePreset, activatePreset, deletePreset, exportPreset, getPreset, listPresets, savePreset } from '../headless/presets.js';
+import { activePreset, activatePreset, deletePreset, exportPreset, getPreset, listPresets, savePreset, setInstructEnabled } from '../headless/presets.js';
 import { publicConfiguration } from '../headless/redaction.js';
 import { TEXT_COMPLETION_SOURCES } from '../headless/text-provider.js';
 import { readPromptManager, savePromptManager } from '../headless/prompt-manager.js';
@@ -94,6 +94,7 @@ router.get('/capabilities', (_request, response) => {
             personas: true,
             promptManager: true,
             presets: true,
+            textInstructSettings: true,
             chats: true,
             chatCreate: true,
             chatGreetingMacros: true,
@@ -263,6 +264,10 @@ router.get('/presets/:kind', asyncHandler(async (request, response) => {
 }));
 router.get('/preset-settings/:kind', asyncHandler(async (request, response) => {
     response.json(activePreset(createSession(request), request.params.kind));
+}));
+
+router.put('/instruct-mode', asyncHandler(async (request, response) => {
+    response.json(setInstructEnabled(createSession(request), requireObject(request.body, 'Instruct mode input')));
 }));
 router.get('/presets/:kind/:name', asyncHandler(async (request, response) => {
     response.json(getPreset(createSession(request), request.params.kind, request.params.name));

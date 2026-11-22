@@ -9,6 +9,8 @@ import { PRESET_CONNECTION_FIELDS, PRESET_SETTING_KEYS } from '../src/headless/p
 import { DEFAULT_USER, USER_DIRECTORY_TEMPLATE } from '../src/constants.js';
 import { setConfigFilePath } from '../src/util.js';
 import { serverDirectory } from '../src/server-directory.js';
+import { createMacroContext } from '../src/headless/macros.js';
+import { assembleTextPrompt } from '../src/headless/text-runtime/index.js';
 
 let root, dirs, server, base;
 beforeAll(async () => {
@@ -105,6 +107,26 @@ describe('native named presets', () => {
         expect(result.body.activeName).toBe('Alpaca');
         expect(readSettings(dirs).power_user.instruct.preset).toBe('Alpaca');
         expect(readSettings(dirs).power_user.instruct.enabled).toBe(false);
+    });
+    test('changes the text Instruct switch with a revision fence and preserves other settings', async () => {
+        const original = (await request('/preset-settings/instruct')).body;
+        expect((await request('/instruct-mode', 'PUT', { expectedRevision: original.revision, enabled: 'true' })).status).toBe(400);
+        const enabled = await request('/instruct-mode', 'PUT', { expectedRevision: original.revision, enabled: true });
+        expect(enabled.status).toBe(200);
+        expect(enabled.body.preset.enabled).toBe(true);
+        expect(readSettings(dirs).power_user.instruct.preset).toBe('Alpaca');
+        expect(readSettings(dirs).future.keep).toBe(true);
+        const settings = readSettings(dirs);
+        settings.main_api = 'textgenerationwebui';
+        settings.max_context = 2048;
+        settings.amount_gen = 64;
+        const history = [{ name: 'Reader', is_user: true, mes: 'Question' }];
+        const session = { userName: 'Reader', directories: dirs, extensionSettings: {}, settings };
+        const context = createMacroContext(session, { name: 'Aria' }, [{ chat_metadata: {} }, ...history]);
+        const result = await assembleTextPrompt(context, {}, history, [], {});
+        expect(result.prompt).toContain(settings.power_user.instruct.input_sequence);
+        expect((await request('/instruct-mode', 'PUT', { expectedRevision: original.revision, enabled: false })).status).toBe(409);
+        expect((await request('/instruct-mode', 'PUT', { expectedRevision: enabled.body.revision, enabled: false })).status).toBe(200);
     });
     test('rejects malformed, credential-bearing and traversal imports before writing', async () => {
         for (const preset of [[], null, { temperature: 'bad' }, { apiKey: 'secret' }, { extensions: { secret: { value: 'secret' } } }, { custom_include_headers: { Authorization: 'hidden' } }, { prompts: [] }]) {

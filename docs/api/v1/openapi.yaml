@@ -283,6 +283,24 @@ paths:
       summary: Snapshot active settings with upstream preset field names and no credentials.
       responses:
         '200': { description: Active kind, name, revision and portable preset JSON. }
+  /api/v1/instruct-mode:
+    put:
+      operationId: setTextInstructEnabled
+      summary: Set text-completion Instruct formatting against the active settings revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, enabled]
+              properties:
+                expectedRevision: { type: string }
+                enabled: { type: boolean }
+      responses:
+        '200': { description: Updated active Instruct preset document. }
+        '400': { description: Invalid input. }
+        '409': { description: Active Instruct settings changed. }
   /api/v1/presets/{kind}/{name}:
     parameters:
       - { name: kind, in: path, required: true, schema: { type: string } }

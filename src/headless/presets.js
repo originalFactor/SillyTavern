@@ -98,6 +98,17 @@ export function activePreset(session, kind) {
     return { kind, name: selectedName(settings, kind), preset: clean, revision: activeRevision(settings, kind) };
 }
 
+/** Set the text-completion Instruct switch against the inspected active settings. */
+export function setInstructEnabled(session, body) {
+    if (typeof body?.enabled !== 'boolean') throw new ApiError(400, 'validation', 'Instruct enabled must be a boolean.');
+    const settings = readSettings(session.directories);
+    if (body.expectedRevision !== activeRevision(settings, 'instruct')) throw new ApiError(409, 'conflict', 'Instruct settings changed. Reload before saving.');
+    settings.power_user ??= {};
+    settings.power_user.instruct = { ...(settings.power_user.instruct ?? {}), enabled: body.enabled };
+    writeSettings(session.directories, settings);
+    return activePreset(session, 'instruct');
+}
+
 function removeCredentials(value) {
     if (Array.isArray(value)) return value.map(removeCredentials);
     if (!value || typeof value !== 'object') return publicConfiguration(value);
