@@ -11,7 +11,7 @@ import { activePreset, activatePreset, deletePreset, exportPreset, getPreset, li
 import { publicConfiguration } from '../headless/redaction.js';
 import { TEXT_COMPLETION_SOURCES } from '../headless/text-provider.js';
 import { readPromptManager, savePromptManager } from '../headless/prompt-manager.js';
-import { chatSampling, readChatSampling, saveChatSampling } from '../headless/chat-sampling.js';
+import { chatSampling, readChatSampling, saveChatSampling, readGroupSampling, saveGroupSampling } from '../headless/chat-sampling.js';
 import { deletePersona, listPersonas, savePersona, selectPersona } from '../headless/persona-management.js';
 import {
     assertChatIdle,
@@ -84,6 +84,7 @@ router.get('/capabilities', (_request, response) => {
             groupChatCreate: true,
             groupChatDelete: true,
             groupChatPreview: true,
+            groupChatSampling: true,
             groupChatSwipe: true,
             groupChatMessageDelete: true,
             groupChatMessageEdit: true,
@@ -447,6 +448,12 @@ router.post('/groups/:groupId/chats/:chatId/messages/edit', asyncHandler(async (
     response.json(await editGroupMessage(createSession(request), request.params.groupId, request.params.chatId, input.index, input.expectedMessage, input.text, validateNativeMacroContext(input.nativeContext)));
 }));
 
+router.get('/groups/:groupId/chats/:chatId/sampling', asyncHandler(async (request, response) => {
+    response.json(await readGroupSampling(createSession(request), request.params.groupId, request.params.chatId));
+}));
+router.put('/groups/:groupId/chats/:chatId/sampling', asyncHandler(async (request, response) => {
+    response.json(await saveGroupSampling(createSession(request), request.params.groupId, request.params.chatId, request.body));
+}));
 router.post('/groups/:groupId/chats/:chatId/preview', asyncHandler(async (request, response) => {
     const session = createSession(request);
     const input = validateGenerationInput({ ...requireObject(request.body, 'group preview input'), chatId: request.params.chatId });
@@ -465,7 +472,7 @@ router.post('/groups/:groupId/chats/:chatId/preview', asyncHandler(async (reques
     }
     if (input.type === 'regenerate') removeGroupGenerationBatch(chat);
     const built = await buildPrompt(session, character.data, chat, {
-        type: input.type === 'regenerate' ? 'normal' : input.type, input: input.type === 'regenerate' ? '' : input.input, overrides: input.overrides,
+        type: input.type === 'regenerate' ? 'normal' : input.type, input: input.type === 'regenerate' ? '' : input.input, overrides: { ...chatSampling(chat), ...input.overrides },
         characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext,
         groupContext: { group, characters, characterIndex }, preview: true,
         stageUserInput: input.type === 'normal' && Boolean(input.input),

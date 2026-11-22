@@ -230,5 +230,5 @@ Host-side tests do not prove execution of the arm64 Android Node binary.
 - Character-chat sampling is stored under `chat_metadata.messenger_sampling`.
   `chat-sampling.js` validates and revision-checks edits, fences active and
   unresolved generation, and preserves other metadata. Preview and generation
-  merge these values before explicit request overrides. Group support and native
-  editing are separate work.
+  merge these values before explicit request overrides. Group chats share their file-backed overrides across group references and use
+  the group generation fence. Native group editing remains separate work.

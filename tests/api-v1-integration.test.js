@@ -550,6 +550,13 @@ export async function afterGeneration(context) { return context.generation.type;
         });
         expect(recovered.status).toBe(201);
         const previewFile = path.join(directories.groupChats, 'contract-created-chat.jsonl');
+        const samplingUrl = `${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/sampling`;
+        const samplingInitial = await (await fetch(samplingUrl)).json();
+        const samplingBody = { expectedRevision: samplingInitial.revision, overrides: { temperature: 0.35, maxTokens: 48 } };
+        const samplingSaved = await fetch(samplingUrl, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(samplingBody) });
+        expect(samplingSaved.status).toBe(200);
+        const staleSampling = await fetch(samplingUrl, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(samplingBody) });
+        expect(staleSampling.status).toBe(409);
         const beforePreview = fs.readFileSync(previewFile);
         const providerCount = providerRequests.length;
         const preview = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
@@ -557,7 +564,9 @@ export async function afterGeneration(context) { return context.generation.type;
             body: JSON.stringify({ characterId: 'Aria', input: 'Hello group' }),
         });
         expect(preview.status).toBe(200);
-        expect((await preview.json()).messages.some(message => message.content.includes('Hello group'))).toBe(true);
+        const previewBody = await preview.json();
+        expect(previewBody.messages.some(message => message.content.includes('Hello group'))).toBe(true);
+        expect(previewBody.providerRequest).toMatchObject({ temperature: 0.35, max_tokens: 48 });
         expect(providerRequests).toHaveLength(providerCount);
         expect(fs.readFileSync(previewFile)).toEqual(beforePreview);
         const originalSettings = readSettings(directories);

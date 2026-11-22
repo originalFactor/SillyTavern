@@ -1,3 +1,4 @@
+import { chatSampling } from './chat-sampling.js';
 import { ApiError } from './contract.js';
 import { removeGroupGenerationBatch, selectGroupMembers } from './group-activation.js';
 import { loadGroupCharacters, resolveGroupChat } from './group-management.js';
@@ -69,7 +70,7 @@ export async function runGroupGeneration(request, session, record, input) {
                 const groupContext = { group, characters, characterIndex };
                 stage(record, 'prompt');
                 let built = await buildPrompt(session, character.data, chat, {
-                    type: generationType, input: type === 'regenerate' ? '' : input.input, overrides: input.overrides ?? {},
+                    type: generationType, input: type === 'regenerate' ? '' : input.input, overrides: { ...chatSampling(chat), ...(input.overrides ?? {}) },
                     characterId, chatId: input.chatId, nativeContext: input.nativeContext,
                     groupContext,
                     stageUserInput: type === 'normal' && Boolean(input.input) && record.groupProgress.completed.length === 0,

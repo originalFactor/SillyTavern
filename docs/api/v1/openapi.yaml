@@ -210,6 +210,35 @@ paths:
           description: Variables or engine changed; explicitly reload before another save.
         '422':
           description: Stored state is invalid or the variable document exceeds its limit.
+  /api/v1/groups/{groupId}/chats/{chatId}/sampling:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getGroupChatSampling
+      summary: Read group chat sampling overrides and revision.
+      responses:
+        '200': { description: Overrides and revision. }
+        '404': { description: Group or chat not found. }
+    put:
+      operationId: saveGroupChatSampling
+      summary: Replace group chat sampling overrides with revision checking.
+      description: Shared chat references use the same settings and active or unresolved generation fence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, overrides]
+              properties:
+                expectedRevision: { type: string }
+                overrides: { type: object }
+      responses:
+        '200': { description: Saved overrides and revision. }
+        '400': { description: Invalid request. }
+        '409': { description: Revision conflict or generation blocks editing. }
+        '422': { description: Invalid stored chat. }
   /api/v1/chats/{chatId}/sampling:
     parameters:
       - { name: chatId, in: path, required: true, schema: { type: string } }

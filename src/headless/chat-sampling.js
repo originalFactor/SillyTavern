@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { ApiError, requireObject } from './contract.js';
 import { assertChatIdle } from './generation-store.js';
 import { localChat } from './macro-management.js';
+import { resolveGroupChat } from './group-management.js';
 import { writeChat } from './session.js';
 
 const FIELD = 'messenger_sampling';
@@ -40,6 +41,23 @@ export function saveChatSampling(session, characterId, chatId, body) {
     assertChatIdle(session.handle, characterId, chatId, session.directories);
     const { file, chat } = localChat(session, characterId, chatId);
     requireObject(body, 'chat sampling edit');
+    if (Object.keys(body).some(key => !['expectedRevision', 'overrides'].includes(key))) throw new ApiError(400, 'validation', 'Unknown chat sampling field.');
+    if (body.expectedRevision !== document(chat[0].chat_metadata?.[FIELD]).revision) throw new ApiError(409, 'conflict', 'Chat sampling changed. Reload before saving.');
+    const overrides = validate(body.overrides);
+    chat[0].chat_metadata = { ...(chat[0].chat_metadata ?? {}), [FIELD]: overrides };
+    writeChat(file, chat);
+    return document(overrides);
+}
+
+export async function readGroupSampling(session, groupId, chatId) {
+    const { chat } = await resolveGroupChat(session, groupId, chatId);
+    return document(chat[0].chat_metadata?.[FIELD]);
+}
+
+export async function saveGroupSampling(session, groupId, chatId, body) {
+    const { file, chat } = await resolveGroupChat(session, groupId, chatId);
+    assertChatIdle(session.handle, groupId, chatId, session.directories, 'group');
+    requireObject(body, 'group sampling edit');
     if (Object.keys(body).some(key => !['expectedRevision', 'overrides'].includes(key))) throw new ApiError(400, 'validation', 'Unknown chat sampling field.');
     if (body.expectedRevision !== document(chat[0].chat_metadata?.[FIELD]).revision) throw new ApiError(409, 'conflict', 'Chat sampling changed. Reload before saving.');
     const overrides = validate(body.overrides);

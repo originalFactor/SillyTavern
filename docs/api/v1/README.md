@@ -736,4 +736,4 @@ capabilities remain false.
 `/chats/{chatId}/sampling?characterId=...`. Overrides are stored in the ST chat
 metadata and merged into preview and generation. Explicit request overrides take
 precedence. Active and unresolved generations prevent edits. This endpoint
-currently covers character chats.
+also supports group chats through `/groups/{groupId}/chats/{chatId}/sampling`, advertised by `resources.groupChatSampling`. Shared group chat files share the same overrides.
