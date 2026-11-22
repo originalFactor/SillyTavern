@@ -1,9 +1,9 @@
 import yaml from 'yaml';
 
 import { createSession } from './session.js';
-import { redactProviderText } from './redaction.js';
+import { publicConfiguration, redactProviderText } from './redaction.js';
 import { ApiError } from './contract.js';
-import { appendToken, isTerminal, markProviderDispatched, setUsage } from './generation-store.js';
+import { appendToken, isTerminal, markProviderDispatched, setToolCalls, setUsage } from './generation-store.js';
 import { textProviderConnection, textProviderBody, TEXT_COMPLETION_SOURCES } from './text-provider.js';
 
 // Credentials are deliberately outside the serializable session, prompt and
@@ -143,7 +143,16 @@ export async function runChatCompletion(originalRequest, providerRequest, record
         }
         stream.push(decoder.decode(), true);
         if (!stream.completed) throw new ApiError(502, 'unknown', 'Provider stream ended without a completion marker. Partial text was not saved; the generation may have been billed.');
-        if (stream.validatedToolCalls().length) throw new ApiError(422, 'unsupported', 'Provider requested tool execution, but the native tool authorization lifecycle is not configured.');
+        const toolCalls = stream.validatedToolCalls();
+        if (toolCalls.length) {
+            const redacted = toolCalls.map(call => ({
+                id: redactProviderText(call.id, secrets),
+                name: redactProviderText(call.function.name, secrets),
+                arguments: redactProviderText(JSON.stringify(publicConfiguration(JSON.parse(call.function.arguments))), secrets),
+            }));
+            setToolCalls(record, redacted);
+            throw new ApiError(422, 'unsupported', 'Provider requested tool execution, but the native tool authorization lifecycle is not configured.');
+        }
         if (!stream.text) throw new ApiError(502, 'provider', 'Provider completed without text. The request may have been billed.');
         return { text: stream.text, reasoning: stream.reasoning, usage: stream.usage, tokenBudget };
     } catch (error) {

@@ -130,7 +130,7 @@ export function persistGeneration(directories, record) {
         'requestId', 'userKey', 'clientRequestId', 'characterId', 'chatId', 'type', 'targetKind',
         'fingerprint', 'status', 'seq', 'text', 'reasoning', 'error', 'committed',
         'cancelOutcome', 'cancelRequested', 'providerDispatched', 'drained',
-        'acknowledged', 'usage', 'usageByCall', 'providerCallCount', 'groupProgress', 'pluginEvents', 'createdAt', 'finishedAt', 'snapshot',
+        'acknowledged', 'usage', 'usageByCall', 'providerCallCount', 'groupProgress', 'pluginEvents', 'toolCalls', 'createdAt', 'finishedAt', 'snapshot',
     ].map(key => [key, record[key] ?? null]));
     writeJournal(directories, body);
     record.lastPersistedAt = Date.now();
@@ -427,6 +427,12 @@ export function setUsage(record, usage) {
     }
 }
 
+/** Save the credential-redacted proposal before reporting unsupported execution. */
+export function setToolCalls(record, calls) {
+    record.toolCalls = calls;
+    persistGenerationIfPossible(record);
+}
+
 /**
  * Emits a generation event to the snapshot and live subscribers.
  * @param {GenerationRecord} record Generation record
@@ -630,6 +636,7 @@ export function snapshot(record) {
         providerDispatched: record.providerDispatched === true,
         cancelOutcome: record.cancelOutcome,
         usage: record.usage ?? null,
+        toolCalls: record.toolCalls ?? [],
         usageByCall: record.targetKind === 'group' ? record.usageByCall ?? [] : undefined,
         groupProgress: record.targetKind === 'group' ? record.groupProgress ?? null : undefined,
         warnings: record.snapshot?.warnings ?? null,

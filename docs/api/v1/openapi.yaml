@@ -1489,6 +1489,15 @@ components:
             providerDispatched: { type: boolean }
             restored: { type: boolean }
             usage: { type: [object, 'null'], additionalProperties: true }
+            toolCalls:
+              type: array
+              description: Redacted, observational tool proposals. These values do not authorize execution.
+              items:
+                type: object
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  arguments: { type: string }
             usageByCall:
               type: array
               items: { type: [object, 'null'], additionalProperties: true }

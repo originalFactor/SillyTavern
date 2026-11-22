@@ -201,6 +201,22 @@ describe('non-replaying bounded provider dispatch', () => {
         expect(record.committed).toBe(false);
         expect(calls).toBe(1);
     });
+    test('retains a redacted tool proposal across journal recovery', async () => {
+        record = createGeneration({ handle: 'provider-test', clientRequestId: 'tool-proposal', characterId: 'a', chatId: 'tool-chat', type: 'normal', directories: { root } }).record;
+        const argumentsJson = JSON.stringify({ query: 'stars', api_key: secret, nested: { password: 'private-password' }, echoed: capability });
+        route = (_req, res) => res.type('text/event-stream').end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'lookup', arguments: argumentsJson } }] }, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`);
+        await expect(request()).rejects.toMatchObject({ code: 'unsupported' });
+        const requestId = record.requestId;
+        clearGenerations();
+        const restored = snapshot(getGeneration(requestId, 'provider-test', { root }));
+        expect(restored.toolCalls).toHaveLength(1);
+        expect(restored.toolCalls[0]).toMatchObject({ id: 'call_1', name: 'lookup' });
+        expect(restored.toolCalls[0].arguments).toContain('stars');
+        expect(JSON.stringify(restored)).not.toContain(secret);
+        expect(JSON.stringify(restored)).not.toContain(capability);
+        expect(JSON.stringify(restored)).not.toContain('private-password');
+        expect(calls).toBe(1);
+    });
     test('interrupted and malformed tool calls remain unknown without dispatching again', async () => {
         route = (_req, res) => res.type('text/event-stream').end('data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"lookup","arguments":"{"}}]}}]}\n\n');
         await expect(request()).rejects.toMatchObject({ code: 'unknown', retryable: false });

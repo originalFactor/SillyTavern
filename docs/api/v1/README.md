@@ -330,6 +330,11 @@ replay. Unsupported tool calls fail visibly without execution. Usage contains
 only numeric metadata. Settings and preview responses hide credential fields
 (including custom headers) while stored values stay unchanged.
 
+Completed unsupported tool proposals are retained in generation snapshots as
+`toolCalls`, with credential fields and known secrets redacted. These values are
+for observation and cannot authorize or execute a tool. Interrupted or invalid
+tool streams retain their unknown outcome.
+
 ### Named preset storage and selection
 
 `GET /presets/{kind}` lists built-in and user presets with individual file
