@@ -560,6 +560,22 @@ export async function afterGeneration(context) { return context.generation.type;
         expect((await preview.json()).messages.some(message => message.content.includes('Hello group'))).toBe(true);
         expect(providerRequests).toHaveLength(providerCount);
         expect(fs.readFileSync(previewFile)).toEqual(beforePreview);
+        const originalSettings = readSettings(directories);
+        try {
+            const settings = structuredClone(originalSettings);
+            settings.oai_settings.prompts.find(prompt => prompt.identifier === 'main').content = '{{input}}/{{lastGenerationType}}/{{isMobile}}/{{incvar::previewOnly}}';
+            writeSettings(directories, settings);
+            const contextPreview = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ characterId: 'Aria', nativeContext: { input: 'Group draft', lastGenerationType: 'continue', isMobile: true, locale: 'en-US', timeZone: 'UTC' } }),
+            });
+            expect(contextPreview.status).toBe(200);
+            const contextResult = await contextPreview.json();
+            expect(contextResult.messages.some(message => message.content === 'Group draft/continue/true/1')).toBe(true);
+            expect(contextResult.warnings.macroStateChanges).toEqual({ local: true, global: false });
+            expect(fs.readFileSync(previewFile)).toEqual(beforePreview);
+            expect(providerRequests).toHaveLength(providerCount);
+        } finally { writeSettings(directories, originalSettings); }
         const unknownMember = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ characterId: 'Unknown' }),
         });
