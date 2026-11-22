@@ -263,11 +263,28 @@ export async function readGroupChat(session, groupId, chatId, paging = {}) {
     return { groupId: item.id, chatId, ...pageChat(parseGroupChat(file), paging) };
 }
 
-function messageCharacter(characters, message) {
+async function messageCharacter(session, characters, message, historicalCards = new Map()) {
     let characterIndex = characters.findIndex(character => character.avatar === message.original_avatar);
     if (characterIndex < 0 && !message.is_user && !message.original_avatar) characterIndex = characters.findIndex(character => character.name === message.name);
     if (characterIndex < 0 && message.is_user && characters.length) characterIndex = 0;
     if (characterIndex >= 0) return { character: characters[characterIndex], characterIndex, messageCharacters: characters, missingSpeaker: false };
+    if (!message.is_user && typeof message.original_avatar === 'string' && message.original_avatar.endsWith('.png')) {
+        const avatar = message.original_avatar;
+        const id = avatar.slice(0, -4);
+        let safeId = false;
+        try { requireSafeId(id, 'characterId'); safeId = true; } catch { /* Historical avatars may not be character identifiers. */ }
+        if (safeId && !historicalCards.has(avatar)) {
+            try {
+                const card = await readCharacter(session, id);
+                historicalCards.set(avatar, { ...card.data, name: card.name, avatar: card.avatar, data: card.data });
+            } catch (error) {
+                if (!(error instanceof ApiError && error.status === 404)) throw error;
+                historicalCards.set(avatar, null);
+            }
+        }
+        const character = historicalCards.get(avatar);
+        if (character) return { character, characterIndex: characters.length, messageCharacters: [...characters, character], missingSpeaker: false };
+    }
     const name = typeof message.name === 'string' ? message.name : 'Character';
     const avatar = typeof message.original_avatar === 'string' ? message.original_avatar : '';
     const character = { name, avatar, data: { name } };
@@ -285,9 +302,10 @@ export async function renderGroupChat(session, groupId, chatId, options = {}) {
     const page = pageChat(original, options);
     const characters = await loadGroupCharacters(session, item.group);
     const views = [], warnings = [];
+    const historicalCards = new Map();
     for (const message of page.messages) {
         if (typeof message.mes !== 'string') continue;
-        const { character, characterIndex, messageCharacters, missingSpeaker } = messageCharacter(characters, message);
+        const { character, characterIndex, messageCharacters, missingSpeaker } = await messageCharacter(session, characters, message, historicalCards);
         if (missingSpeaker) warnings.push('The message character is unavailable; character-scoped display rules cannot be applied.');
         const result = await runNativeText(session, character.data, chat, {
             mode: 'display', characterId: character.avatar.endsWith('.png') ? character.avatar.slice(0, -4) : '', chatId: id,
@@ -357,7 +375,7 @@ export async function editGroupMessage(session, groupId, chatId, index, expected
     delete expected.index;
     if (!isDeepStrictEqual(entry, expected)) throw new ApiError(409, 'conflict', 'Message changed. Reload before editing.');
     const characters = await loadGroupCharacters(session, item.group);
-    const { character, characterIndex, messageCharacters, missingSpeaker } = messageCharacter(characters, entry);
+    const { character, characterIndex, messageCharacters, missingSpeaker } = await messageCharacter(session, characters, entry);
     const headerless = !original.length || !Object.hasOwn(original[0], 'chat_metadata');
     const chat = headerless ? [{ chat_metadata: {} }, ...structuredClone(original)] : structuredClone(original);
     const messageIndex = index + (headerless ? 1 : 0);

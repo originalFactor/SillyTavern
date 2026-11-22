@@ -78,7 +78,7 @@ describe('source regex across storage, prompt, editing and read-only display', (
     });
     test('group display uses each member scoped rules and handles a group without available members', async () => {
         const png = fs.readFileSync(path.join(serverDirectory, 'default/content/default_Seraphina.png'));
-        fs.writeFileSync(path.join(directories.characters, 'Second.png'), writeCard(png, JSON.stringify({ name: 'Second', extensions: { regex_scripts: [{ ...script(2, '/raw/g', 'second', { markdownOnly: true }), placement: ['2'] }] } }), { preserveSpec: true }));
+        fs.writeFileSync(path.join(directories.characters, 'Second.png'), writeCard(png, JSON.stringify({ name: 'Second', extensions: { regex_scripts: [{ ...script(2, '/raw/g', 'second', { markdownOnly: true }), placement: ['2'] }, script(2, '/editable/g', 'scoped-edit', { runOnEdit: true })] } }), { preserveSpec: true }));
         configure([], { character_allowed_regex: ['Second.png'] });
         const groupFile = path.join(directories.groups, 'Members.json');
         fs.writeFileSync(groupFile, JSON.stringify({ name: 'Members', members: ['Aria.png', 'Second.png'], disabled_members: [], chats: ['MemberChat'], chat_id: 'MemberChat' }));
@@ -87,6 +87,14 @@ describe('source regex across storage, prompt, editing and read-only display', (
         const result = await req('/groups/Members/chats/MemberChat/render', 'POST', {});
         expect(result.status).toBe(200);
         expect(result.value.views[0].display).toBe('second');
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Members', members: ['Aria.png'], disabled_members: [], chats: ['MemberChat'], chat_id: 'MemberChat' }));
+        const formerMember = await req('/groups/Members/chats/MemberChat/render', 'POST', {});
+        expect(formerMember.status).toBe(200);
+        expect(formerMember.value.views[0].display).toBe('second');
+        expect(formerMember.value.warnings).toEqual([]);
+        const edit = await req('/groups/Members/chats/MemberChat/messages/edit', 'POST', { index: 0, expectedMessage: formerMember.value.messages[0], text: 'editable' });
+        expect(edit.status).toBe(200);
+        expect(JSON.parse(fs.readFileSync(chatFile, 'utf8')).mes).toBe('scoped-edit');
         fs.writeFileSync(groupFile, JSON.stringify({ name: 'Members', members: ['Unavailable.png'], disabled_members: [], chats: ['MemberChat'], chat_id: 'MemberChat' }));
         fs.writeFileSync(chatFile, JSON.stringify({ name: 'Reader', mes: 'raw', is_user: true }));
         const userOnly = await req('/groups/Members/chats/MemberChat/render', 'POST', {});
