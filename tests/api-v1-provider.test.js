@@ -161,6 +161,17 @@ describe('non-replaying bounded provider dispatch', () => {
         route = (_req, res) => { res.type('text/event-stream'); res.end('data: ' + 'x'.repeat(1_048_577)); };
         await expect(request()).rejects.toMatchObject({ code: 'unknown' });
     });
+    test('retains partial text and usage when a streamed tool call is unsupported', async () => {
+        route = (_req, res) => {
+            res.type('text/event-stream');
+            res.end('data: {"choices":[{"index":0,"delta":{"content":"Before tool"}}],"usage":{"prompt_tokens":4}}\n\ndata: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"untrusted"}}]}}]}\n\ndata: [DONE]\n\n');
+        };
+        await expect(request()).rejects.toMatchObject({ code: 'unsupported', retryable: false });
+        expect(record.text).toBe('Before tool');
+        expect(record.usage.promptTokens).toBe(4);
+        expect(record.committed).toBe(false);
+        expect(calls).toBe(1);
+    });
     test('unsupported tool calls fail visibly without executing anything', async () => {
         route = (_req, res) => { res.type('text/event-stream'); res.end('data: {"choices":[{"delta":{"tool_calls":[{"function":{"name":"untrusted"}}]}}]}\n\ndata: [DONE]\n\n'); };
         await expect(request()).rejects.toMatchObject({ code: 'unsupported' });
