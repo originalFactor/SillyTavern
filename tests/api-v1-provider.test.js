@@ -172,6 +172,18 @@ describe('non-replaying bounded provider dispatch', () => {
         expect(record.committed).toBe(false);
         expect(calls).toBe(1);
     });
+    test('retains text and reasoning that share a streamed tool-call frame', async () => {
+        route = (_req, res) => {
+            res.type('text/event-stream');
+            res.end('data: {"choices":[{"index":0,"delta":{"content":"Same frame","reasoning_content":"Thinking","tool_calls":[{"index":0,"function":{"name":"untrusted"}}]}}],"usage":{"prompt_tokens":4}}\n\ndata: [DONE]\n\n');
+        };
+        await expect(request()).rejects.toMatchObject({ code: 'unsupported', retryable: false });
+        expect(record.text).toBe('Same frame');
+        expect(record.reasoning).toBe('Thinking');
+        expect(record.usage.promptTokens).toBe(4);
+        expect(record.committed).toBe(false);
+        expect(calls).toBe(1);
+    });
     test('unsupported tool calls fail visibly without executing anything', async () => {
         route = (_req, res) => { res.type('text/event-stream'); res.end('data: {"choices":[{"delta":{"tool_calls":[{"function":{"name":"untrusted"}}]}}]}\n\ndata: [DONE]\n\n'); };
         await expect(request()).rejects.toMatchObject({ code: 'unsupported' });

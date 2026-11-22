@@ -197,11 +197,6 @@ export class ProviderSseDecoder {
             const choice = json.choices?.find?.(item => item.index === 0) ?? json.choices?.[0];
             if (!choice) continue;
             const delta = choice.delta ?? choice.message ?? choice;
-            if (delta.tool_calls?.length || delta.function_call || choice.finish_reason === 'tool_calls' || choice.finish_reason === 'function_call') throw new ApiError(422, 'unsupported', 'Provider requested tool execution, but the native tool authorization lifecycle is not configured.');
-            if (choice.finish_reason) {
-                if (!['stop', 'length', 'content_filter'].includes(choice.finish_reason)) throw new ApiError(502, 'unknown', 'Provider returned an unrecognized completion reason.');
-                this.completed = true;
-            }
             const content = extractText(delta.content ?? choice.text);
             const reasoning = extractText(delta.reasoning_content ?? delta.reasoning ?? choice.reasoning);
             this.outputBytes += Buffer.byteLength(content) + Buffer.byteLength(reasoning);
@@ -210,6 +205,11 @@ export class ProviderSseDecoder {
             this.text += content;
             appendToken(this.record, reasoning, true);
             appendToken(this.record, content);
+            if (delta.tool_calls?.length || delta.function_call || choice.finish_reason === 'tool_calls' || choice.finish_reason === 'function_call') throw new ApiError(422, 'unsupported', 'Provider requested tool execution, but the native tool authorization lifecycle is not configured.');
+            if (choice.finish_reason) {
+                if (!['stop', 'length', 'content_filter'].includes(choice.finish_reason)) throw new ApiError(502, 'unknown', 'Provider returned an unrecognized completion reason.');
+                this.completed = true;
+            }
         }
     }
 }
