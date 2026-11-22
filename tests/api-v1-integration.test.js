@@ -1016,6 +1016,10 @@ export async function afterGeneration(context) { return context.generation.type;
             expect(generation.status).toBe(202);
             expect((await waitForGeneration((await generation.json()).requestId)).status).toBe('done');
             expect(providerRequests[start]).toMatchObject({ temperature: 0.25, max_tokens: 50 });
+            const overridden = await fetch(`${baseUrl}/api/v1/generations`, { method: 'POST', headers, body: JSON.stringify({ ...input, clientRequestId: 'sampling-override-check', overrides: { temperature: 0.6 } }) });
+            expect(overridden.status).toBe(202);
+            expect((await waitForGeneration((await overridden.json()).requestId)).status).toBe('done');
+            expect(providerRequests[start + 1]).toMatchObject({ temperature: 0.6, max_tokens: 50 });
             const header = JSON.parse(fs.readFileSync(file, 'utf8').split('\n')[0]);
             expect(header.chat_metadata.unrelated).toBe('kept');
         } finally { fs.rmSync(file, { force: true }); }
