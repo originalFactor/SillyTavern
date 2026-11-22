@@ -479,6 +479,33 @@ export async function afterGeneration(context) { return context.generation.type;
         fs.unlinkSync(path.join(directories.groups, 'runtime-group.json'));
         fs.unlinkSync(chatFile);
     });
+    test('legacy group sampling survives generation and preserves original messages', async () => {
+        const groupFile = path.join(directories.groups, 'legacy-sampling.json');
+        const chatFile = path.join(directories.groupChats, 'legacy-sampling-chat.jsonl');
+        const greeting = { name: 'Aria', original_avatar: 'Aria.png', is_user: false, mes: 'Legacy greeting' };
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Legacy', members: ['Aria.png'], disabled_members: [], activation_strategy: 1, chats: ['legacy-sampling-chat'], chat_id: 'legacy-sampling-chat' }));
+        fs.writeFileSync(chatFile, JSON.stringify(greeting));
+        const url = `${baseUrl}/api/v1/groups/legacy-sampling/chats/legacy-sampling-chat/sampling`;
+        try {
+            const initial = await (await fetch(url)).json();
+            const saved = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedRevision: initial.revision, overrides: { temperature: 0.45 } }) });
+            expect(saved.status).toBe(200);
+            const start = providerRequests.length;
+            const generation = await fetch(`${baseUrl}/api/v1/groups/legacy-sampling/chats/legacy-sampling-chat/generations`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientRequestId: 'legacy-sampling-turn', input: 'Hello' }),
+            });
+            expect(generation.status).toBe(202);
+            expect((await waitForGeneration((await generation.json()).requestId)).status).toBe('done');
+            expect(providerRequests[start].temperature).toBe(0.45);
+            const rows = fs.readFileSync(chatFile, 'utf8').split('\n').map(JSON.parse);
+            expect(rows[0].chat_metadata.messenger_sampling).toEqual({ temperature: 0.45 });
+            expect(rows[1]).toEqual(greeting);
+            expect(rows.slice(2).map(row => row.mes)).toEqual(['Hello', 'Mock reply']);
+        } finally {
+            fs.rmSync(groupFile, { force: true });
+            fs.rmSync(chatFile, { force: true });
+        }
+    });
     test('loads group member cards while skipping missing members', async () => {
         const session = { directories };
         const members = await loadGroupCharacters(session, { members: ['Aria.png'] });
