@@ -3,7 +3,7 @@ import yaml from 'yaml';
 import { createSession } from './session.js';
 import { publicConfiguration, redactProviderText } from './redaction.js';
 import { ApiError } from './contract.js';
-import { appendToken, isTerminal, markProviderDispatched, setToolCalls, setUsage } from './generation-store.js';
+import { appendToken, isTerminal, markProviderDispatched, setToolCalls, setUsage, shouldStopGeneration } from './generation-store.js';
 import { textProviderConnection, textProviderBody, TEXT_COMPLETION_SOURCES } from './text-provider.js';
 
 // Credentials are deliberately outside the serializable session, prompt and
@@ -140,8 +140,10 @@ export async function runChatCompletion(originalRequest, providerRequest, record
                 throw new ApiError(502, 'unknown', 'Provider stream exceeded its size limit; the generation outcome is unknown.');
             }
             stream.push(decoder.decode(chunk, { stream: true }));
+            if (shouldStopGeneration(record)) return { text: stream.text, reasoning: stream.reasoning, usage: stream.usage };
         }
         stream.push(decoder.decode(), true);
+        if (shouldStopGeneration(record)) return { text: stream.text, reasoning: stream.reasoning, usage: stream.usage };
         if (!stream.completed) throw new ApiError(502, 'unknown', 'Provider stream ended without a completion marker. Partial text was not saved; the generation may have been billed.');
         if (stream.toolCalls.length && stream.finishReason && stream.finishReason !== 'tool_calls') throw new ApiError(502, 'unknown', 'Provider did not finish its tool calls; the generation outcome is unknown.');
         const toolCalls = stream.validatedToolCalls();
@@ -214,6 +216,7 @@ export class ProviderSseDecoder {
         if (flush && this.buffer.trim()) { events.push(this.buffer); this.buffer = ''; }
         if (this.buffer.length > 1_048_576 || events.some(event => event.length > 1_048_576)) throw new ApiError(502, 'unknown', 'Provider SSE event exceeded its size limit; the generation outcome is unknown.');
         for (const event of events) {
+            if (shouldStopGeneration(this.record)) return;
             const data = event.split(/\r\n|\r|\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
             if (!data) continue;
             if (data === '[DONE]') { this.completed = true; this.done = true; continue; }
@@ -244,7 +247,9 @@ export class ProviderSseDecoder {
             this.reasoning += reasoning;
             this.text += content;
             appendToken(this.record, reasoning, true);
+            if (shouldStopGeneration(this.record)) return;
             appendToken(this.record, content);
+            if (shouldStopGeneration(this.record)) return;
             if (delta.function_call || choice.finish_reason === 'function_call') throw new ApiError(422, 'unsupported', 'Provider requested legacy function execution, but the native tool authorization lifecycle is not configured.');
             if (delta.tool_calls !== undefined && delta.tool_calls !== null) {
                 if (!Array.isArray(delta.tool_calls)) throw new ApiError(502, 'unknown', 'Provider returned malformed tool calls; the generation outcome is unknown.');

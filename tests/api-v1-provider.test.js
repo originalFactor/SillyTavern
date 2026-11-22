@@ -4,7 +4,7 @@ import path from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, test } from '@jest/globals';
 import { runChatCompletion, ProviderSseDecoder, prepareProviderSession, runSessionChatCompletion } from '../src/headless/provider.js';
-import { clearGenerations, createGeneration, getGeneration, persistGeneration, snapshot } from '../src/headless/generation-store.js';
+import { cancel, clearGenerations, createGeneration, getGeneration, persistGeneration, snapshot } from '../src/headless/generation-store.js';
 import { writeSettings } from '../src/headless/session.js';
 import { publicConfiguration } from '../src/headless/redaction.js';
 import { setConfigFilePath } from '../src/util.js';
@@ -255,6 +255,16 @@ describe('non-replaying bounded provider dispatch', () => {
         expect(record.text).toBe('Partial');
         expect(snapshot(record).toolCalls).toEqual([]);
         expect(calls).toBe(1);
+    });
+    test('cancellation during a token callback stops subsequent tool frames in the same chunk', () => {
+        record.workerActive = true;
+        record.subscribers.add({ writableEnded: false, write() { cancel(record); }, end() { this.writableEnded = true; } });
+        const decoder = new ProviderSseDecoder(record);
+        const event = JSON.stringify({ choices: [{ index: 0, delta: { content: 'Partial', tool_calls: [{ index: 0, id: 'call_1', function: { name: 'lookup', arguments: '{}' } }] } }] });
+        decoder.push(`data: ${event}\n\ndata: [DONE]\n\n`);
+        expect(record.cancelRequested).toBe(true);
+        expect(decoder.toolCalls).toEqual([]);
+        expect(snapshot(record).toolCalls).toEqual([]);
     });
 });
 
