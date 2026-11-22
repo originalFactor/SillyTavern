@@ -29,7 +29,8 @@ from the companion entry point.
   private browser routes in companion mode.
 - `src/headless/character-management.js` owns bounded V1/V2/V3 JSON/PNG/APNG card
   CRUD/import/export. Preserve opaque fields and the supplied card schema;
-  replacements/deletion require the inspected PNG digest. Active generation
+  replacements/deletion require the inspected PNG digest. Avatar replacement
+  preserves card metadata and checks the same digest. Active generation
   admissions fence card mutation. Associated chat deletion needs an explicit
   flag. CHARX/WebP and auxiliary asset transfer remain incomplete.
 - `src/headless/persona-management.js` uses standard ST persona settings and a

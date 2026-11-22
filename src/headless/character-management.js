@@ -81,6 +81,13 @@ export async function saveCharacter(session, { characterId, card, expectedRevisi
     return { id, avatar: `${id}.png`, name: data.name, data, raw: validated, revision: crypto.createHash('sha256').update(bytes).digest('hex') };
 }
 
+/** Replace a character image while retaining the inspected card and revision fence. */
+export async function replaceCharacterAvatar(session, characterId, expectedRevision, dataBase64) {
+    const image = decode(dataBase64, MAX_IMAGE_BYTES);
+    const character = await readCharacter(session, characterId);
+    return saveCharacter(session, { characterId, card: character.raw, expectedRevision, image, create: false });
+}
+
 /**
  * Imports JSON or a PNG/APNG carrying character metadata. No scripts are executed.
  * @param {import('./session.js').HeadlessSession} session Session

@@ -81,6 +81,19 @@ describe('native character management', () => {
         expect((await request('/characters', 'POST', { characterId: '导入角色', card })).status).toBe(409);
     });
 
+    test('avatar replacement preserves the card and rejects stale or invalid writes', async () => {
+        const created = await create('avatar-edit');
+        const image = fs.readFileSync(path.join(serverDirectory, 'public', 'img', 'user-default.png')).toString('base64');
+        const endpoint = '/characters/avatar-edit/avatar';
+        const updated = await request(endpoint, 'PUT', { expectedRevision: created.revision, dataBase64: image });
+        expect(updated.status).toBe(200);
+        expect(updated.body.raw).toEqual(card);
+        expect(updated.body.revision).not.toBe(created.revision);
+        expect((await request(endpoint, 'PUT', { expectedRevision: created.revision, dataBase64: image })).status).toBe(409);
+        expect((await request(endpoint, 'PUT', { expectedRevision: updated.body.revision, dataBase64: Buffer.from('invalid').toString('base64') })).status).toBe(422);
+        expect((await request('/characters/avatar-edit')).body).toMatchObject({ revision: updated.body.revision, raw: card });
+    });
+
     test('malformed and unsupported imports do not publish a character', async () => {
         for (const body of [
             { characterId: 'invalid', format: 'png', dataBase64: Buffer.from('not png').toString('base64') },
@@ -115,6 +128,8 @@ describe('native character management', () => {
         const { record } = createGeneration({ handle: 'management-user', clientRequestId: 'active-card', characterId: 'active', chatId: 'new', type: 'normal', directories });
         try {
             expect((await request('/characters/active', 'PUT', { expectedRevision: c.revision, card })).status).toBe(409);
+            const image = fs.readFileSync(path.join(serverDirectory, 'public', 'img', 'user-default.png')).toString('base64');
+            expect((await request('/characters/active/avatar', 'PUT', { expectedRevision: c.revision, dataBase64: image })).status).toBe(409);
             expect((await request(`/characters/active?deleteChats=true&expectedRevision=${c.revision}`, 'DELETE')).status).toBe(409);
         } finally { cancel(record, 'requested'); }
     });

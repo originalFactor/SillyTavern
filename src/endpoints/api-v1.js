@@ -5,7 +5,7 @@ import path from 'node:path';
 import express from 'express';
 
 import { API_V1_VERSION, ApiError, asyncHandler, ensureRequestId, requireObject, requireSafeId, sendApiError } from '../headless/contract.js';
-import { deleteCharacter, exportCharacter, importCharacter, saveCharacter } from '../headless/character-management.js';
+import { deleteCharacter, exportCharacter, importCharacter, replaceCharacterAvatar, saveCharacter } from '../headless/character-management.js';
 import { createGroupChat, deleteGroup, deleteGroupChat, deleteGroupMessage, editGroupMessage, getGroup, listGroupChats, listGroups, loadGroupCharacters, readGroupChat, resolveGroupChat, saveGroup, selectGroupSwipe } from '../headless/group-management.js';
 import { activePreset, activatePreset, deletePreset, exportPreset, getPreset, listPresets, savePreset } from '../headless/presets.js';
 import { publicConfiguration } from '../headless/redaction.js';
@@ -90,6 +90,7 @@ router.get('/capabilities', (_request, response) => {
             characterDelete: true,
             characterImport: true,
             characterExport: true,
+            characterAvatar: true,
             personas: true,
             promptManager: true,
             presets: true,
@@ -497,6 +498,11 @@ router.put('/characters/:characterId', asyncHandler(async (request, response) =>
         characterId: request.params.characterId, card: input.card,
         expectedRevision: input.expectedRevision, create: false,
     }));
+}));
+
+router.put('/characters/:characterId/avatar', asyncHandler(async (request, response) => {
+    const input = requireObject(request.body, 'character avatar input');
+    response.json(await replaceCharacterAvatar(createSession(request), request.params.characterId, input.expectedRevision, input.dataBase64));
 }));
 
 router.get('/characters/:characterId/export', asyncHandler(async (request, response) => {

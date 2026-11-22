@@ -79,7 +79,10 @@ and canonical `dataBase64` file bytes. JSON is limited to 1 MiB and PNG/APNG to
 lorebooks survive editing and export. `GET /characters/{id}` returns `raw`,
 normalized `data`, and a SHA-256 `revision` of the PNG. `PUT /characters/{id}`
 requires the inspected `expectedRevision`; it preserves the existing image and
-rejects stale writes with 409. `GET /characters/{id}/export?format=json|png`
+rejects stale writes with 409. `PUT /characters/{id}/avatar` accepts a canonical
+base64 PNG/APNG and the inspected revision, retaining the existing card metadata.
+It is advertised by `characterAvatar` and rejects stale or active characters.
+`GET /characters/{id}/export?format=json|png`
 returns `{fileName,mimeType,dataBase64}` for a native save picker. Deletion
 requires the revision and, when chats exist, explicit `deleteChats=true`.
 Admitted generations fence card replacement/deletion across all its chats.

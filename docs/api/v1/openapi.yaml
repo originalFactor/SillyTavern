@@ -744,6 +744,26 @@ paths:
       responses:
         '200': { description: Character deleted. }
         '409': { description: Stale revision, active generation, or unconfirmed associated chat deletion. }
+  /api/v1/characters/{characterId}/avatar:
+    put:
+      operationId: replaceCharacterAvatar
+      summary: Replace the PNG avatar while retaining the card and checking its revision.
+      parameters:
+        - $ref: '#/components/parameters/characterId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, dataBase64]
+              properties:
+                expectedRevision: { type: string }
+                dataBase64: { type: string, description: Canonical base64 PNG or APNG bounded to 4 MiB. }
+      responses:
+        '200': { description: Updated card document and revision. }
+        '409': { description: Stale revision or active generation. }
+        '422': { description: Invalid PNG image. }
   /api/v1/characters/{characterId}/export:
     get:
       operationId: exportCharacter
