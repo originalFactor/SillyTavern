@@ -559,6 +559,18 @@ export async function afterGeneration(context) { return context.generation.type;
         expect(samplingSaved.status).toBe(200);
         const staleSampling = await fetch(samplingUrl, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(samplingBody) });
         expect(staleSampling.status).toBe(409);
+        const sharedGroupFile = path.join(directories.groups, 'sampling-shared.json');
+        fs.writeFileSync(sharedGroupFile, JSON.stringify({ name: 'Shared', members: ['Aria.png'], disabled_members: [], activation_strategy: 1, chats: ['contract-created-chat'], chat_id: 'contract-created-chat' }));
+        try {
+            const sharedUrl = `${baseUrl}/api/v1/groups/sampling-shared/chats/contract-created-chat/sampling`;
+            const shared = await (await fetch(sharedUrl)).json();
+            expect(shared.overrides).toEqual({ maxTokens: 48, temperature: 0.35 });
+            const active = createGeneration({ handle: 'contract-user', clientRequestId: 'sampling-active', characterId: 'sampling-shared', chatId: 'contract-created-chat', type: 'normal', targetKind: 'group', directories }).record;
+            try {
+                const blocked = await fetch(samplingUrl, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedRevision: shared.revision, overrides: {} }) });
+                expect(blocked.status).toBe(409);
+            } finally { cancel(active); }
+        } finally { fs.unlinkSync(sharedGroupFile); }
         const beforePreview = fs.readFileSync(previewFile);
         const providerCount = providerRequests.length;
         const preview = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
