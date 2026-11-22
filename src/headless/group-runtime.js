@@ -53,12 +53,12 @@ export async function runGroupGeneration(request, session, record, input) {
                 if (shouldStopGeneration(record)) return;
                 recordPluginEvents(record, effects.events.splice(0));
                 persistPluginSettings(session, effects.settingsPatch);
-                if ((type === 'normal' && input.input) || type === 'regenerate') {
+                if (type === 'normal' && input.input) {
                     transcriptWriteAttempted = true;
                     persistMacroEffects(session, file, chat, macroEffects);
                     writeChat(file, chat);
                 }
-                complete(record, { groupId: input.groupId, chatId: input.chatId }, { committed: (type === 'normal' && Boolean(input.input)) || type === 'regenerate' });
+                complete(record, { groupId: input.groupId, chatId: input.chatId }, { committed: type === 'normal' && Boolean(input.input) });
                 return;
             }
             for (const member of members) {

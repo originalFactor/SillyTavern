@@ -367,6 +367,27 @@ export async function afterGeneration(context) { return context.generation.type;
             fs.unlinkSync(chatFile);
         }
     });
+    test('group regeneration keeps the old batch when no member can be activated', async () => {
+        const groupFile = path.join(directories.groups, 'regen-no-members.json');
+        const chatFile = path.join(directories.groupChats, 'regen-no-members-chat.jsonl');
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Group', members: ['Aria.png'], disabled_members: ['Aria.png'], activation_strategy: 1, chats: ['regen-no-members-chat'], chat_id: 'regen-no-members-chat' }));
+        const original = [{ chat_metadata: {} }, { is_user: true, mes: 'Hello' }, { name: 'Aria', mes: 'Old reply', original_avatar: 'Aria.png', extra: { gen_id: 42 } }];
+        const bytes = original.map(row => JSON.stringify(row)).join('\n');
+        fs.writeFileSync(chatFile, bytes);
+        const request = { user: { profile: { ...DEFAULT_USER, handle: 'contract-user' }, directories }, headers: {} };
+        const session = await prepareProviderSession(request);
+        const record = createGeneration({ handle: session.handle, clientRequestId: 'regen-no-members-test', characterId: 'regen-no-members', chatId: 'regen-no-members-chat', type: 'regenerate', targetKind: 'group', directories }).record;
+        try {
+            const start = providerRequests.length;
+            await runGroupGeneration(request, session, record, { groupId: 'regen-no-members', chatId: 'regen-no-members-chat', type: 'regenerate', overrides: {} });
+            expect(record).toMatchObject({ status: 'done', committed: false, groupProgress: { members: [], completed: [] } });
+            expect(fs.readFileSync(chatFile, 'utf8')).toBe(bytes);
+            expect(providerRequests).toHaveLength(start);
+        } finally {
+            fs.unlinkSync(groupFile);
+            fs.unlinkSync(chatFile);
+        }
+    });
     test('group regeneration preserves the old batch when the first provider stream fails', async () => {
         const groupFile = path.join(directories.groups, 'regen-first-failure.json');
         const chatFile = path.join(directories.groupChats, 'regen-first-failure-chat.jsonl');
