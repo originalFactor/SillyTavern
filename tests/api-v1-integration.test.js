@@ -617,6 +617,19 @@ export async function afterGeneration(context) { return context.generation.type;
         expect(legacyPreview.status).toBe(200);
         expect((await legacyPreview.json()).messages.some(message => message.content.includes('Legacy greeting'))).toBe(true);
         expect(fs.readFileSync(previewFile)).toEqual(legacyBytes);
+        const legacySampling = await (await fetch(samplingUrl)).json();
+        expect(legacySampling.overrides).toEqual({});
+        const legacySave = await fetch(samplingUrl, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedRevision: legacySampling.revision, overrides: { temperature: 0.45 } }) });
+        expect(legacySave.status).toBe(200);
+        const legacyRows = fs.readFileSync(previewFile, 'utf8').split('\n').map(JSON.parse);
+        expect(legacyRows[0].chat_metadata.messenger_sampling).toEqual({ temperature: 0.45 });
+        expect(legacyRows[1]).toEqual({ name: 'Aria', is_user: false, mes: 'Legacy greeting' });
+        const legacyConfiguredPreview = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ characterId: 'Aria' }),
+        });
+        const legacyConfigured = await legacyConfiguredPreview.json();
+        expect(legacyConfigured.providerRequest.temperature).toBe(0.45);
+        expect(legacyConfigured.messages.some(message => message.content.includes('Legacy greeting'))).toBe(true);
         const continuePreview = await fetch(`${baseUrl}/api/v1/groups/contract-group/chats/contract-created-chat/preview`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ characterId: 'Aria', type: 'continue' }),
         });
