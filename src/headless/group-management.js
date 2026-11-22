@@ -263,6 +263,17 @@ export async function readGroupChat(session, groupId, chatId, paging = {}) {
     return { groupId: item.id, chatId, ...pageChat(parseGroupChat(file), paging) };
 }
 
+function messageCharacter(characters, message) {
+    let characterIndex = characters.findIndex(character => character.avatar === message.original_avatar);
+    if (characterIndex < 0 && !message.is_user && !message.original_avatar) characterIndex = characters.findIndex(character => character.name === message.name);
+    if (characterIndex < 0 && message.is_user && characters.length) characterIndex = 0;
+    if (characterIndex >= 0) return { character: characters[characterIndex], characterIndex, messageCharacters: characters, missingSpeaker: false };
+    const name = typeof message.name === 'string' ? message.name : 'Character';
+    const avatar = typeof message.original_avatar === 'string' ? message.original_avatar : '';
+    const character = { name, avatar, data: { name } };
+    return { character, characterIndex: characters.length, messageCharacters: [...characters, character], missingSpeaker: !message.is_user };
+}
+
 /** Project a page for display without modifying stored messages or variables. */
 export async function renderGroupChat(session, groupId, chatId, options = {}) {
     const item = await readGroup(session, groupId);
@@ -276,21 +287,11 @@ export async function renderGroupChat(session, groupId, chatId, options = {}) {
     const views = [], warnings = [];
     for (const message of page.messages) {
         if (typeof message.mes !== 'string') continue;
-        let characterIndex = characters.findIndex(character => character.avatar === message.original_avatar);
-        if (characterIndex < 0 && !message.is_user && !message.original_avatar) characterIndex = characters.findIndex(character => character.name === message.name);
-        if (characterIndex < 0 && message.is_user && characters.length) characterIndex = 0;
-        let displayCharacters = characters;
-        if (characterIndex < 0) {
-            const name = typeof message.name === 'string' ? message.name : 'Character';
-            const avatar = typeof message.original_avatar === 'string' ? message.original_avatar : '';
-            displayCharacters = [...characters, { name, avatar, data: { name } }];
-            characterIndex = displayCharacters.length - 1;
-            if (!message.is_user) warnings.push('The message character is unavailable; character-scoped display rules cannot be applied.');
-        }
-        const character = displayCharacters[characterIndex];
+        const { character, characterIndex, messageCharacters, missingSpeaker } = messageCharacter(characters, message);
+        if (missingSpeaker) warnings.push('The message character is unavailable; character-scoped display rules cannot be applied.');
         const result = await runNativeText(session, character.data, chat, {
             mode: 'display', characterId: character.avatar.endsWith('.png') ? character.avatar.slice(0, -4) : '', chatId: id,
-            nativeContext: options.nativeContext ?? {}, groupContext: { group: { ...item.group, id: item.id }, characters: displayCharacters, characterIndex },
+            nativeContext: options.nativeContext ?? {}, groupContext: { group: { ...item.group, id: item.id }, characters: messageCharacters, characterIndex },
             messages: [{ ...message, index: message.index + (headerless ? 1 : 0) }],
         });
         const view = result.messages[0];
@@ -356,19 +357,16 @@ export async function editGroupMessage(session, groupId, chatId, index, expected
     delete expected.index;
     if (!isDeepStrictEqual(entry, expected)) throw new ApiError(409, 'conflict', 'Message changed. Reload before editing.');
     const characters = await loadGroupCharacters(session, item.group);
-    let characterIndex = characters.findIndex(character => character.avatar === entry.original_avatar);
-    if (characterIndex < 0 && !entry.is_user) characterIndex = characters.findIndex(character => character.name === entry.name);
-    if (characterIndex < 0 && entry.is_user) characterIndex = 0;
-    if (!characters[characterIndex]) throw new ApiError(422, 'unsupported', 'The message character is unavailable.');
-    const character = characters[characterIndex];
+    const { character, characterIndex, messageCharacters, missingSpeaker } = messageCharacter(characters, entry);
     const headerless = !original.length || !Object.hasOwn(original[0], 'chat_metadata');
     const chat = headerless ? [{ chat_metadata: {} }, ...structuredClone(original)] : structuredClone(original);
     const messageIndex = index + (headerless ? 1 : 0);
     const result = await runNativeText(session, character.data, chat, {
-        mode: 'edit', characterId: character.avatar.slice(0, -4), chatId: id, nativeContext,
-        groupContext: { group: { ...item.group, id: item.id }, characters, characterIndex },
+        mode: 'edit', characterId: character.avatar.endsWith('.png') ? character.avatar.slice(0, -4) : '', chatId: id, nativeContext,
+        groupContext: { group: { ...item.group, id: item.id }, characters: messageCharacters, characterIndex },
         message: { ...entry, mes: text },
     });
+    if (missingSpeaker) result.warnings.regexWarnings.push('The message character is unavailable; character-scoped edit rules cannot be applied.');
     const current = await readGroup(session, groupId);
     if (!current.group.chats.includes(id) || !fs.existsSync(file)) throw new ApiError(409, 'conflict', 'Group chat changed during editing.');
     assertChatIdle(session.handle, item.id, id, session.directories, 'group');

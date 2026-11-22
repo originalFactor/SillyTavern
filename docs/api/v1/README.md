@@ -152,7 +152,9 @@ active or unresolved turns across groups sharing the chat.
 `POST /api/v1/groups/{groupId}/chats/{chatId}/messages/edit` accepts `index`,
 `expectedMessage`, `text` and optional `nativeContext`. It evaluates edit regex
 and macros in group context and checks the transcript and group again before
-publication. Availability is reported by `resources.groupChatMessageEdit`.
+publication. When the historical speaker is unavailable, global edit rules
+still apply and the saved message records a warning about missing scoped rules.
+Availability is reported by `resources.groupChatMessageEdit`.
 
 `POST /api/v1/groups/{groupId}/chats/{chatId}/generations` admits a group
 turn using `clientRequestId`, `input`, `type`, `overrides` and `nativeContext`.

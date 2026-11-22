@@ -67,6 +67,14 @@ describe('source regex across storage, prompt, editing and read-only display', (
         expect(missing.status).toBe(200);
         expect(missing.value.views).toMatchObject([{ index: 0, display: 'view' }]);
         expect(missing.value.warnings.join(' ')).toContain('character-scoped');
+        const expectedMessage = missing.value.messages[0];
+        configure([script(2, '/raw/g', 'edited', { runOnEdit: true })]);
+        const edit = await req('/groups/Display/chats/DisplayChat/messages/edit', 'POST', { index: 0, expectedMessage, text: 'raw {{char}}' });
+        expect(edit.status).toBe(200);
+        const edited = JSON.parse(fs.readFileSync(file, 'utf8').trim());
+        expect(edited.mes).toBe('edited Missing');
+        expect(edited.extra.native_regex_warnings.join(' ')).toContain('character-scoped');
+        expect((await req('/groups/Display/chats/DisplayChat/messages/edit', 'POST', { index: 0, expectedMessage, text: 'stale' })).status).toBe(409);
     });
     test('group display uses each member scoped rules and handles a group without available members', async () => {
         const png = fs.readFileSync(path.join(serverDirectory, 'default/content/default_Seraphina.png'));
