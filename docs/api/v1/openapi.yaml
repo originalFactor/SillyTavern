@@ -500,6 +500,28 @@ paths:
         '200': { description: Updated group document. }
         '404': { description: Chat is not attached to the group. }
         '409': { description: Stale revision, active generation, or shared chat. }
+  /api/v1/groups/{groupId}/chats/{chatId}/render:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: renderGroupChat
+      summary: Read a group transcript page and its native display projections.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                limit: { type: integer, minimum: 1, maximum: 500 }
+                before: { type: integer, minimum: 0 }
+                after: { type: integer, minimum: 0 }
+                nativeContext: { type: object }
+      responses:
+        '200': { description: Raw page, indexed display views and warnings from the same transcript snapshot. }
+        '400': { description: Invalid display context. }
+        '404': { description: Group chat not found. }
   /api/v1/groups/{groupId}/chats/{chatId}/swipe:
     parameters:
       - { name: groupId, in: path, required: true, schema: { type: string } }

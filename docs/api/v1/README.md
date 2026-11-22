@@ -114,7 +114,11 @@ references a chat file or its references cannot be verified.
 
 `GET /api/v1/groups/{groupId}/chats` lists attached group JSONL chats and
 `GET /api/v1/groups/{groupId}/chats/{chatId}` provides the same bounded paging
-shape as ordinary chats. `POST /api/v1/groups/{groupId}/chats` accepts a caller-owned
+shape as ordinary chats. `POST /api/v1/groups/{groupId}/chats/{chatId}/render`
+returns that raw page and separate indexed display and reasoning projections with
+warnings. It evaluates display regex without writing transcript or variables.
+The `groupChatRender` resource capability advertises this endpoint.
+`POST /api/v1/groups/{groupId}/chats` accepts a caller-owned
 `chatId` and `expectedRevision`, attaches it and writes an empty JSONL header.
 Creation reserves the file before updating the descriptor. Existing files are
 never replaced. An interrupted operation can leave an unattached file for

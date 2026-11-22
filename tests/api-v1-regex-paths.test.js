@@ -17,7 +17,7 @@ beforeAll(async () => {
     process.env.SILLYTAVERN_API_V1_ENABLED = 'true';
     setConfigFilePath(path.join(serverDirectory, 'default/config.yaml'));
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'st-regex-paths-'));
-    directories = { root, worlds: path.join(root, 'worlds'), characters: path.join(root, 'characters'), chats: path.join(root, 'chats') };
+    directories = { root, worlds: path.join(root, 'worlds'), characters: path.join(root, 'characters'), chats: path.join(root, 'chats'), groups: path.join(root, 'groups'), groupChats: path.join(root, 'group-chats') };
     for (const dir of Object.values(directories)) fs.mkdirSync(dir, { recursive: true });
     const app = express(); app.use(express.json({ limit: '8mb' }));
     app.post('/provider/chat/completions', (req, res) => { calls++; received = req.body; res.type('text/event-stream').end('data: ' + JSON.stringify({ choices: [{ delta: { content: reply, reasoning_content: 'trace' } }], usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } }) + '\n\ndata: [DONE]\n\n'); });
@@ -51,6 +51,20 @@ async function terminal(id) {
 }
 const input = (clientRequestId = 'owned') => ({ clientRequestId, characterId: 'Aria', chatId: 'Chat', input: 'raw', type: 'normal' });
 describe('source regex across storage, prompt, editing and read-only display', () => {
+    test('group display applies regex without changing headerless transcript or raw messages', async () => {
+        configure([script(2, '/raw/g', 'view', { markdownOnly: true })]);
+        fs.writeFileSync(path.join(directories.groups, 'Display.json'), JSON.stringify({ name: 'Display', members: ['Aria.png'], disabled_members: [], chats: ['DisplayChat'], chat_id: 'DisplayChat' }));
+        const file = path.join(directories.groupChats, 'DisplayChat.jsonl');
+        const raw = JSON.stringify({ name: 'Aria', original_avatar: 'Aria.png', mes: 'raw', is_user: false });
+        fs.writeFileSync(file, raw);
+        const response = await req('/groups/Display/chats/DisplayChat/render', 'POST', {});
+        expect(response.status).toBe(200);
+        expect(response.value.messages).toMatchObject([{ index: 0, mes: 'raw' }]);
+        expect(response.value.views).toMatchObject([{ index: 0, display: 'view' }]);
+        expect(fs.readFileSync(file, 'utf8')).toBe(raw);
+        fs.writeFileSync(file, JSON.stringify({ name: 'Missing', original_avatar: 'missing.png', mes: 'raw', is_user: false }));
+        expect((await req('/groups/Display/chats/DisplayChat/render', 'POST', {})).status).toBe(422);
+    });
     test('greetings apply standard global/authorized character/preset rules, never prompt/display-only rules', async () => {
         const rules = [script(2, '/greet/g', 'global'), script(2, '/global/g', 'display', { markdownOnly: true }), script(2, '/global/g', 'prompt', { promptOnly: true })];
         configure(rules); card({ extensions: { regex_scripts: [script(2, '/preset/g', 'scoped-final')] } });

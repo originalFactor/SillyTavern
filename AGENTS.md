@@ -46,6 +46,7 @@ from the companion entry point.
   macros, full presets/instruct, group chats, tools, images, TTS and vectors
   remain incomplete; do not mark them supported without implementation and
   contract/runtime verification.
+- Group transcript display projections are separately advertised as `resources.groupChatRender`; raw messages and indexed views share one snapshot, and display evaluation never writes transcript or variables.
 - Group prompt preview is separately advertised as `resources.groupChatPreview`.
   It builds the selected member's prompt with group macros and World Info but
   does not dispatch or persist. Continue preview checks the last speaker. Group

@@ -6,7 +6,7 @@ import express from 'express';
 
 import { API_V1_VERSION, ApiError, asyncHandler, ensureRequestId, requireObject, requireSafeId, sendApiError } from '../headless/contract.js';
 import { deleteCharacter, exportCharacter, importCharacter, replaceCharacterAvatar, saveCharacter } from '../headless/character-management.js';
-import { createGroupChat, deleteGroup, deleteGroupChat, deleteGroupMessage, editGroupMessage, getGroup, listGroupChats, listGroups, loadGroupCharacters, readGroupChat, resolveGroupChat, saveGroup, selectGroupSwipe } from '../headless/group-management.js';
+import { createGroupChat, deleteGroup, deleteGroupChat, deleteGroupMessage, editGroupMessage, getGroup, listGroupChats, listGroups, loadGroupCharacters, readGroupChat, renderGroupChat, resolveGroupChat, saveGroup, selectGroupSwipe } from '../headless/group-management.js';
 import { activePreset, activatePreset, deletePreset, exportPreset, getPreset, listPresets, savePreset, setInstructEnabled } from '../headless/presets.js';
 import { publicConfiguration } from '../headless/redaction.js';
 import { TEXT_COMPLETION_SOURCES } from '../headless/text-provider.js';
@@ -79,6 +79,7 @@ router.get('/capabilities', (_request, response) => {
             groups: true,
             groupManagement: true,
             groupChatPaging: true,
+            groupChatRender: true,
             groupChatCreate: true,
             groupChatDelete: true,
             groupChatPreview: true,
@@ -409,6 +410,13 @@ router.post('/groups/:groupId/chats', asyncHandler(async (request, response) => 
 router.get('/groups/:groupId/chats/:chatId', asyncHandler(async (request, response) => {
     response.json(await readGroupChat(createSession(request), request.params.groupId, request.params.chatId, {
         limit: request.query.limit, before: request.query.before, after: request.query.after,
+    }));
+}));
+
+router.post('/groups/:groupId/chats/:chatId/render', asyncHandler(async (request, response) => {
+    const input = requireObject(request.body, 'group display input');
+    response.json(await renderGroupChat(createSession(request), request.params.groupId, request.params.chatId, {
+        limit: input.limit, before: input.before, after: input.after, nativeContext: validateNativeMacroContext(input.nativeContext),
     }));
 }));
 

@@ -263,6 +263,37 @@ export async function readGroupChat(session, groupId, chatId, paging = {}) {
     return { groupId: item.id, chatId, ...pageChat(parseGroupChat(file), paging) };
 }
 
+/** Project a page for display without modifying stored messages or variables. */
+export async function renderGroupChat(session, groupId, chatId, options = {}) {
+    const item = await readGroup(session, groupId);
+    const { id, file } = chatPath(session, chatId);
+    if (!item.group.chats.includes(id) || !fs.existsSync(file)) throw new ApiError(404, 'not_found', 'Group chat not found.');
+    const original = parseGroupChat(file);
+    const headerless = !original.length || !Object.hasOwn(original[0], 'chat_metadata');
+    const chat = headerless ? [{ chat_metadata: {} }, ...original] : original;
+    const page = pageChat(original, options);
+    const characters = await loadGroupCharacters(session, item.group);
+    const views = [], warnings = [];
+    for (const message of page.messages) {
+        if (typeof message.mes !== 'string') continue;
+        let characterIndex = characters.findIndex(character => character.avatar === message.original_avatar);
+        if (characterIndex < 0 && !message.is_user) characterIndex = characters.findIndex(character => character.name === message.name);
+        if (characterIndex < 0 && message.is_user) characterIndex = 0;
+        const character = characters[characterIndex];
+        if (!character) throw new ApiError(422, 'unsupported', 'The message character is unavailable for display.');
+        const result = await runNativeText(session, character.data, chat, {
+            mode: 'display', characterId: character.avatar.slice(0, -4), chatId: id,
+            nativeContext: options.nativeContext ?? {}, groupContext: { group: { ...item.group, id: item.id }, characters, characterIndex },
+            messages: [{ ...message, index: message.index + (headerless ? 1 : 0) }],
+        });
+        const view = result.messages[0];
+        views.push({ index: message.index, display: view.display, displayReasoning: view.displayReasoning });
+        warnings.push(...result.warnings);
+        if (result.discardedVariableEffects) warnings.push('Display regex proposed variable changes; transcript reads never save these effects.');
+    }
+    return { groupId: item.id, chatId: id, ...page, views, warnings: [...new Set(warnings)] };
+}
+
 export async function selectGroupSwipe(session, groupId, chatId, index, swipeId, expectedMessage) {
     const item = await readGroup(session, groupId);
     const { id, file } = chatPath(session, chatId);
