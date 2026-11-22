@@ -197,6 +197,7 @@ router.get('/settings', asyncHandler(async (request, response) => {
             amount_gen: settings.amount_gen,
             max_context: settings.max_context,
             oai_settings: settings.oai_settings,
+            textgenerationwebui_settings: settings.textgenerationwebui_settings,
             world_info_settings: settings.world_info_settings,
             power_user: settings.power_user,
             extension_settings: settings.extension_settings,

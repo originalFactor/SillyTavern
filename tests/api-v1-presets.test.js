@@ -154,6 +154,17 @@ describe('native named presets', () => {
         expect(JSON.stringify(result.body)).not.toContain('original-secret');
         expect(readSettings(dirs).oai_settings.custom_url).toContain('private-password');
     });
+    test('typed settings include the redacted text completion profile and output budget', async () => {
+        const stored = readSettings(dirs);
+        stored.main_api = 'textgenerationwebui';
+        stored.amount_gen = 123;
+        stored.textgenerationwebui_settings = { type: 'generic', generic_model: 'model-x', temp: 0.42, server_urls: { generic: 'https://user:secret@example.invalid' } };
+        writeSettings(dirs, stored);
+        const response = await request('/settings');
+        expect(response.body.typed.amount_gen).toBe(123);
+        expect(response.body.typed.textgenerationwebui_settings).toMatchObject({ type: 'generic', generic_model: 'model-x', temp: 0.42 });
+        expect(JSON.stringify(response.body)).not.toContain('secret');
+    });
     test('never serves credential fields from existing upstream presets', async () => {
         fs.writeFileSync(path.join(dirs.openAI_Settings, 'legacy-secret.json'), JSON.stringify({ proxy_password: 'hidden-provider-password', custom_include_headers: 'Authorization: Bearer private', temperature: 0.2 }));
         const result = await request(presetPath('chat-completion', 'legacy-secret'));
