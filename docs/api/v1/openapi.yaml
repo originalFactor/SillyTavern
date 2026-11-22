@@ -20,6 +20,40 @@ security:
   # requires a 32-byte bearer capability instead of cookie/CSRF auth.
   - bearerCapability: []
 paths:
+  /api/v1/generations/{requestId}/tool-batches/{batchId}/{action}:
+    post:
+      operationId: updateClientToolBatch
+      summary: Claim, decline or submit complete results for an inspected tool batch.
+      description: A fresh durable claim authorizes one execution. Duplicate claims return dispatchAuthorized false. Complete result receipts may continue the admitted provider conversation once. Restarted workers cannot resume execution.
+      parameters:
+        - $ref: '#/components/parameters/requestId'
+        - { name: batchId, in: path, required: true, schema: { type: string } }
+        - { name: action, in: path, required: true, schema: { type: string, enum: [claim, decline, results] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision]
+              properties:
+                expectedRevision: { type: string }
+                executionId: { type: string, minLength: 1, maxLength: 200 }
+                results:
+                  type: array
+                  description: Complete ordered result set within 1 MiB. Required for results action.
+                  items:
+                    type: object
+                    required: [id, result, isError]
+                    properties:
+                      id: { type: string }
+                      result: { type: string }
+                      isError: { type: boolean }
+      responses:
+        '200': { description: Batch and idempotent status. Claims include dispatchAuthorized, true only for the fresh durable claim. }
+        '400': { description: Invalid identity or incomplete, oversized or incorrectly ordered results. }
+        '404': { description: Request, batch or action unavailable. }
+        '409': { description: Stale revision, conflicting claim or receipt, or absent live worker. }
   /api/v1/regex-settings:
     get:
       operationId: getRegexSettings
@@ -1409,6 +1443,11 @@ components:
           default: normal
         input:
           type: string
+        tools:
+          type: array
+          maxItems: 32
+          items: { type: object, additionalProperties: true }
+          description: OpenAI function definitions within 256 KiB. Requires enabled Chat Completion function calling and character normal/regenerate generation. Catalogs never authorize execution.
         stream:
           type: boolean
           default: true
@@ -1510,10 +1549,14 @@ components:
                   id: { type: string }
                   name: { type: string }
                   arguments: { type: string }
+            toolBatches:
+              type: array
+              description: Durable ordered client-tool proposals, execution claims and completed result receipts. Interrupted workers cannot resume dispatch.
+              items: { type: object, additionalProperties: true }
             usageByCall:
               type: array
               items: { type: [object, 'null'], additionalProperties: true }
-              description: Group provider usage in dispatch order, with null for calls without reported usage.
+              description: Group or client-tool provider usage in dispatch order, with null for calls without reported usage.
             groupProgress:
               type: [object, 'null']
               description: Selected group speaker order and confirmed transcript commits, when available.

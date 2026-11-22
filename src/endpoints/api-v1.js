@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { validateClientTools, assertClientToolsProfile, claimClientToolBatch, declineClientToolBatch, submitClientToolResults } from '../headless/client-tools.js';
 import { removeGroupGenerationBatch } from '../headless/group-activation.js';
 import path from 'node:path';
 
@@ -27,7 +28,7 @@ import {
     snapshot,
     subscribe,
 } from '../headless/generation-store.js';
-import { buildPrompt, listExtensions } from '../headless/prompt.js';
+import { auditPrompt, buildPrompt, listExtensions } from '../headless/prompt.js';
 import { createMacroChat } from '../headless/macros.js';
 import { renderedChatPage, mutateNativeMessage } from '../headless/message-text.js';
 import { getRegexSettings, saveRegexSettings } from '../headless/regex-management.js';
@@ -114,6 +115,7 @@ router.get('/capabilities', (_request, response) => {
             extensionSettings: headlessPlugins,
             serverPlugins: !!getConfigValue('enableServerPlugins', false, 'boolean'),
             providerCredentials: true,
+            clientToolBatches: true,
         },
         generation: {
             preview: true,
@@ -484,6 +486,7 @@ router.post('/groups/:groupId/chats/:chatId/generations', asyncHandler(async (re
     const body = requireObject(request.body, 'group generation input');
     const groupId = requireSafeId(request.params.groupId, 'groupId');
     const input = validateGenerationInput({ ...body, characterId: groupId, chatId: request.params.chatId });
+    if (input.tools?.length) throw new ApiError(422, 'unsupported', 'Client tool execution for groups is not configured.');
     if (input.type === 'quiet') throw new ApiError(422, 'unsupported', 'Quiet group generation is not supported.');
     const { prepareProviderSession } = await import('../headless/provider.js');
     const session = await prepareProviderSession(request);
@@ -649,6 +652,7 @@ router.get('/extensions', asyncHandler(async (request, response) => {
 router.post('/generations/preview', asyncHandler(async (request, response) => {
     const session = createSession(request);
     const input = validateGenerationInput(request.body);
+    assertClientToolsProfile(session, input);
     const character = await readCharacter(session, input.characterId);
     const chatPath = resolveChatPath(session, input.characterId, input.chatId);
     const { readChat } = await import('../headless/session.js');
@@ -667,6 +671,11 @@ router.post('/generations/preview', asyncHandler(async (request, response) => {
         characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext, preview: true,
         macroChat, stageUserInput: input.type === 'normal' && Boolean(input.input),
     });
+    if (input.tools?.length) {
+        built.providerRequest.tools = input.tools;
+        built.providerRequest.tool_choice = 'auto';
+        built.warnings.tokenBudget = await auditPrompt(session, built.providerRequest);
+    }
     response.json({
         messages: built.messages,
         prompt: built.prompt,
@@ -680,6 +689,7 @@ router.post('/generations', asyncHandler(async (request, response) => {
     const input = validateGenerationInput(request.body);
     const { prepareProviderSession } = await import('../headless/provider.js');
     const session = await prepareProviderSession(request);
+    assertClientToolsProfile(session, input);
     const created = createGeneration({
         handle: session.handle,
         clientRequestId: request.body.clientRequestId,
@@ -731,6 +741,14 @@ router.post('/generations/by-client/:clientRequestId/abandon', asyncHandler(asyn
 router.post('/generations/:requestId/acknowledge', asyncHandler(async (request, response) => {
     const session = createSession(request);
     response.json(acknowledgeGeneration(getGeneration(request.params.requestId, session.handle, session.directories), request.body?.expectedSeq));
+}));
+
+router.post('/generations/:requestId/tool-batches/:batchId/:action', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    const record = getGeneration(request.params.requestId, session.handle, session.directories);
+    const actions = { claim: claimClientToolBatch, decline: declineClientToolBatch, results: submitClientToolResults };
+    if (!Object.hasOwn(actions, request.params.action)) throw new ApiError(404, 'not_found', 'Unknown tool action.');
+    response.json(actions[request.params.action](record, request.params.batchId, request.body));
 }));
 
 router.get('/generations/:requestId', asyncHandler(async (request, response) => {
@@ -835,6 +853,7 @@ function validateGenerationInput(body) {
         stream: body.stream !== false,
         overrides,
         nativeContext: validateNativeMacroContext(body.nativeContext),
+        ...(body.tools !== undefined ? { tools: validateClientTools(body.tools) } : {}),
     };
 }
 

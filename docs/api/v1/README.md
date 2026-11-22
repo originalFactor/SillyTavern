@@ -13,7 +13,7 @@ Headless plugin hooks are a **separate, additional** opt-in: set `api.v1.headles
 1. Open `/login` in a platform WebView when user accounts, Basic Auth or SSO are enabled. Reuse its persistent cookie jar for all API calls. With accounts disabled, no login WebView is required.
 2. `GET /csrf-token`; send `X-CSRF-Token` on every non-idempotent request and on the SSE fetch if the HTTP client permits custom headers.
 3. `GET /api/v1/capabilities`; show unsupported features explicitly. Do not fall back to private SPA endpoints. `features.serverPlugins` now reflects the real `enableServerPlugins` config, and `features.headlessPlugins` / `features.headlessHooks` report the plugin tier.
-   Chat Completion prompts reconstruct previously stored SillyTavern tool invocations when the existing `function_calling` setting is enabled. Invalid stored invocations fail before provider dispatch. New tool execution requires the native authorization lifecycle and remains unsupported.
+   Chat Completion prompts reconstruct previously stored SillyTavern tool invocations when the existing `function_calling` setting is enabled. Invalid stored invocations fail before provider dispatch. Client-executed tool batches have a separate backend protocol below. The native authorization and executor remain incomplete.
    Streamed tool-call fragments are bounded and assembled before the unsupported result is reported, so final usage can be retained. Interrupted or malformed streams have an unknown outcome.
    The native companion may use `/api/v1/provider-credentials` to save an OpenAI/custom key or a text-completion key using `textgen:<source>` where the source is advertised by `capabilities.providers.textCompletionSources`. Reads return presence flags only; key values are never returned by the API.
    Capability booleans describe connected API behavior, not whether a provider is currently configured or reachable. Clients must treat missing/unknown capability fields as unavailable and use provider source arrays verbatim. A true feature flag can describe a supported subset. For example, `worldInfo` and `worldInfoScanner` do not imply full SillyTavern World Info parity, and `upstreamMacroEngine` does not imply every advanced macro or extension effect is enabled.
@@ -334,6 +334,41 @@ Completed unsupported tool proposals are retained in generation snapshots as
 `toolCalls`, with credential fields and known secrets redacted. These values are
 for observation and cannot authorize or execute a tool. Interrupted or invalid
 tool streams retain their unknown outcome.
+
+### Client-executed tool batches
+
+`resources.clientToolBatches` advertises the backend protocol. Character
+normal/regenerate requests may supply up to 32 OpenAI function definitions
+within 256 KiB in `tools`, with Chat Completion `function_calling` enabled.
+The catalog is bound to the caller key. Preview audits its token budget without
+executing tools. The native authorization/executor and durable local execution
+ownership remain unfinished, and full `features.toolCalling` remains false.
+
+Completed calls appear in `toolBatches` with an ID, immutable revision, status
+and ordered calls. A batch waits up to five minutes for approval and results.
+Actions use `POST /api/v1/generations/{requestId}/tool-batches/{batchId}/{action}`.
+
+- `claim` takes `expectedRevision` and a caller-owned `executionId`. The first
+  durable claim returns `dispatchAuthorized:true`. Repeated claims return
+  `idempotent:true, dispatchAuthorized:false`. A repeated claim can inspect a
+  receipt but cannot authorize another execution. The native caller must persist
+  its own send ownership before tool dispatch and inspect ambiguous outcomes.
+- `decline` takes `expectedRevision` and terminates an unclaimed batch. After a
+  claim, use generation cancellation and inspect execution outcomes.
+- `results` takes the same revision and execution ID plus ordered
+  `results:[{id,result,isError}]` for every call, bounded to 1 MiB. Result values
+  are strings and `isError` is explicit. Identical duplicate results are
+  idempotent. Conflicting or partial result sets fail.
+
+Claim approval includes continuing the admitted provider conversation after the
+complete result receipt. Each follow-up uses the captured connection and audited
+context without reevaluating preparation macros. Five tool rounds match the
+source recursion limit. Successful completion commits standard ST
+`extra.tool_invocations` rows with the final reply. Per-call usage is retained,
+and aggregate counts require each call to report the corresponding field.
+Restarted, cancelled or timed-out workers cannot continue executing tools or
+dispatch a follow-up. Inspect the persisted claims and outcomes before another
+request. Group and quiet/continue tool execution remain incomplete.
 
 The final Chat Completion token audit includes tool definitions and controls
 from the outbound body after custom inclusion and exclusion. It uses the source

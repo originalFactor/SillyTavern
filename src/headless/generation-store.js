@@ -130,7 +130,7 @@ export function persistGeneration(directories, record) {
         'requestId', 'userKey', 'clientRequestId', 'characterId', 'chatId', 'type', 'targetKind',
         'fingerprint', 'status', 'seq', 'text', 'reasoning', 'error', 'committed',
         'cancelOutcome', 'cancelRequested', 'providerDispatched', 'drained',
-        'acknowledged', 'usage', 'usageByCall', 'providerCallCount', 'groupProgress', 'pluginEvents', 'toolCalls', 'createdAt', 'finishedAt', 'snapshot',
+        'acknowledged', 'usage', 'usageByCall', 'providerCallCount', 'groupProgress', 'pluginEvents', 'toolCalls', 'toolBatches', 'clientTools', 'createdAt', 'finishedAt', 'snapshot',
     ].map(key => [key, record[key] ?? null]));
     writeJournal(directories, body);
     record.lastPersistedAt = Date.now();
@@ -354,10 +354,11 @@ export function beginGeneration(record) {
 export function markProviderDispatched(record) {
     if (shouldStopGeneration(record)) throw new ApiError(409, 'conflict', 'Generation was cancelled before provider dispatch.');
     record.providerDispatched = true;
-    if (record.targetKind === 'group') {
+    if (record.targetKind === 'group' || record.clientTools) {
         record.providerCallCount = (record.providerCallCount ?? 0) + 1;
         record.usageByCall ??= [];
         record.usageByCall.push(null);
+        if (record.clientTools) record.usage = null;
     }
     persistGenerationIfPossible(record);
 }
@@ -417,9 +418,17 @@ export function setUsage(record, usage) {
     };
     const reported = Object.fromEntries(Object.entries(fields).filter(([, value]) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0));
     if (Object.keys(reported).length) {
-        if (record.targetKind === 'group' && record.providerCallCount > 0) {
+        if ((record.targetKind === 'group' || record.clientTools) && record.providerCallCount > 0) {
             record.usageByCall ??= [];
             record.usageByCall[record.providerCallCount - 1] = { ...(record.usageByCall[record.providerCallCount - 1] ?? {}), ...reported };
+            if (record.clientTools) {
+                const completeFields = Object.keys(fields).filter(key =>
+                    record.usageByCall.every(call => Number.isSafeInteger(call?.[key])));
+                const totals = Object.fromEntries(completeFields
+                    .map(key => [key, record.usageByCall.reduce((sum, call) => sum + call[key], 0)])
+                    .filter(([, value]) => Number.isSafeInteger(value)));
+                record.usage = Object.keys(totals).length ? totals : null;
+            }
             record.dirty = true;
         } else {
             record.usage = { ...(record.usage ?? {}), ...reported };
@@ -637,7 +646,8 @@ export function snapshot(record) {
         cancelOutcome: record.cancelOutcome,
         usage: record.usage ?? null,
         toolCalls: record.toolCalls ?? [],
-        usageByCall: record.targetKind === 'group' ? record.usageByCall ?? [] : undefined,
+        toolBatches: record.toolBatches ?? [],
+        usageByCall: record.targetKind === 'group' || record.clientTools ? record.usageByCall ?? [] : undefined,
         groupProgress: record.targetKind === 'group' ? record.groupProgress ?? null : undefined,
         warnings: record.snapshot?.warnings ?? null,
         pluginEvents: record.pluginEvents ?? [],

@@ -1,4 +1,5 @@
 import { chatSampling } from './chat-sampling.js';
+import { assertClientToolsProfile, runCompletionWithClientTools } from './client-tools.js';
 import { ApiError, getUserKey } from './contract.js';
 import { complete, fail, recordPluginEvents, beginGeneration, endGeneration, shouldStopGeneration, setFinalText, setFinalReasoning, setUsage, stage, withChatLock } from './generation-store.js';
 import { buildPrompt, runNativeText, auditPrompt } from './prompt.js';
@@ -48,6 +49,7 @@ export async function runGeneration(sourceRequest, session, record, input) {
         type: input.type,
     }));
     try {
+        assertClientToolsProfile(session, input);
         mergeEffects(effects, await emitHeadlessEvent(session, 'generation_started', { type: input.type, requestId: record.requestId }));
         if (shouldStopGeneration(record)) return;
         stage(record, 'loading');
@@ -111,8 +113,7 @@ export async function runGeneration(sourceRequest, session, record, input) {
             built.warnings.tokenBudget = await auditPrompt(session, built.providerRequest);
             if (shouldStopGeneration(record)) return;
             stage(record, 'provider');
-            const { runSessionCompletion } = await import('./provider.js');
-            const result = await runSessionCompletion(sourceRequest, built.providerRequest, record, session);
+            const result = await runCompletionWithClientTools(sourceRequest, built.providerRequest, record, session, input.tools ?? []);
             if (shouldStopGeneration(record)) return;
             if (result.tokenBudget) built.warnings.tokenBudget = result.tokenBudget;
             setUsage(record, result.usage);
@@ -159,6 +160,7 @@ export async function runGeneration(sourceRequest, session, record, input) {
                     pluginEffects: summarizeEffects(effects),
                 }, { committed: false });
             } else {
+                chat.push(...result.toolRows);
                 const messageIndex = commitMessages(chatPath, chat, character.name, output, reasoning, input.type, previousReply, formatted.warnings.regexWarnings);
                 complete(record, {
                     characterId: input.characterId,

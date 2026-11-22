@@ -41,9 +41,23 @@ from the companion entry point.
   The companion packages a default character and user avatar without the SPA.
 - `src/headless/prompt-manager.js` owns revision-checked active Chat Completion prompt edits and the shared preview/dispatch ordering. Writes are scoped to prompts and global order 100001, preserving provider settings and unrelated orders; old 100000 orders migrate with the persona marker. Support includes roles, enables, markers, generation triggers, depth/priority injection and card main/PHI overrides. Keep `promptManagerPresets` false: full macros and Instruct remain incomplete (source packing is implemented below) (named storage/selection is implemented below). Never publish partial ordering as full preset compatibility.
 - Existing ST tool-invocation rows are reconstructed in Chat Completion history when `function_calling` is enabled. Invalid stored calls fail before provider dispatch and the final prompt audit counts the outgoing calls. New calls require a separate authorization and execution lifecycle; keep `toolCalling` false until it is implemented.
-- Provider SSE decoding accumulates bounded, indexed tool-call fragments and usage through stream completion. Incomplete, malformed or interrupted calls remain unknown; complete calls still report unsupported until an authorized tool lifecycle exists. Never execute or automatically replay them.
+- Provider SSE decoding accumulates bounded, indexed tool-call fragments and usage through stream completion. Incomplete, malformed or interrupted calls remain unknown. Complete calls without an admitted client tool catalog report unsupported. Calls matching an admitted catalog require the revision-bound client batch lifecycle below.
 - A tool-call stream with a non-tool finish reason or conflicting finish reasons is unknown, even when its current arguments happen to parse. A standalone `[DONE]` remains accepted for compatible providers that omit finish reasons.
 - Unsupported completed tool proposals are stored in the generation journal only after credential redaction and exposed through `toolCalls` for observation. Redacted proposals are not execution inputs or authorization receipts.
+- `client-tools.js` provides revision-bound client-executed tool batches for
+  character normal/regenerate Chat Completion requests with function calling
+  enabled. Catalogs describe tools and never authorize execution. Persist a
+  caller-owned execution claim before dispatch. Only a fresh claim response has
+  `dispatchAuthorized:true`. Duplicate claims are observation only. Submit one
+  complete ordered result set with explicit error flags. Exact repeated receipts
+  are idempotent. A restarted/interrupted worker cannot resume tools or provider
+  calls. Keep full `toolCalling` false until the native authorization/executor,
+  durable local execution ownership and remaining tool flows are implemented.
+  `resources.clientToolBatches` describes the backend contract only. Follow-ups
+  retain the admitted connection, run token audits without rerunning macros and
+  preserve source ST invocation rows on final commit. Five executed tool rounds
+  follow the source recursion limit. Usage is retained per provider call, and
+  aggregate fields are published only when every call reports them.
 - `src/headless/presets.js` manages revision-checked named Chat Completion/context/instruct/system templates. Presets use native ST directories and bundled defaults; portable snapshots/exports exclude credentials. Selection checks both file and active-config revisions, requires explicit consent for connection changes, and uses the upstream-checked alias table in `preset-mapping.js`. Template selection must not enable unsupported modes. Update the bundle/Gradle source inputs when changing packaged defaults.
 - `PUT /instruct-mode` changes only the active Instruct enabled switch against the active Instruct revision. `textInstructSettings` advertises the switch used by text-completion assembly; it does not claim complete Instruct compatibility.
 - Current provider scope remains OpenAI/custom Chat Completions. Advanced

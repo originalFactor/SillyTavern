@@ -26,13 +26,13 @@ export async function prepareProviderSession(request) {
     return session;
 }
 
-export async function runSessionCompletion(request, providerRequest, record, session) {
+export async function runSessionCompletion(request, providerRequest, record, session, clientTools = []) {
     const connection = acceptedConnections.get(session);
     const format = providerRequest.provider_format ?? 'chat-completions';
     if (connection && (connection.format !== format || (format === 'text-completions'
         ? connection.source !== providerRequest.api_type || connection.url !== providerRequest.api_server
         : connection.source !== String(providerRequest.chat_completion_source ?? 'openai') || (connection.source === 'custom' && connection.url !== String(providerRequest.custom_url ?? ''))))) throw new ApiError(409, 'conflict', 'The accepted provider connection changed inside the generation.');
-    return runChatCompletion(request, providerRequest, record, connection, session);
+    return runChatCompletion(request, providerRequest, record, connection, session, clientTools);
 }
 export const runSessionChatCompletion = runSessionCompletion;
 
@@ -50,7 +50,7 @@ export const runSessionChatCompletion = runSessionCompletion;
  * @param {import('./generation-store.js').GenerationRecord} record Generation record
  * @returns {Promise<ProviderResult>} Provider result
  */
-export async function runChatCompletion(originalRequest, providerRequest, record, acceptedConnection = null, acceptedSession = null) {
+export async function runChatCompletion(originalRequest, providerRequest, record, acceptedConnection = null, acceptedSession = null, clientTools = []) {
     const { default: fetch, Headers } = await import('node-fetch');
     const { readSecret, SECRET_KEYS } = await import('../endpoints/secrets.js');
     const request = structuredClone(providerRequest);
@@ -84,6 +84,13 @@ export async function runChatCompletion(originalRequest, providerRequest, record
     if (!isText) {
         mergeYamlIntoObject(body, String(request.custom_include_body ?? ''));
         excludeKeysByYaml(body, String(request.custom_exclude_body ?? ''));
+        if (clientTools.length) {
+            body.messages = request.messages;
+            body.tools = clientTools;
+            body.tool_choice = 'auto';
+            delete body.functions;
+            delete body.function_call;
+        }
     }
     const endpoint = new URL(url);
     if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) throw new ApiError(422, 'validation', 'Provider URL must use HTTP(S) without embedded credentials.');
@@ -158,6 +165,14 @@ export async function runChatCompletion(originalRequest, providerRequest, record
                 arguments: JSON.stringify(redactToolValue(publicConfiguration(JSON.parse(call.function.arguments)), secrets)),
             }));
             setToolCalls(record, redacted);
+            if (clientTools.length) {
+                const names = new Set(clientTools.map(tool => tool.function.name));
+                if (toolCalls.some(call => !names.has(call.function.name)) || JSON.stringify(redacted) !== JSON.stringify(toolCalls.map(call => ({ id: call.id, name: call.function.name, arguments: JSON.stringify(JSON.parse(call.function.arguments)) })))) {
+                    throw new ApiError(422, 'unsupported', 'The provider requested an unavailable tool or credential-bearing arguments. Inspect the redacted proposals.');
+                }
+                return { text: stream.text, reasoning: stream.reasoning, usage: stream.usage, tokenBudget,
+                    toolCalls, protectToolResult: value => redactProviderText(value, secrets) };
+            }
             throw new ApiError(422, 'unsupported', 'Provider requested tool execution, but the native tool authorization lifecycle is not configured.');
         }
         if (!stream.text) throw new ApiError(502, 'provider', 'Provider completed without text. The request may have been billed.');
