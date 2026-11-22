@@ -82,8 +82,8 @@ export function runNativeText(session, character, chat, options) {
     return execute({ operation: 'text', session: evaluationSession(session), character, chat, options: { ...options, extensions: options.extensions ?? listExtensions(session) } });
 }
 /** Evaluate display rows in one worker admission with an independent macro frame per row. */
-export function runNativeDisplayBatch(session, chat, rows, options) {
-    return execute({ operation: 'displayBatch', session: evaluationSession(session), chat, rows, options: { ...options, extensions: listExtensions(session) } });
+export function runNativeDisplayBatch(session, chat, contexts, rows, options) {
+    return execute({ operation: 'displayBatch', session: evaluationSession(session), chat, contexts, rows, options: { ...options, extensions: listExtensions(session) } });
 }
 /** Bounded string preparation, without provider admission or dispatch. */
 export function buildStringPrompt(session, character, chat, options = {}) {

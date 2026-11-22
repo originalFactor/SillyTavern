@@ -302,18 +302,24 @@ export async function renderGroupChat(session, groupId, chatId, options = {}) {
     const page = pageChat(original, options);
     const characters = await loadGroupCharacters(session, item.group);
     const views = [], warnings = [], rows = [];
-    const historicalCards = new Map();
+    const historicalCards = new Map(), contexts = [], contextIndexes = new Map();
     for (const message of page.messages) {
         if (typeof message.mes !== 'string') continue;
         const { character, characterIndex, messageCharacters, missingSpeaker } = await messageCharacter(session, characters, message, historicalCards);
         if (missingSpeaker) warnings.push('The message character is unavailable; character-scoped display rules cannot be applied.');
-        rows.push({ character: character.data, options: {
-            characterId: character.avatar.endsWith('.png') ? character.avatar.slice(0, -4) : '',
-            groupContext: { group: { ...item.group, id: item.id }, characters: messageCharacters, characterIndex },
-            messages: [{ ...message, index: message.index + (headerless ? 1 : 0) }],
-        }, index: message.index });
+        const contextKey = JSON.stringify([character.avatar, character.name, characterIndex, missingSpeaker]);
+        let contextIndex = contextIndexes.get(contextKey);
+        if (contextIndex === undefined) {
+            contextIndex = contexts.length;
+            contextIndexes.set(contextKey, contextIndex);
+            contexts.push({ character: character.data, options: {
+                characterId: character.avatar.endsWith('.png') ? character.avatar.slice(0, -4) : '',
+                groupContext: { group: { ...item.group, id: item.id }, characters: messageCharacters, characterIndex },
+            } });
+        }
+        rows.push({ contextIndex, message: { ...message, index: message.index + (headerless ? 1 : 0) }, index: message.index });
     }
-    const results = rows.length ? await runNativeDisplayBatch(session, chat, rows, {
+    const results = rows.length ? await runNativeDisplayBatch(session, chat, contexts, rows, {
         mode: 'display', chatId: id, nativeContext: options.nativeContext ?? {},
     }) : [];
     for (const [index, result] of results.entries()) {

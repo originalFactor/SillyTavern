@@ -91,6 +91,17 @@ describe('source regex across storage, prompt, editing and read-only display', (
         expect(response.value.warnings.join(' ')).toContain('never save');
         expect(fs.readFileSync(file, 'utf8')).toBe(original);
     });
+    test('group display shares large character contexts across a page', async () => {
+        card({ description: 'x'.repeat(400_000) });
+        fs.writeFileSync(path.join(directories.groups, 'Large.json'), JSON.stringify({ name: 'Large', members: ['Aria.png'], disabled_members: [], chats: ['LargeChat'], chat_id: 'LargeChat' }));
+        const file = path.join(directories.groupChats, 'LargeChat.jsonl');
+        const row = JSON.stringify({ name: 'Aria', original_avatar: 'Aria.png', is_user: false, mes: 'hello' });
+        fs.writeFileSync(file, Array(100).fill(row).join('\n'));
+        const response = await req('/groups/Large/chats/LargeChat/render', 'POST', { before: 100, limit: 100 });
+        expect(response.status).toBe(200);
+        expect(response.value.views).toHaveLength(100);
+        expect(response.value.views.every(view => view.display === 'hello')).toBe(true);
+    });
     test('group display uses each member scoped rules and handles a group without available members', async () => {
         const png = fs.readFileSync(path.join(serverDirectory, 'default/content/default_Seraphina.png'));
         fs.writeFileSync(path.join(directories.characters, 'Second.png'), writeCard(png, JSON.stringify({ name: 'Second', extensions: { regex_scripts: [{ ...script(2, '/raw/g', 'second', { markdownOnly: true }), placement: ['2'] }, script(2, '/editable/g', 'scoped-edit', { runOnEdit: true })] } }), { preserveSpec: true }));
