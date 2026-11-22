@@ -38,7 +38,8 @@ export async function buildPromptInline(session, character, chat, { type, input 
         context.frame.extensionPrompts.DEPTH_PROMPT = { value: fields.charDepthPrompt, position: 1, depth, scan: !!session.extensionSettings?.note?.allowWIScan, role };
     }
     const worldInfo = await scanWorldInfo(session, character, chat, context, fields, { type, input, ...options });
-    const transcript = chat.filter(message => typeof message?.mes === 'string' && !message.is_system);
+    const includeToolHistory = !isText && settings.oai_settings?.function_calling === true;
+    const transcript = chat.filter(message => typeof message?.mes === 'string' && (!message.is_system || (includeToolHistory && Array.isArray(message.extra?.tool_invocations))));
     // Source fitting owns clipping. Never replace token budgets with row counts.
     const history = transcript.map((message, index) => ({ ...message, mes: regex.apply(index === 0 ? context.expand(message.mes) : message.mes, messagePlacement(message), { isPrompt: true, depth: transcript.length - index - (type === 'continue' ? 2 : 1) }) }));
     const blocks = context.examples(fields.mesExamples ?? '');

@@ -61,7 +61,9 @@ export const jQuery = {
     },
 };
 export const ToolManager = {
-    isToolCallingSupported: () => false,
+    // Previously completed invocations can be reconstructed as history. New
+    // execution still requires the separate authorization lifecycle.
+    isToolCallingSupported: () => oai_settings.function_calling === true,
     canPerformToolCalls: () => false,
     registerFunctionToolsOpenAI() { throw new ApiError(422, 'unsupported', 'Native tool authorization is not configured.'); },
 };

@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, jest, test } from '@jest/globals
 import { router as apiV1Router } from '../src/endpoints/api-v1.js';
 import { createGroupChat, deleteGroupChat, getGroup, loadGroupCharacters } from '../src/headless/group-management.js';
 import { runGroupGeneration } from '../src/headless/group-runtime.js';
+import { runGeneration } from '../src/headless/runtime.js';
 import { prepareProviderSession } from '../src/headless/provider.js';
 import { cancel, clearGenerations, createGeneration, getGeneration, snapshot } from '../src/headless/generation-store.js';
 import { readSettings, writeSettings } from '../src/headless/session.js';
@@ -87,6 +88,35 @@ afterAll(async () => {
 });
 
 describe('API v1 routes', () => {
+    test('sends stored tool invocation history in order through the normal provider path', async () => {
+        const chatFile = path.join(directories.chats, 'Aria', 'tool-history.jsonl');
+        const originalSettings = readSettings(directories);
+        const settings = structuredClone(originalSettings);
+        settings.oai_settings.function_calling = true;
+        writeSettings(directories, settings);
+        const chat = [{ chat_metadata: {} }, { name: 'Native User', is_user: true, mes: 'Find it' }, {
+            name: 'System', is_system: true, mes: 'Tool result',
+            extra: { tool_invocations: [{ id: 'call_1', name: 'lookup', parameters: '{"q":"x"}', result: 'Found' }] },
+        }, { name: 'Aria', is_user: false, mes: 'Done' }];
+        fs.writeFileSync(chatFile, chat.map(JSON.stringify).join('\n'));
+        try {
+            const request = { user: { profile: { ...DEFAULT_USER, handle: 'contract-user' }, directories }, headers: {} };
+            const session = await prepareProviderSession(request);
+            const record = createGeneration({ handle: session.handle, clientRequestId: 'tool-history-test', characterId: 'Aria', chatId: 'tool-history', type: 'normal', directories }).record;
+            const start = providerRequests.length;
+            await runGeneration(request, session, record, { characterId: 'Aria', chatId: 'tool-history', type: 'normal', input: 'Next', overrides: {} });
+            expect(record.status).toBe('done');
+            expect(providerRequests).toHaveLength(start + 1);
+            const messages = providerRequests[start].messages;
+            const callIndex = messages.findIndex(message => message.tool_calls?.[0]?.id === 'call_1');
+            expect(callIndex).toBeGreaterThanOrEqual(0);
+            expect(messages[callIndex + 1]).toMatchObject({ role: 'tool', tool_call_id: 'call_1', content: 'Found' });
+            expect(messages[callIndex + 2]).toMatchObject({ role: 'assistant', content: 'Done' });
+        } finally {
+            writeSettings(directories, originalSettings);
+            fs.rmSync(chatFile, { force: true });
+        }
+    });
     test('manual group input works when all member cards are missing', async () => {
         const groupFile = path.join(directories.groups, 'missing-members.json');
         const chatFile = path.join(directories.groupChats, 'missing-members-chat.jsonl');

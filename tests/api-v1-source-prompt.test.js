@@ -17,6 +17,30 @@ afterEach(() => roots.splice(0).forEach(root => fs.rmSync(root, { recursive: tru
 const rows = (count, content = i => `Line ${i}`) => Array.from({ length: count }, (_, index) => ({ name: index % 2 ? 'Aria' : 'Reader', is_user: index % 2 === 0, mes: content(index) }));
 const history = result => result.messages.filter(message => ['user', 'assistant'].includes(message.role));
 describe('source-derived Chat Completion packing', () => {
+    test('reconstructs stored tool invocations and audits the resulting prompt without executing tools', async () => {
+        const f = fixture({ oai: { function_calling: true } });
+        const chat = [...f.chat, { name: 'Reader', is_user: true, mes: 'Question' }, {
+            name: 'System', is_system: true, mes: 'Tool call',
+            extra: { tool_invocations: [{ id: 'call_1', name: 'lookup', parameters: '{"query":"hello"}', result: 'Found' }] },
+        }, { name: 'Aria', is_user: false, mes: 'Answer' }];
+        const built = await f.build(chat);
+        expect(built.messages).toEqual(expect.arrayContaining([
+            expect.objectContaining({ role: 'assistant', tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'lookup', arguments: '{"query":"hello"}' } }] }),
+            expect.objectContaining({ role: 'tool', tool_call_id: 'call_1', content: 'Found' }),
+        ]));
+        const audit = await auditPrompt(f.session, built.providerRequest);
+        expect(audit.usedTokens).toBeGreaterThan(0);
+    });
+    test('rejects invalid stored tool calls before dispatch and omits system calls when function calling is disabled', async () => {
+        const f = fixture({ oai: { function_calling: true } });
+        const toolRow = { name: 'System', is_system: true, mes: 'Tool call', extra: { tool_invocations: [{ id: 'same', name: 'lookup', parameters: '{}', result: 'one' }, { id: 'same', name: 'lookup', parameters: '{}', result: 'two' }] } };
+        await expect(f.build([...f.chat, toolRow])).rejects.toThrow('stored tool invocation is invalid');
+        toolRow.extra.tool_invocations = [];
+        await expect(f.build([...f.chat, toolRow])).rejects.toThrow('stored tool invocation is invalid');
+        f.session.settings.oai_settings.function_calling = false;
+        const built = await f.build([...f.chat, toolRow, ...rows(1)]);
+        expect(built.messages.some(message => message.tool_calls || message.role === 'tool')).toBe(false);
+    });
     test('group prompt assembly includes the group nudge and speaker names', async () => {
         const f = fixture({ prompts: [{ identifier: 'main', content: 'Members: {{group}}' }], oai: { group_nudge_prompt: 'Speak as {{char}}', new_group_chat_prompt: 'Members: {{group}}' } });
         const groupContext = {

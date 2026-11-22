@@ -28,6 +28,17 @@ export async function assembleSourcePrompt(session, context, fields, history, ex
     const frame = { context, oai: settingsForContext(session, context), warnings, regex };
     const manager = configurePromptRuntime(frame);
     const rows = applyPromptReasoning(history.map(message => ({ ...message })), type);
+    if (frame.oai.function_calling === true) {
+        for (const row of rows) {
+            if (!Array.isArray(row.extra?.tool_invocations)) continue;
+            if (row.extra.tool_invocations.length === 0) throw new ApiError(422, 'validation', 'A stored tool invocation is invalid. No model request was sent.');
+            const ids = new Set();
+            for (const invocation of row.extra.tool_invocations) {
+                if (!invocation || typeof invocation.id !== 'string' || !invocation.id || ids.has(invocation.id) || typeof invocation.name !== 'string' || !invocation.name || typeof invocation.parameters !== 'string' || typeof invocation.result !== 'string') throw new ApiError(422, 'validation', 'A stored tool invocation is invalid. No model request was sent.');
+                ids.add(invocation.id);
+            }
+        }
+    }
     const messages = setOpenAIMessages(rows);
     try {
         const [chat, counts] = await prepareOpenAIMessages({
@@ -74,8 +85,11 @@ export async function auditSourcePrompt(session, request) {
     configurePromptRuntime({ oai: settings, context: null, warnings: [] });
     let usedTokens = 3;
     for (const message of request.messages) {
-        if (typeof message.content !== 'string' || message.tool_calls) throw new ApiError(422, 'unsupported', 'Media/tool prompt auditing requires the corresponding native authorization/input lifecycle.');
-        usedTokens += await countTokensOpenAIAsync(message);
+        if (message.content != null && typeof message.content !== 'string') throw new ApiError(422, 'unsupported', 'Native media input is not configured.');
+        const countable = { ...message };
+        if (countable.content == null) delete countable.content;
+        if (countable.tool_calls) countable.tool_calls = JSON.stringify(countable.tool_calls);
+        usedTokens += await countTokensOpenAIAsync(countable);
     }
     if (usedTokens + responseTokens > contextTokens) throw new ApiError(422, 'validation', 'The final outgoing prompt exceeds the configured context after request hooks. No model request was sent.');
     return { contextTokens, responseTokens, usedTokens, remainingTokens: contextTokens - responseTokens - usedTokens, tokenizerModel: getTokenizerModel(), messageCount: request.messages.length };
