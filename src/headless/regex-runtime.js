@@ -16,7 +16,7 @@ export function nativeRegex(session, context, characterId = '') {
     const extensionSettings = structuredClone(session.extensionSettings ?? {});
     extensionSettings.disabledExtensions ??= [];
     extensionSettings.regex = (extensionSettings.regex ?? []).map(script => normalize(migrateGlobalRegex(script)));
-    const character = context.frame.characters[0]?.data;
+    const character = context.frame.characters[context.frame.characterIndex ?? 0]?.data;
     if (Array.isArray(character?.extensions?.regex_scripts)) character.extensions.regex_scripts = character.extensions.regex_scripts.map(normalize);
     const frame = {
         context, characterId, books: {}, settings: session.settings.world_info_settings,

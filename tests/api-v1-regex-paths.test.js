@@ -63,7 +63,27 @@ describe('source regex across storage, prompt, editing and read-only display', (
         expect(response.value.views).toMatchObject([{ index: 0, display: 'view' }]);
         expect(fs.readFileSync(file, 'utf8')).toBe(raw);
         fs.writeFileSync(file, JSON.stringify({ name: 'Missing', original_avatar: 'missing.png', mes: 'raw', is_user: false }));
-        expect((await req('/groups/Display/chats/DisplayChat/render', 'POST', {})).status).toBe(422);
+        const missing = await req('/groups/Display/chats/DisplayChat/render', 'POST', {});
+        expect(missing.status).toBe(200);
+        expect(missing.value.views).toMatchObject([{ index: 0, display: 'view' }]);
+        expect(missing.value.warnings.join(' ')).toContain('character-scoped');
+    });
+    test('group display uses each member scoped rules and handles a group without available members', async () => {
+        const png = fs.readFileSync(path.join(serverDirectory, 'default/content/default_Seraphina.png'));
+        fs.writeFileSync(path.join(directories.characters, 'Second.png'), writeCard(png, JSON.stringify({ name: 'Second', extensions: { regex_scripts: [{ ...script(2, '/raw/g', 'second', { markdownOnly: true }), placement: ['2'] }] } }), { preserveSpec: true }));
+        configure([], { character_allowed_regex: ['Second.png'] });
+        const groupFile = path.join(directories.groups, 'Members.json');
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Members', members: ['Aria.png', 'Second.png'], disabled_members: [], chats: ['MemberChat'], chat_id: 'MemberChat' }));
+        const chatFile = path.join(directories.groupChats, 'MemberChat.jsonl');
+        fs.writeFileSync(chatFile, JSON.stringify({ name: 'Second', original_avatar: 'Second.png', mes: 'raw', is_user: false }));
+        const result = await req('/groups/Members/chats/MemberChat/render', 'POST', {});
+        expect(result.status).toBe(200);
+        expect(result.value.views[0].display).toBe('second');
+        fs.writeFileSync(groupFile, JSON.stringify({ name: 'Members', members: ['Unavailable.png'], disabled_members: [], chats: ['MemberChat'], chat_id: 'MemberChat' }));
+        fs.writeFileSync(chatFile, JSON.stringify({ name: 'Reader', mes: 'raw', is_user: true }));
+        const userOnly = await req('/groups/Members/chats/MemberChat/render', 'POST', {});
+        expect(userOnly.status).toBe(200);
+        expect(userOnly.value.views[0].display).toBe('raw');
     });
     test('greetings apply standard global/authorized character/preset rules, never prompt/display-only rules', async () => {
         const rules = [script(2, '/greet/g', 'global'), script(2, '/global/g', 'display', { markdownOnly: true }), script(2, '/global/g', 'prompt', { promptOnly: true })];

@@ -277,13 +277,20 @@ export async function renderGroupChat(session, groupId, chatId, options = {}) {
     for (const message of page.messages) {
         if (typeof message.mes !== 'string') continue;
         let characterIndex = characters.findIndex(character => character.avatar === message.original_avatar);
-        if (characterIndex < 0 && !message.is_user) characterIndex = characters.findIndex(character => character.name === message.name);
-        if (characterIndex < 0 && message.is_user) characterIndex = 0;
-        const character = characters[characterIndex];
-        if (!character) throw new ApiError(422, 'unsupported', 'The message character is unavailable for display.');
+        if (characterIndex < 0 && !message.is_user && !message.original_avatar) characterIndex = characters.findIndex(character => character.name === message.name);
+        if (characterIndex < 0 && message.is_user && characters.length) characterIndex = 0;
+        let displayCharacters = characters;
+        if (characterIndex < 0) {
+            const name = typeof message.name === 'string' ? message.name : 'Character';
+            const avatar = typeof message.original_avatar === 'string' ? message.original_avatar : '';
+            displayCharacters = [...characters, { name, avatar, data: { name } }];
+            characterIndex = displayCharacters.length - 1;
+            if (!message.is_user) warnings.push('The message character is unavailable; character-scoped display rules cannot be applied.');
+        }
+        const character = displayCharacters[characterIndex];
         const result = await runNativeText(session, character.data, chat, {
-            mode: 'display', characterId: character.avatar.slice(0, -4), chatId: id,
-            nativeContext: options.nativeContext ?? {}, groupContext: { group: { ...item.group, id: item.id }, characters, characterIndex },
+            mode: 'display', characterId: character.avatar.endsWith('.png') ? character.avatar.slice(0, -4) : '', chatId: id,
+            nativeContext: options.nativeContext ?? {}, groupContext: { group: { ...item.group, id: item.id }, characters: displayCharacters, characterIndex },
             messages: [{ ...message, index: message.index + (headerless ? 1 : 0) }],
         });
         const view = result.messages[0];
