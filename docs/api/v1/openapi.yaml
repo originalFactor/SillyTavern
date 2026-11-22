@@ -210,6 +210,46 @@ paths:
           description: Variables or engine changed; explicitly reload before another save.
         '422':
           description: Stored state is invalid or the variable document exceeds its limit.
+  /api/v1/chats/{chatId}/sampling:
+    parameters:
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+      - { name: characterId, in: query, required: true, schema: { type: string } }
+    get:
+      operationId: getChatSampling
+      summary: Read the character chat sampling overrides and independent revision.
+      responses:
+        '200': { description: Object containing overrides and revision. }
+        '404': { description: Chat does not exist. }
+        '422': { description: Transcript or stored sampling is invalid. }
+    put:
+      operationId: saveChatSampling
+      summary: Replace character chat sampling overrides with revision checking.
+      description: Preserves other metadata and rejects active or unresolved generations. Explicit per-request overrides take precedence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, overrides]
+              properties:
+                expectedRevision: { type: string }
+                overrides:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    model: { type: string }
+                    temperature: { type: number }
+                    topP: { type: number }
+                    frequencyPenalty: { type: number }
+                    presencePenalty: { type: number }
+                    maxTokens: { type: integer, minimum: 1 }
+                    stop: { type: array, maxItems: 4, items: { type: string } }
+      responses:
+        '200': { description: Saved overrides and new revision. }
+        '400': { description: Invalid request. }
+        '409': { description: Revision conflict or active or unresolved generation. }
+        '422': { description: Invalid transcript or stored sampling. }
   /api/v1/chats/{chatId}/variables:
     parameters:
       - { name: chatId, in: path, required: true, schema: { type: string } }

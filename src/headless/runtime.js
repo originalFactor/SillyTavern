@@ -1,3 +1,4 @@
+import { chatSampling } from './chat-sampling.js';
 import { ApiError, getUserKey } from './contract.js';
 import { complete, fail, recordPluginEvents, beginGeneration, endGeneration, shouldStopGeneration, setFinalText, setFinalReasoning, setUsage, stage, withChatLock } from './generation-store.js';
 import { buildPrompt, runNativeText, auditPrompt } from './prompt.js';
@@ -79,7 +80,7 @@ export async function runGeneration(sourceRequest, session, record, input) {
             stage(record, 'prompt');
             const macroChat = previousReply ? [...chat, { ...previousReply, swipe_id: previousReply.swipes?.length ?? 1 }] : chat;
             let built = await buildPrompt(session, character.data, chat, {
-                type: input.type, input: input.input, overrides: input.overrides ?? {},
+                type: input.type, input: input.input, overrides: { ...chatSampling(chat), ...(input.overrides ?? {}) },
                 characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext,
                 macroChat,
                 stageUserInput: input.type === 'normal' && Boolean(input.input),

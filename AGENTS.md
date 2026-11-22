@@ -226,3 +226,9 @@ Host-side tests do not prove execution of the arm64 Android Node binary.
   IDs and no download, fallback encoder or character-count estimate. Model choice
   is whitelisted; a missing asset is explicit failure. It correctly distinguishes
   nerdstash_v2 from nerdstash and does not depend on the process working directory.
+
+- Character-chat sampling is stored under `chat_metadata.messenger_sampling`.
+  `chat-sampling.js` validates and revision-checks edits, fences active and
+  unresolved generation, and preserves other metadata. Preview and generation
+  merge these values before explicit request overrides. Group support and native
+  editing are separate work.

@@ -11,6 +11,7 @@ import { activePreset, activatePreset, deletePreset, exportPreset, getPreset, li
 import { publicConfiguration } from '../headless/redaction.js';
 import { TEXT_COMPLETION_SOURCES } from '../headless/text-provider.js';
 import { readPromptManager, savePromptManager } from '../headless/prompt-manager.js';
+import { chatSampling, readChatSampling, saveChatSampling } from '../headless/chat-sampling.js';
 import { deletePersona, listPersonas, savePersona, selectPersona } from '../headless/persona-management.js';
 import {
     assertChatIdle,
@@ -106,6 +107,7 @@ router.get('/capabilities', (_request, response) => {
             chatDelete: true,
             chatMutate: true,
             chatPaging: true,
+            chatSampling: true,
             chatRename: true,
             extensions: true,
             extensionSettings: headlessPlugins,
@@ -251,6 +253,12 @@ router.put('/chats/:chatId/world-info', asyncHandler(async (request, response) =
 }));
 router.put('/macro-variables/global', asyncHandler(async (request, response) => {
     response.json(saveGlobalMacros(createSession(request), request.body));
+}));
+router.get('/chats/:chatId/sampling', asyncHandler(async (request, response) => {
+    response.json(readChatSampling(createSession(request), requireSafeId(request.query.characterId, 'characterId'), request.params.chatId));
+}));
+router.put('/chats/:chatId/sampling', asyncHandler(async (request, response) => {
+    response.json(saveChatSampling(createSession(request), requireSafeId(request.query.characterId, 'characterId'), request.params.chatId, request.body));
 }));
 router.get('/chats/:chatId/variables', asyncHandler(async (request, response) => {
     response.json(readLocalMacros(createSession(request), requireSafeId(request.query.characterId, 'characterId'), request.params.chatId));
@@ -648,7 +656,7 @@ router.post('/generations/preview', asyncHandler(async (request, response) => {
     const macroChat = input.type === 'regenerate' ? [...chat] : null;
     if (input.type === 'regenerate' && chat.length > 1 && !chat.at(-1).is_user) chat.pop();
     const built = await buildPrompt(session, character.data, chat, {
-        type: input.type, input: input.input, overrides: input.overrides,
+        type: input.type, input: input.input, overrides: { ...chatSampling(chat), ...input.overrides },
         characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext, preview: true,
         macroChat, stageUserInput: input.type === 'normal' && Boolean(input.input),
     });

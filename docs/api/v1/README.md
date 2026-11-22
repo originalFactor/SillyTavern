@@ -729,3 +729,11 @@ generation/preview API still rejects non-Chat Completion profiles. Captured text
 transport/credentials, sampler mapping, native configuration and the complete
 preview/generate/recovery flow remain required. Instruct and text-provider
 capabilities remain false.
+
+### Character chat sampling
+
+`resources.chatSampling` advertises revision-checked `GET` and `PUT` at
+`/chats/{chatId}/sampling?characterId=...`. Overrides are stored in the ST chat
+metadata and merged into preview and generation. Explicit request overrides take
+precedence. Active and unresolved generations prevent edits. This endpoint
+currently covers character chats.

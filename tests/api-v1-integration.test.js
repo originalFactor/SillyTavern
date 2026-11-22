@@ -916,6 +916,38 @@ export async function afterGeneration(context) { return context.generation.type;
         expect(chat.messages[0].chat_metadata).toEqual({});
     });
 
+    test('chat sampling is revision checked and applies to preview and generation', async () => {
+        const file = path.join(directories.chats, 'Aria', 'Sampling.jsonl');
+        fs.writeFileSync(file, JSON.stringify({ chat_metadata: { unrelated: 'kept' } }));
+        const url = `${baseUrl}/api/v1/chats/Sampling/sampling?characterId=Aria`;
+        const headers = { 'Content-Type': 'application/json' };
+        try {
+            const initial = await (await fetch(url)).json();
+            expect(initial.overrides).toEqual({});
+            const saved = await fetch(url, { method: 'PUT', headers, body: JSON.stringify({ expectedRevision: initial.revision, overrides: { temperature: 0.25, maxTokens: 50 } }) });
+            expect(saved.status).toBe(200);
+            const document = await saved.json();
+            expect(document.overrides).toEqual({ maxTokens: 50, temperature: 0.25 });
+            const conflict = await fetch(url, { method: 'PUT', headers, body: JSON.stringify({ expectedRevision: initial.revision, overrides: {} }) });
+            expect(conflict.status).toBe(409);
+            const invalid = await fetch(url, { method: 'PUT', headers, body: JSON.stringify({ expectedRevision: document.revision, overrides: { maxTokens: -1 } }) });
+            expect(invalid.status).toBe(400);
+            const input = { characterId: 'Aria', chatId: 'Sampling', input: 'Sample', type: 'normal' };
+            const preview = await fetch(`${baseUrl}/api/v1/generations/preview`, { method: 'POST', headers, body: JSON.stringify(input) });
+            expect(preview.status).toBe(200);
+            expect((await preview.json()).providerRequest).toMatchObject({ temperature: 0.25, max_tokens: 50 });
+            const explicit = await fetch(`${baseUrl}/api/v1/generations/preview`, { method: 'POST', headers, body: JSON.stringify({ ...input, overrides: { temperature: 0.6 } }) });
+            expect((await explicit.json()).providerRequest).toMatchObject({ temperature: 0.6, max_tokens: 50 });
+            const start = providerRequests.length;
+            const generation = await fetch(`${baseUrl}/api/v1/generations`, { method: 'POST', headers, body: JSON.stringify({ ...input, clientRequestId: 'sampling-check' }) });
+            expect(generation.status).toBe(202);
+            expect((await waitForGeneration((await generation.json()).requestId)).status).toBe('done');
+            expect(providerRequests[start]).toMatchObject({ temperature: 0.25, max_tokens: 50 });
+            const header = JSON.parse(fs.readFileSync(file, 'utf8').split('\n')[0]);
+            expect(header.chat_metadata.unrelated).toBe('kept');
+        } finally { fs.rmSync(file, { force: true }); }
+    });
+
     test('preview does not call the provider', async () => {
         const before = providerRequests.length;
         const response = await fetch(`${baseUrl}/api/v1/generations/preview`, {
