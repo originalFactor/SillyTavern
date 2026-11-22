@@ -73,6 +73,17 @@ describe('native source text-completion requests', () => {
         expect(received[0].body).toMatchObject({ prompt: built.prompt, temperature: 0.3, max_tokens: 32, top_p: 0.7, stream: true, stop: ['\n***', '<END>'] });
         for (const key of ['api_server', 'api_type', 'provider_format', 'messages', 'max_new_tokens', 'samplers']) expect(received[0].body).not.toHaveProperty(key);
     });
+    test('saved chat sampling reaches the text completion request', async () => {
+        const chatFile = path.join(directories.chats, 'Aria', 'Chat.jsonl');
+        writeChat(chatFile, [{ chat_metadata: { messenger_sampling: { temperature: 0.3, maxTokens: 32, topP: 0.7, stop: ['<END>'] } } }, chat[1]]);
+        const session = await prepareProviderSession(source);
+        work = runGeneration(source, session, record, { characterId: 'Aria', chatId: 'Chat', type: 'normal', input: 'Question', overrides: {} });
+        await work;
+        expect(record.status).toBe('done');
+        expect(received).toHaveLength(1);
+        expect(received[0].body).toMatchObject({ temperature: 0.3, max_tokens: 32, top_p: 0.7, stop: ['\n***', '<END>'] });
+        expect(readChat(chatFile)[0].chat_metadata.messenger_sampling).toMatchObject({ temperature: 0.3, maxTokens: 32, topP: 0.7, stop: ['<END>'] });
+    });
     test('accepted text URL/source/key remain bound across later provider/key changes', async () => {
         const { session, built } = await prepared();
         writeSecret(directories, SECRET_KEYS.GENERIC, 'new-key-must-not-go-to-old-server');
