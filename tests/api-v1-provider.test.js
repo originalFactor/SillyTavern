@@ -225,6 +225,19 @@ describe('non-replaying bounded provider dispatch', () => {
         await expect(request()).rejects.toMatchObject({ code: 'unknown', retryable: false });
         expect(calls).toBe(2);
     });
+    test.each(['length', 'content_filter', 'stop'])('does not accept tool calls with %s finish reason', async finishReason => {
+        const event = { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', function: { name: 'lookup', arguments: '{}' } }] }, finish_reason: finishReason }] };
+        route = (_req, res) => res.type('text/event-stream').end(`data: ${JSON.stringify(event)}\n\ndata: [DONE]\n\n`);
+        await expect(request()).rejects.toMatchObject({ code: 'unknown', retryable: false });
+        expect(snapshot(record).toolCalls).toEqual([]);
+        expect(calls).toBe(1);
+    });
+    test('conflicting finish reasons leave the outcome unknown', async () => {
+        route = (_req, res) => res.type('text/event-stream').end(token('Partial') + 'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: {"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}\n\n');
+        await expect(request()).rejects.toMatchObject({ code: 'unknown', retryable: false });
+        expect(record.text).toBe('Partial');
+        expect(calls).toBe(1);
+    });
 });
 
 describe('SSE and public settings boundaries', () => {

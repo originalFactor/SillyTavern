@@ -143,6 +143,7 @@ export async function runChatCompletion(originalRequest, providerRequest, record
         }
         stream.push(decoder.decode(), true);
         if (!stream.completed) throw new ApiError(502, 'unknown', 'Provider stream ended without a completion marker. Partial text was not saved; the generation may have been billed.');
+        if (stream.toolCalls.length && stream.finishReason && stream.finishReason !== 'tool_calls') throw new ApiError(502, 'unknown', 'Provider did not finish its tool calls; the generation outcome is unknown.');
         const toolCalls = stream.validatedToolCalls();
         if (toolCalls.length) {
             const redacted = toolCalls.map(call => ({
@@ -177,6 +178,7 @@ export class ProviderSseDecoder {
         this.reasoning = '';
         this.completed = false;
         this.done = false;
+        this.finishReason = null;
         this.outputBytes = 0;
         this.toolCalls = [];
         this.toolBytes = 0;
@@ -253,6 +255,8 @@ export class ProviderSseDecoder {
             if (choice.finish_reason) {
                 if (!['stop', 'length', 'content_filter', 'tool_calls'].includes(choice.finish_reason)) throw new ApiError(502, 'unknown', 'Provider returned an unrecognized completion reason.');
                 if (choice.finish_reason === 'tool_calls' && !this.toolCalls.length) throw new ApiError(502, 'unknown', 'Provider returned an empty tool-call completion; the generation outcome is unknown.');
+                if (this.finishReason && this.finishReason !== choice.finish_reason) throw new ApiError(502, 'unknown', 'Provider returned conflicting completion reasons; the generation outcome is unknown.');
+                this.finishReason = choice.finish_reason;
                 this.completed = true;
             }
         }
