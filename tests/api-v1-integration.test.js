@@ -1001,6 +1001,12 @@ export async function afterGeneration(context) { return context.generation.type;
             expect(saved.status).toBe(200);
             const document = await saved.json();
             expect(document.overrides).toEqual({ maxTokens: 50, temperature: 0.25 });
+            const active = createGeneration({ handle: 'contract-user', clientRequestId: 'sampling-fence', characterId: 'Aria', chatId: 'Sampling', type: 'normal', directories }).record;
+            try {
+                const blocked = await fetch(url, { method: 'PUT', headers, body: JSON.stringify({ expectedRevision: document.revision, overrides: {} }) });
+                expect(blocked.status).toBe(409);
+                expect((await (await fetch(url)).json()).overrides).toEqual(document.overrides);
+            } finally { cancel(active); }
             const conflict = await fetch(url, { method: 'PUT', headers, body: JSON.stringify({ expectedRevision: initial.revision, overrides: {} }) });
             expect(conflict.status).toBe(409);
             const invalid = await fetch(url, { method: 'PUT', headers, body: JSON.stringify({ expectedRevision: document.revision, overrides: { maxTokens: -1 } }) });
