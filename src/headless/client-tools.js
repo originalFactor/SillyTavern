@@ -53,8 +53,8 @@ export function validateClientTools(value) {
 
 export function assertClientToolsProfile(session, input) {
     if (!input.tools?.length) return;
-    if (session.settings.oai_settings?.chat_completion_source === 'claude') {
-        throw new ApiError(422, 'unsupported', 'Client tools are unavailable for Claude Messages.');
+    if (['claude', 'makersuite'].includes(session.settings.oai_settings?.chat_completion_source)) {
+        throw new ApiError(422, 'unsupported', 'Client tools are unavailable for this native provider format.');
     }
     if (!['normal', 'regenerate'].includes(input.type) || session.settings.main_api !== 'openai'
         || session.settings.oai_settings?.function_calling !== true) {

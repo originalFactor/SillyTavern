@@ -143,6 +143,7 @@ router.get('/capabilities', (_request, response) => {
             chatCompletionsOpenAI: true,
             chatCompletionsOpenAICompatible: true,
             claudeMessages: true,
+            googleAiStudio: true,
             otherChatCompletionSources: false,
             novelai: false,
             kobold: false,
@@ -314,6 +315,7 @@ router.get('/provider-credentials', asyncHandler(async (request, response) => {
         openaiConfigured: Boolean(readSecret(session.directories, SECRET_KEYS.OPENAI)),
         customConfigured: Boolean(readSecret(session.directories, SECRET_KEYS.CUSTOM)),
         claudeConfigured: Boolean(readSecret(session.directories, SECRET_KEYS.CLAUDE)),
+        makersuiteConfigured: Boolean(readSecret(session.directories, SECRET_KEYS.MAKERSUITE)),
         textgenConfigured: Object.fromEntries(Object.entries(TEXT_COMPLETION_SOURCES).map(([source, key]) => [source, Boolean(readSecret(session.directories, SECRET_KEYS[key]))])),
     });
 }));
@@ -324,7 +326,7 @@ router.put('/provider-credentials', asyncHandler(async (request, response) => {
     const provider = request.body?.provider;
     const apiKey = request.body?.apiKey;
     const key = credentialKey(provider, SECRET_KEYS);
-    if (!key) throw new ApiError(400, 'validation', 'Choose openai, custom, claude, or textgen:<supported source>.');
+    if (!key) throw new ApiError(400, 'validation', 'Choose openai, custom, claude, makersuite, or textgen:<supported source>.');
     if (typeof apiKey !== 'string' || apiKey.trim().length === 0 || apiKey.length > 4096) {
         throw new ApiError(400, 'validation', 'apiKey must be a non-empty string up to 4096 characters.');
     }
@@ -336,7 +338,7 @@ router.delete('/provider-credentials/:provider', asyncHandler(async (request, re
     const session = createSession(request);
     const { SECRET_KEYS, SecretManager } = await import('./secrets.js');
     const key = credentialKey(request.params.provider, SECRET_KEYS);
-    if (!key) throw new ApiError(400, 'validation', 'Choose openai, custom, claude, or textgen:<supported source>.');
+    if (!key) throw new ApiError(400, 'validation', 'Choose openai, custom, claude, makersuite, or textgen:<supported source>.');
     const manager = new SecretManager(session.directories);
     const entries = manager.getSecretState()[key];
     if (Array.isArray(entries)) {
@@ -349,6 +351,7 @@ function credentialKey(provider, keys) {
     if (provider === 'openai') return keys.OPENAI;
     if (provider === 'custom') return keys.CUSTOM;
     if (provider === 'claude') return keys.CLAUDE;
+    if (provider === 'makersuite') return keys.MAKERSUITE;
     const source = typeof provider === 'string' && provider.startsWith('textgen:') ? provider.slice(8) : '';
     return Object.hasOwn(TEXT_COMPLETION_SOURCES, source) ? keys[TEXT_COMPLETION_SOURCES[source]] : null;
 }

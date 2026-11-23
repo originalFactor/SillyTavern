@@ -97,14 +97,16 @@ export function auditPrompt(session, request) {
     }
     const oai = session.settings.oai_settings ?? {};
     const isClaude = oai.chat_completion_source === 'claude';
+    const isGemini = oai.chat_completion_source === 'makersuite';
     const settings = { oai_settings: {
         chat_completion_source: oai.chat_completion_source ?? 'openai',
         openai_max_context: Number(oai.openai_max_context ?? session.settings.max_context ?? 4096),
         openai_max_tokens: Number(oai.openai_max_tokens ?? session.settings.amount_gen ?? 300),
         ...(isClaude ? { openai_model: 'claude', claude_model: 'claude' } : {}),
+        ...(isGemini ? { openai_model: 'gemini', google_model: 'gemini' } : {}),
     } };
     return execute({ operation: 'audit', session: { settings }, request: {
-        model: isClaude ? 'claude' : request.model,
+        model: isClaude ? 'claude' : isGemini ? 'gemini' : request.model,
         max_tokens: request.max_tokens, max_completion_tokens: request.max_completion_tokens ?? request.max_tokens,
         messages: request.messages, tools: request.tools, tool_choice: request.tool_choice,
         parallel_tool_calls: request.parallel_tool_calls, functions: request.functions, function_call: request.function_call,
