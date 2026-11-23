@@ -782,7 +782,7 @@ paths:
   /api/v1/provider-credentials:
     get:
       operationId: getProviderCredentialState
-      summary: Read whether supported provider credentials are configured; never returns secret values.
+      summary: Read whether OpenAI, OpenAI-compatible, Claude Messages or supported text-completion credentials are configured; never returns secret values.
       responses:
         '200':
           description: Credential presence flags.
@@ -797,7 +797,7 @@ paths:
               type: object
               required: [provider, apiKey]
               properties:
-                provider: { type: string, enum: [openai, custom] }
+                provider: { type: string, description: openai, custom, claude, or textgen:<supported source>. }
                 apiKey: { type: string, minLength: 1, maxLength: 4096, writeOnly: true }
       responses:
         '200':
@@ -805,12 +805,12 @@ paths:
   /api/v1/provider-credentials/{provider}:
     delete:
       operationId: deleteProviderCredential
-      summary: Delete all stored keys for the selected OpenAI or OpenAI-compatible provider.
+      summary: Delete all stored keys for the selected supported provider.
       parameters:
         - name: provider
           in: path
           required: true
-          schema: { type: string, enum: [openai, custom] }
+          schema: { type: string, description: openai, custom, claude, or textgen:<supported source>. }
       responses:
         '200':
           description: Credential deleted.

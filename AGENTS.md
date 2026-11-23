@@ -69,7 +69,13 @@ from the companion entry point.
   aggregate fields are published only when every call reports them.
 - `src/headless/presets.js` manages revision-checked named Chat Completion/context/instruct/system templates. Presets use native ST directories and bundled defaults; portable snapshots/exports exclude credentials. Selection checks both file and active-config revisions, requires explicit consent for connection changes, and uses the upstream-checked alias table in `preset-mapping.js`. Template selection must not enable unsupported modes. Update the bundle/Gradle source inputs when changing packaged defaults.
 - `PUT /instruct-mode` changes only the active Instruct enabled switch against the active Instruct revision. `textInstructSettings` advertises the switch used by text-completion assembly; it does not claim complete Instruct compatibility.
-- Current provider scope remains OpenAI/custom Chat Completions. Advanced
+- Current provider scope includes OpenAI/custom Chat Completions, six native
+  text-completion formats and Anthropic Claude Messages. `headless/anthropic-messages.js`
+  converts text-only prompt rows, uses the `claude` credential with
+  `x-api-key`, preserves the accepted endpoint/key in a private WeakMap and
+  decodes bounded named SSE events with explicit terminal stop reasons.
+  Tool use, native media and arbitrary client tool catalogs are rejected before
+  dispatch. Advanced
   macros, full presets/instruct, group chats, tools, images, TTS and vectors
   remain incomplete; do not mark them supported without implementation and
   contract/runtime verification.

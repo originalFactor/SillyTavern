@@ -96,9 +96,16 @@ export function auditPrompt(session, request) {
         return execute({ operation: 'auditString', session: { settings: { max_context: session.settings.max_context, amount_gen: session.settings.amount_gen, power_user: { tokenizer: session.settings.power_user?.tokenizer, token_padding: session.settings.power_user?.token_padding }, textgenerationwebui_settings: { type: request.api_type } } }, request: { prompt: body.prompt, negative_prompt: body.negative_prompt, max_tokens: body.max_tokens, max_new_tokens: body.max_new_tokens, model: body.model } });
     }
     const oai = session.settings.oai_settings ?? {};
-    const settings = { oai_settings: { chat_completion_source: oai.chat_completion_source ?? 'openai', openai_max_context: Number(oai.openai_max_context ?? session.settings.max_context ?? 4096), openai_max_tokens: Number(oai.openai_max_tokens ?? session.settings.amount_gen ?? 300) } };
+    const isClaude = oai.chat_completion_source === 'claude';
+    const settings = { oai_settings: {
+        chat_completion_source: oai.chat_completion_source ?? 'openai',
+        openai_max_context: Number(oai.openai_max_context ?? session.settings.max_context ?? 4096),
+        openai_max_tokens: Number(oai.openai_max_tokens ?? session.settings.amount_gen ?? 300),
+        ...(isClaude ? { openai_model: 'claude', claude_model: 'claude' } : {}),
+    } };
     return execute({ operation: 'audit', session: { settings }, request: {
-        model: request.model, max_tokens: request.max_tokens, max_completion_tokens: request.max_completion_tokens,
+        model: isClaude ? 'claude' : request.model,
+        max_tokens: request.max_tokens, max_completion_tokens: request.max_completion_tokens ?? request.max_tokens,
         messages: request.messages, tools: request.tools, tool_choice: request.tool_choice,
         parallel_tool_calls: request.parallel_tool_calls, functions: request.functions, function_call: request.function_call,
     } });

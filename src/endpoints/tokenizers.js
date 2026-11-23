@@ -249,20 +249,21 @@ class WebTokenizer {
     }
 }
 
-const spp_llama = new SentencePieceTokenizer('src/tokenizers/llama.model');
-const spp_nerd = new SentencePieceTokenizer('src/tokenizers/nerdstash.model');
-const spp_nerd_v2 = new SentencePieceTokenizer('src/tokenizers/nerdstash_v2.model');
-const spp_mistral = new SentencePieceTokenizer('src/tokenizers/mistral.model');
-const spp_yi = new SentencePieceTokenizer('src/tokenizers/yi.model');
-const spp_gemma = new SentencePieceTokenizer('src/tokenizers/gemma.model');
-const spp_jamba = new SentencePieceTokenizer('src/tokenizers/jamba.model');
-const claude_tokenizer = new WebTokenizer('src/tokenizers/claude.json');
-const llama3_tokenizer = new WebTokenizer('src/tokenizers/llama3.json');
-const commandRTokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/command-r.json.gz', 'src/tokenizers/llama3.json');
-const commandATokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/command-a.json.gz', 'src/tokenizers/llama3.json');
-const qwen2Tokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/qwen2.json.gz', 'src/tokenizers/llama3.json');
-const nemoTokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/nemo.json.gz', 'src/tokenizers/llama3.json');
-const deepseekTokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/deepseek.json.gz', 'src/tokenizers/llama3.json');
+const localTokenizer = name => path.join(serverDirectory, 'src', 'tokenizers', name);
+const spp_llama = new SentencePieceTokenizer(localTokenizer('llama.model'));
+const spp_nerd = new SentencePieceTokenizer(localTokenizer('nerdstash.model'));
+const spp_nerd_v2 = new SentencePieceTokenizer(localTokenizer('nerdstash_v2.model'));
+const spp_mistral = new SentencePieceTokenizer(localTokenizer('mistral.model'));
+const spp_yi = new SentencePieceTokenizer(localTokenizer('yi.model'));
+const spp_gemma = new SentencePieceTokenizer(localTokenizer('gemma.model'));
+const spp_jamba = new SentencePieceTokenizer(localTokenizer('jamba.model'));
+const claude_tokenizer = new WebTokenizer(localTokenizer('claude.json'));
+const llama3_tokenizer = new WebTokenizer(localTokenizer('llama3.json'));
+const commandRTokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/command-r.json.gz', localTokenizer('llama3.json'));
+const commandATokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/command-a.json.gz', localTokenizer('llama3.json'));
+const qwen2Tokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/qwen2.json.gz', localTokenizer('llama3.json'));
+const nemoTokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/nemo.json.gz', localTokenizer('llama3.json'));
+const deepseekTokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/deepseek.json.gz', localTokenizer('llama3.json'));
 
 export const sentencepieceTokenizers = [
     'llama',

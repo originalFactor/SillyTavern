@@ -5,6 +5,7 @@ import { publicConfiguration, redactProviderText } from './redaction.js';
 import { ApiError } from './contract.js';
 import { appendToken, isTerminal, markProviderDispatched, setToolCalls, setUsage, shouldStopGeneration } from './generation-store.js';
 import { textProviderConnection, textProviderBody, TEXT_COMPLETION_SOURCES } from './text-provider.js';
+import { AnthropicSseDecoder, anthropicMessagesBody } from './anthropic-messages.js';
 
 // Credentials are deliberately outside the serializable session, prompt and
 // journal. A worker keeps the exact connection authorized at admission.
@@ -21,17 +22,20 @@ export async function prepareProviderSession(request) {
         return session;
     }
     const source = String(session.settings.oai_settings?.chat_completion_source ?? 'openai');
-    const key = readSecret(session.directories, source === 'custom' ? SECRET_KEYS.CUSTOM : SECRET_KEYS.OPENAI, null);
-    acceptedConnections.set(session, { format: 'chat-completions', source, key, url: String(session.settings.oai_settings?.custom_url ?? '') });
+    const secretName = source === 'custom' ? SECRET_KEYS.CUSTOM : source === 'claude' ? SECRET_KEYS.CLAUDE : SECRET_KEYS.OPENAI;
+    const key = readSecret(session.directories, secretName, null);
+    const url = source === 'custom' ? String(session.settings.oai_settings?.custom_url ?? '')
+        : source === 'claude' ? String(session.settings.oai_settings?.reverse_proxy ?? '') : '';
+    acceptedConnections.set(session, { format: source === 'claude' ? 'anthropic-messages' : 'chat-completions', source, key, url });
     return session;
 }
 
 export async function runSessionCompletion(request, providerRequest, record, session, clientTools = []) {
     const connection = acceptedConnections.get(session);
-    const format = providerRequest.provider_format ?? 'chat-completions';
+    const format = providerRequest.provider_format ?? (String(providerRequest.chat_completion_source ?? 'openai') === 'claude' ? 'anthropic-messages' : 'chat-completions');
     if (connection && (connection.format !== format || (format === 'text-completions'
         ? connection.source !== providerRequest.api_type || connection.url !== providerRequest.api_server
-        : connection.source !== String(providerRequest.chat_completion_source ?? 'openai') || (connection.source === 'custom' && connection.url !== String(providerRequest.custom_url ?? ''))))) throw new ApiError(409, 'conflict', 'The accepted provider connection changed inside the generation.');
+        : connection.source !== String(providerRequest.chat_completion_source ?? 'openai') || ((connection.source === 'custom' || connection.source === 'claude') && connection.url !== String(providerRequest.custom_url ?? ''))))) throw new ApiError(409, 'conflict', 'The accepted provider connection changed inside the generation.');
     return runChatCompletion(request, providerRequest, record, connection, session, clientTools);
 }
 export const runSessionChatCompletion = runSessionCompletion;
@@ -54,22 +58,32 @@ export async function runChatCompletion(originalRequest, providerRequest, record
     const { default: fetch, Headers } = await import('node-fetch');
     const { readSecret, SECRET_KEYS } = await import('../endpoints/secrets.js');
     const request = structuredClone(providerRequest);
-    if (request.provider_format && !['chat-completions', 'text-completions'].includes(request.provider_format)) throw new ApiError(422, 'unsupported', 'Unknown native completion wire format.');
-    const isText = request.provider_format === 'text-completions';
-    if (isText && !Object.hasOwn(TEXT_COMPLETION_SOURCES, request.api_type)) throw new ApiError(422, 'unsupported', 'Unknown native text-completion source.');
     const source = String(request.chat_completion_source ?? 'openai');
-    const url = isText ? String(request.api_server) : source === 'custom'
-        ? new URL('chat/completions', `${String(request.custom_url).replace(/\/?$/, '/')}`).toString()
-        : 'https://api.openai.com/v1/chat/completions';
+    const declaredFormat = request.provider_format ?? (source === 'claude' ? 'anthropic-messages' : 'chat-completions');
+    if (!['chat-completions', 'text-completions', 'anthropic-messages'].includes(declaredFormat)) throw new ApiError(422, 'unsupported', 'Unknown native completion wire format.');
+    const isText = declaredFormat === 'text-completions';
+    const isClaude = declaredFormat === 'anthropic-messages';
+    if (isClaude && source !== 'claude') throw new ApiError(422, 'unsupported', 'Claude Messages requires the claude provider source.');
+    if (isText && !Object.hasOwn(TEXT_COMPLETION_SOURCES, request.api_type)) throw new ApiError(422, 'unsupported', 'Unknown native text-completion source.');
+    const url = isText ? String(request.api_server) : isClaude
+        ? new URL('messages', `${String(request.custom_url || 'https://api.anthropic.com/v1').replace(/\/?$/, '/')}`).toString()
+        : source === 'custom'
+            ? new URL('chat/completions', `${String(request.custom_url).replace(/\/?$/, '/')}`).toString()
+            : 'https://api.openai.com/v1/chat/completions';
     let apiKey = acceptedConnection?.key;
     if (apiKey === undefined) {
         if (isText) apiKey = readSecret(originalRequest.user.directories, SECRET_KEYS[TEXT_COMPLETION_SOURCES[request.api_type]], null);
         else if (source === 'custom') apiKey = readSecret(originalRequest.user.directories, SECRET_KEYS.CUSTOM, null);
+        else if (isClaude) apiKey = readSecret(originalRequest.user.directories, SECRET_KEYS.CLAUDE, null);
         else apiKey = readSecret(originalRequest.user.directories, SECRET_KEYS.OPENAI, null);
     }
-    const headers = new Headers({ 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey ?? ''}` });
+    const headers = new Headers({ 'Content-Type': 'application/json' });
+    if (isClaude) {
+        headers.set('x-api-key', apiKey ?? '');
+        headers.set('anthropic-version', '2023-06-01');
+    } else headers.set('Authorization', `Bearer ${apiKey ?? ''}`);
     if (!isText) mergeYamlIntoHeaders(headers, String(request.custom_include_headers ?? ''));
-    const body = isText ? textProviderBody(request) : {
+    const body = isText ? textProviderBody(request) : isClaude ? anthropicMessagesBody(request, clientTools) : {
         model: request.model,
         messages: request.messages,
         temperature: request.temperature,
@@ -81,7 +95,7 @@ export async function runChatCompletion(originalRequest, providerRequest, record
         top_p: request.top_p,
         stop: request.stop,
     };
-    if (!isText) {
+    if (!isText && !isClaude) {
         mergeYamlIntoObject(body, String(request.custom_include_body ?? ''));
         excludeKeysByYaml(body, String(request.custom_exclude_body ?? ''));
         if (clientTools.length) {
@@ -141,7 +155,7 @@ export async function runChatCompletion(originalRequest, providerRequest, record
             throw new ApiError(502, 'unknown', 'Provider did not return an SSE stream; the generation outcome is unknown.');
         }
         const decoder = new TextDecoder('utf-8', { fatal: true });
-        const stream = new ProviderSseDecoder(record, secrets);
+        const stream = isClaude ? new AnthropicSseDecoder(record, secrets) : new ProviderSseDecoder(record, secrets);
         let bytes = 0;
         for await (const chunk of response.body) {
             if (isTerminal(record.status)) return { text: stream.text, reasoning: stream.reasoning, usage: stream.usage };
@@ -156,8 +170,11 @@ export async function runChatCompletion(originalRequest, providerRequest, record
         stream.push(decoder.decode(), true);
         if (shouldStopGeneration(record)) return { text: stream.text, reasoning: stream.reasoning, usage: stream.usage };
         if (!stream.completed) throw new ApiError(502, 'unknown', 'Provider stream ended without a completion marker. Partial text was not saved; the generation may have been billed.');
-        if (stream.toolCalls.length && stream.finishReason && stream.finishReason !== 'tool_calls') throw new ApiError(502, 'unknown', 'Provider did not finish its tool calls; the generation outcome is unknown.');
-        const toolCalls = stream.validatedToolCalls();
+        if (isClaude && (!stream.done || !stream.finishReason)) throw new ApiError(502, 'unknown', 'Claude Messages stream ended without a terminal stop reason. Partial text was not saved; the generation may have been billed.');
+        if (!isClaude && stream.toolCalls.length && stream.finishReason && stream.finishReason !== 'tool_calls') {
+            throw new ApiError(502, 'unknown', 'Provider did not finish its tool calls; the generation outcome is unknown.');
+        }
+        const toolCalls = isClaude ? [] : stream.validatedToolCalls();
         if (toolCalls.length) {
             const redacted = toolCalls.map(call => ({
                 id: redactProviderText(call.id, secrets),

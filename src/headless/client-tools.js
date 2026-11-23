@@ -53,6 +53,9 @@ export function validateClientTools(value) {
 
 export function assertClientToolsProfile(session, input) {
     if (!input.tools?.length) return;
+    if (session.settings.oai_settings?.chat_completion_source === 'claude') {
+        throw new ApiError(422, 'unsupported', 'Client tools are unavailable for Claude Messages.');
+    }
     if (!['normal', 'regenerate'].includes(input.type) || session.settings.main_api !== 'openai'
         || session.settings.oai_settings?.function_calling !== true) {
         throw new ApiError(422, 'unsupported', 'Client tools require enabled Chat Completion function calling and normal or regenerate generation.');

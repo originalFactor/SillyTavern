@@ -15,7 +15,8 @@ export function buildProviderRequest(session, messages, overrides = {}) {
     if (session.settings.main_api === 'textgenerationwebui') return buildTextProviderRequest(session, overrides);
     const oai = session.settings.oai_settings ?? {};
     const source = String(oai.chat_completion_source ?? 'openai');
-    const model = overrides.model ?? (source === 'custom' ? oai.custom_model : oai.openai_model);
+    if (!['openai', 'custom', 'claude'].includes(source)) throw new ApiError(422, 'unsupported', 'This native Chat Completion provider format is not connected.');
+    const model = overrides.model ?? (source === 'custom' ? oai.custom_model : source === 'claude' ? oai.claude_model : oai.openai_model);
     if (!model) {
         throw new ApiError(422, 'validation', 'No Chat Completion model is configured.');
     }
@@ -44,6 +45,11 @@ export function buildProviderRequest(session, messages, overrides = {}) {
         request.custom_include_body = String(oai.custom_include_body ?? '');
         request.custom_exclude_body = String(oai.custom_exclude_body ?? '');
         request.custom_include_headers = String(oai.custom_include_headers ?? '');
+    }
+    if (source === 'claude') {
+        request.custom_url = String(oai.reverse_proxy ?? '').trim();
+        request.provider_format = 'anthropic-messages';
+        request.temperature = Math.min(Number(request.temperature), 1);
     }
     return request;
 }
