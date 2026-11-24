@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import isDocker from 'is-docker';
 import webpack from 'webpack';
-import { serverDirectory } from './src/server-directory.js';
-import { getVersion, color } from './src/util.js';
+import { serverDirectory } from './dist/src/server-directory.js';
+import { getVersion, color } from './dist/src/util.js';
 
 /**
  * Generate a cache version string based on the application version, Git revision, and Webpack version.
@@ -51,7 +51,7 @@ function pruneWebpackCache(webpackRoot, currentCacheVersion) {
 const appVersion = await getVersion();
 
 /**
- * Get the Webpack configuration for the public/lib.js file.
+ * Get the Webpack configuration for the compat-source/upstream/lib.js file.
  * 1. Docker has got cache and the output file pre-baked.
  * 2. Non-Docker environments use the global DATA_ROOT variable to determine the cache and output directories.
  * @param {object} options Configuration options.
@@ -92,7 +92,7 @@ export default function getPublicLibConfig({ forceDist = false, pruneCache = fal
 
     return {
         mode: 'production',
-        entry: path.join(serverDirectory, 'public/lib.js'),
+        entry: path.join(serverDirectory, 'compat-source/upstream/lib.js'),
         cache: {
             type: 'filesystem',
             cacheDirectory: cacheDirectory,

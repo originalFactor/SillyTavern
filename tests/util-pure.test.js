@@ -32,7 +32,7 @@ import {
     getArrayBufferSlice,
     Cache,
     MemoryLimitedMap,
-} from '../src/util';
+} from '../dist/src/util';
 
 describe('keyToEnv', () => {
     test('should convert dotted key to env var format', () => {

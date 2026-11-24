@@ -1,0 +1,1618 @@
+openapi: 3.1.0
+info:
+  title: SillyTavern Headless API
+  version: 1.0.0
+  summary: Opt-in versioned API for native clients, including Jetpack Compose.
+  description: |
+    API v1 is disabled by default. Enable `api.v1.enabled` in `config.yaml` or set
+    `SILLYTAVERN_API_V1_ENABLED=true`. All endpoints are mounted under `/api/v1`
+    after the standard SillyTavern authentication and CSRF middleware.
+
+    Headless plugin hooks are additionally gated by `api.v1.headlessPlugins`
+    (default false). When enabled, `runtime: headless` extensions execute in an
+    isolated Worker with a bounded `SillyTavern.getContext()` compatibility shim.
+servers:
+  - url: /
+security:
+  - cookieSession: []
+    csrfToken: []
+  # Set by SILLYTAVERN_COMPANION_MODE=true: the loopback-only companion entry
+  # requires a 32-byte bearer capability instead of cookie/CSRF auth.
+  - bearerCapability: []
+paths:
+  /api/v1/generations/{requestId}/tool-batches/{batchId}/{action}:
+    post:
+      operationId: updateClientToolBatch
+      summary: Claim, decline or submit complete results for an inspected tool batch.
+      description: >-
+        A fresh durable claim authorizes one execution. Duplicate claims return
+        dispatchAuthorized false. Complete result receipts may continue the
+        admitted provider conversation once. Restarted workers cannot resume
+        execution. The inspected batch contains catalogRevision, the SHA-256 of
+        the ECMAScript JSON.stringify representation of the admitted tools
+        array. It identifies definitions and does not authorize execution.
+      parameters:
+        - $ref: '#/components/parameters/requestId'
+        - { name: batchId, in: path, required: true, schema: { type: string } }
+        - { name: action, in: path, required: true, schema: { type: string, enum: [claim, decline, results] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision]
+              properties:
+                expectedRevision: { type: string }
+                executionId: { type: string, minLength: 1, maxLength: 200 }
+                results:
+                  type: array
+                  description: Complete ordered result set within 1 MiB. Required for results action.
+                  items:
+                    type: object
+                    required: [id, result, isError]
+                    properties:
+                      id: { type: string }
+                      result: { type: string }
+                      isError: { type: boolean }
+      responses:
+        '200': { description: Batch and idempotent status. Claims include dispatchAuthorized, true only for the fresh durable claim. }
+        '400': { description: Invalid identity or incomplete, oversized or incorrectly ordered results. }
+        '404': { description: Request, batch or action unavailable. }
+        '409': { description: Stale revision, conflicting claim or receipt, or absent live worker. }
+  /api/v1/regex-settings:
+    get:
+      operationId: getRegexSettings
+      summary: Read independently revisioned global regex scripts and explicit scope grants.
+      responses:
+        '200': { description: Object with revision and settings (enabled, scripts, characterAllowed, presetAllowed). Maximum 1 MiB; unrelated settings and secrets are excluded. }
+        '422': { description: Stored regex/permission state is malformed or oversized. Nothing is truncated. }
+    put:
+      operationId: saveRegexSettings
+      summary: Save global regex and permission lists without implicitly granting imported scopes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, settings]
+              properties:
+                expectedRevision: { type: string }
+                settings:
+                  type: object
+                  required: [enabled, scripts, characterAllowed, presetAllowed]
+                  properties:
+                    enabled: { type: boolean }
+                    scripts: { type: array, maxItems: 512, items: { type: object, additionalProperties: true } }
+                    characterAllowed: { type: array, maxItems: 512, uniqueItems: true, items: { type: string }, description: Exact avatar filenames. Grants also apply to future edits of those cards. }
+                    presetAllowed: { type: object, additionalProperties: { type: array, maxItems: 512, uniqueItems: true, items: { type: string } }, description: API ID to preset-name arrays. Grants also apply to future edits. }
+                confirmScopeChanges: { type: boolean, default: false, description: Separate explicit confirmation required for added scopes or re-enabling scoped regex. Never inferred from script/card/preset JSON. }
+      responses:
+        '200': { description: Saved settings and revision. Latest unrelated provider, macro, note and extension settings survive. }
+        '400': { description: Invalid script fields, permissions or size. }
+        '409': { description: Revision conflict or explicit scope confirmation required. Draft was not applied. }
+  /api/v1/chats/{chatId}/render:
+    parameters:
+      - $ref: '#/components/parameters/chatId'
+    post:
+      operationId: renderNativeChatPage
+      summary: Read a stable transcript page with read-only source-derived display projections and native macro facts.
+      description: Rendering never publishes variable effects or modifies the transcript. Raw mes and extra.reasoning remain in the response; native_display and native_display_reasoning are transient projections. Proposed variable changes produce a diagnostic. Facts and drafts travel in the body, never the URL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [characterId]
+              properties:
+                characterId: { type: string }
+                limit: { type: integer, minimum: 1, maximum: 500, default: 200 }
+                before: { type: integer, minimum: 0 }
+                after: { type: integer, minimum: 0 }
+                nativeContext:
+                  $ref: '#/components/schemas/GenerationInput/properties/nativeContext'
+      responses:
+        '200': { description: Stable-indexed page with raw messages and native display projections. No provider call or transcript write. }
+        '400': { description: Invalid native context. }
+        '422': { description: Corrupt transcript/card or bounded regex evaluation failure. }
+  /api/v1/world-info:
+    get:
+      operationId: listWorldInfoBooks
+      summary: List bounded native World Info book names and unsafe-file warnings.
+      responses:
+        '200': { description: Object with books (name and bytes) and warnings arrays. Catalog does not parse book contents. }
+        '422': { description: Storage unavailable or more than 512 books. }
+  /api/v1/world-info/{name}:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getWorldInfoBook
+      summary: Read a strict JSON/UTF-8 native book and its SHA-256 revision (4 MiB maximum).
+      responses:
+        '200': { description: Object with name, revision and opaque book. }
+        '404': { description: Book not found. }
+        '422': { description: Unsafe, malformed or oversized book. }
+    put:
+      operationId: saveWorldInfoBook
+      summary: Create or replace a complete native book, preserving supplied opaque fields.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [book]
+              properties:
+                expectedRevision: { type: string, nullable: true, description: Omit or null for create only; current digest required for replacement. }
+                book: { type: object, additionalProperties: true, description: Native SillyTavern object with entries object; maximum 4 MiB and 20000 entries. }
+      responses:
+        '200': { description: Saved name, revision and book. }
+        '400': { description: Invalid native book or unsafe name. }
+        '409': { description: Book exists or inspected revision changed. Draft was not applied. }
+    delete:
+      operationId: deleteWorldInfoBook
+      summary: Delete only an unbound book using the inspected revision.
+      description: Checks global/extra character, Persona, primary card, ordinary chat and group-chat references. Does not detach references. Reference inventories are bounded to 10000 entries, 64 MiB total, 4 MiB per card and 8 MiB per chat; unsafe/corrupt/oversized data fails closed.
+      parameters:
+        - { name: expectedRevision, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Deleted name. }
+        '409': { description: Book changed or remains referenced. }
+        '422': { description: Reference inventory cannot be inspected safely. }
+  /api/v1/world-info/{name}/export:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: exportWorldInfoBook
+      summary: Export complete native JSON as a bounded base64 file envelope.
+      responses:
+        '200': { description: fileName, mimeType and dataBase64 for a native JSON file. }
+  /api/v1/world-info-settings:
+    get:
+      operationId: getWorldInfoSettings
+      summary: Read World Info settings and their independent revision, excluding provider settings.
+      responses:
+        '200': { description: Object with settings and revision. }
+    put:
+      operationId: saveWorldInfoSettings
+      summary: Replace only World Info settings with revision checking and selected-book validation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, settings]
+              properties:
+                expectedRevision: { type: string }
+                settings: { type: object, additionalProperties: true, description: At most 1 MiB. world_info.globalSelect is a name array; world_info.charLore records contain character ID name and extraBooks array. Unknown fields are preserved as supplied. }
+      responses:
+        '200': { description: Saved settings and revision. Unrelated latest settings are merged. }
+        '400': { description: Invalid scan controls or duplicate/malformed bindings. }
+        '404': { description: Selected book not found. }
+        '409': { description: Settings revision changed. }
+  /api/v1/chats/{chatId}/world-info:
+    parameters:
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+      - { name: characterId, in: query, required: true, schema: { type: string } }
+    get:
+      operationId: getChatWorldInfo
+      summary: Read this chat's book binding and independent revision without evaluating macros.
+      responses:
+        '200': { description: Object with name (empty means no chat book) and revision. }
+    put:
+      operationId: saveChatWorldInfo
+      summary: Save this chat's book binding, preserving all other metadata and transcript rows.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, name]
+              properties:
+                expectedRevision: { type: string }
+                name: { type: string, description: Exact existing book name; empty clears the binding. }
+      responses:
+        '200': { description: Saved name and revision. }
+        '409': { description: Binding changed or chat has an active/unresolved generation. }
+        '422': { description: Invalid transcript/metadata or unreadable selected book. }
+  /api/v1/macro-variables/global:
+    get:
+      operationId: getGlobalMacroVariables
+      summary: Read global variables and the saved upstream macro-engine choice.
+      responses:
+        '200':
+          description: Scoped variable document; never includes provider settings or vault credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MacroVariableState' }
+        '422':
+          description: Stored state is invalid or exceeds the 7 MiB native document limit; no truncation.
+    put:
+      operationId: saveGlobalMacroVariables
+      summary: Replace global variables and engine choice with revision checking.
+      description: Merges the latest unrelated settings. Engine selection affects new admissions; global variables are read at preparation. No automatic retry.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GlobalMacroVariableEdit' }
+      responses:
+        '200':
+          description: Saved document with its new revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MacroVariableState' }
+        '409':
+          description: Variables or engine changed; explicitly reload before another save.
+        '422':
+          description: Stored state is invalid or the variable document exceeds its limit.
+  /api/v1/groups/{groupId}/chats/{chatId}/sampling:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getGroupChatSampling
+      summary: Read group chat sampling overrides and revision.
+      responses:
+        '200': { description: Overrides and revision. }
+        '404': { description: Group or chat not found. }
+    put:
+      operationId: saveGroupChatSampling
+      summary: Replace group chat sampling overrides with revision checking.
+      description: Shared chat references use the same settings and active or unresolved generation fence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, overrides]
+              properties:
+                expectedRevision: { type: string }
+                overrides: { type: object }
+      responses:
+        '200': { description: Saved overrides and revision. }
+        '400': { description: Invalid request. }
+        '409': { description: Revision conflict or generation blocks editing. }
+        '422': { description: Invalid stored chat. }
+  /api/v1/chats/{chatId}/sampling:
+    parameters:
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+      - { name: characterId, in: query, required: true, schema: { type: string } }
+    get:
+      operationId: getChatSampling
+      summary: Read the character chat sampling overrides and independent revision.
+      responses:
+        '200': { description: Object containing overrides and revision. }
+        '404': { description: Chat does not exist. }
+        '422': { description: Transcript or stored sampling is invalid. }
+    put:
+      operationId: saveChatSampling
+      summary: Replace character chat sampling overrides with revision checking.
+      description: Preserves other metadata and rejects active or unresolved generations. Explicit per-request overrides take precedence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, overrides]
+              properties:
+                expectedRevision: { type: string }
+                overrides:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    model: { type: string }
+                    temperature: { type: number }
+                    topP: { type: number }
+                    frequencyPenalty: { type: number }
+                    presencePenalty: { type: number }
+                    maxTokens: { type: integer, minimum: 1 }
+                    stop: { type: array, maxItems: 4, items: { type: string } }
+      responses:
+        '200': { description: Saved overrides and new revision. }
+        '400': { description: Invalid request. }
+        '409': { description: Revision conflict or active or unresolved generation. }
+        '422': { description: Invalid transcript or stored sampling. }
+  /api/v1/chats/{chatId}/variables:
+    parameters:
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+      - { name: characterId, in: query, required: true, schema: { type: string } }
+    get:
+      operationId: getChatMacroVariables
+      summary: Read this chat's variables and revision without evaluating macros.
+      responses:
+        '200':
+          description: Local variable document; no engine or global settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MacroVariableState' }
+        '404':
+          description: Chat does not exist; reading does not create it.
+        '422':
+          description: Invalid transcript/UTF-8/header/state or oversized variable document.
+    put:
+      operationId: saveChatMacroVariables
+      summary: Replace only local variables, preserving transcript and other metadata.
+      description: Rejects active or unresolved generation admissions and unreadable transcript lines. Omitting a variable key deletes it. The engine/global fields are not accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LocalMacroVariableEdit' }
+      responses:
+        '200':
+          description: Saved local document with its new revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MacroVariableState' }
+        '409':
+          description: Variables changed or a generation admission blocks editing.
+        '404':
+          description: Chat does not exist.
+        '422':
+          description: Invalid transcript/UTF-8/header/state or oversized variable document; no partial replacement.
+  /api/v1/companion/health:
+    get:
+      operationId: getCompanionHealth
+      summary: Readiness probe for the loopback-only native companion entry.
+      description: Only present in companion mode; capability-gated like all other routes.
+      responses:
+        '200':
+          description: Companion is ready.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  service: { type: string }
+                  version: { type: integer }
+                  headless: { type: boolean }
+        '401':
+          description: Missing or invalid capability.
+  /api/v1/presets/{kind}:
+    parameters:
+      - { name: kind, in: path, required: true, schema: { type: string, enum: [chat-completion, context, instruct, sysprompt] } }
+    get:
+      operationId: listNamedPresets
+      summary: List bundled/user templates, file revisions and the active configuration revision.
+      responses:
+        '200': { description: Preset catalog with activeName, activeRevision, presets and visible read warnings. }
+  /api/v1/preset-settings/{kind}:
+    parameters:
+      - { name: kind, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: snapshotActivePreset
+      summary: Snapshot active settings with upstream preset field names and no credentials.
+      responses:
+        '200': { description: Active kind, name, revision and portable preset JSON. }
+  /api/v1/instruct-mode:
+    put:
+      operationId: setTextInstructEnabled
+      summary: Set text-completion Instruct formatting against the active settings revision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, enabled]
+              properties:
+                expectedRevision: { type: string }
+                enabled: { type: boolean }
+      responses:
+        '200': { description: Updated active Instruct preset document. }
+        '400': { description: Invalid input. }
+        '409': { description: Active Instruct settings changed. }
+  /api/v1/presets/{kind}/{name}:
+    parameters:
+      - { name: kind, in: path, required: true, schema: { type: string } }
+      - { name: name, in: path, required: true, schema: { type: string, maxLength: 200 } }
+    get:
+      operationId: getNamedPreset
+      summary: Inspect a preset, its revision and connection changes before selection.
+      responses:
+        '200': { description: Preset document with origin, credentialsRedacted and connectionChanges. }
+        '404': { description: Preset not found. }
+    put:
+      operationId: saveNamedPreset
+      summary: Create a named preset or replace the inspected revision (maximum 1 MiB JSON).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [preset]
+              properties:
+                preset: { type: object, additionalProperties: true }
+                expectedRevision: { type: string }
+      responses:
+        '200': { description: Saved document with new revision. }
+        '400': { description: Invalid, oversized or credential-bearing preset. }
+        '409': { description: Existing name or stale revision. }
+    delete:
+      operationId: deleteNamedPreset
+      summary: Delete an inspected inactive user preset, revealing any bundled original.
+      parameters:
+        - { name: expectedRevision, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: User preset removed. }
+        '409': { description: Revision conflict, active preset or protected built-in. }
+  /api/v1/presets/{kind}/{name}/activate:
+    parameters:
+      - { name: kind, in: path, required: true, schema: { type: string } }
+      - { name: name, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: activateNamedPreset
+      summary: Select the inspected preset with active-configuration conflict checking.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, expectedActiveRevision]
+              properties:
+                expectedRevision: { type: string }
+                expectedActiveRevision: { type: string }
+                allowConnectionChanges: { type: boolean, default: false }
+      responses:
+        '200': { description: Updated preset catalog. }
+        '409': { description: Revision conflict or explicit connection-change confirmation required. }
+        '422': { description: Unsupported provider source. }
+  /api/v1/presets/{kind}/{name}/export:
+    parameters:
+      - { name: kind, in: path, required: true, schema: { type: string } }
+      - { name: name, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: exportNamedPreset
+      summary: Export portable JSON without credentials.
+      responses:
+        '200': { description: File envelope with fileName, mimeType and dataBase64. }
+  /api/v1/prompt-manager:
+    get:
+      operationId: getPromptManager
+      summary: Read the active global Chat Completion prompt configuration and revision.
+      responses:
+        '200':
+          description: Scoped configuration, with opaque upstream prompt/order fields preserved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revision, prompts, order]
+                properties:
+                  revision: { type: string }
+                  prompts: { type: array, maxItems: 128, items: { type: object, additionalProperties: true } }
+                  order: { type: array, maxItems: 128, items: { type: object, additionalProperties: true } }
+    put:
+      operationId: savePromptManager
+      summary: Replace the inspected active prompt configuration without changing provider settings.
+      description: |
+        Requires expectedRevision from GET; stale or missing revisions return 409.
+        Maximum 128 prompts/order entries and 512 KiB of configuration. Writes only
+        oai_settings.prompts and the global prompt_order (ID 100001), preserving
+        other settings and orders. Supports relative order, boolean enables,
+        roles, markers, injection_position (0/1), injection_depth (0..10000),
+        injection_order (-10000..10000), injection_trigger and forbid_overrides.
+        Applies to subsequent generation snapshots. Named preset storage, full
+        macro compatibility and Instruct mode remain incomplete.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, prompts, order]
+              properties:
+                expectedRevision: { type: string }
+                prompts: { type: array, maxItems: 128, items: { type: object, additionalProperties: true } }
+                order: { type: array, maxItems: 128, items: { type: object, additionalProperties: true } }
+      responses:
+        '200': { description: Saved configuration with new revision. }
+        '400': { description: Malformed or oversized prompt configuration. }
+        '409': { description: Configuration changed; reload before saving. }
+  /api/v1/capabilities:
+    get:
+      operationId: getCapabilities
+      summary: List supported API v1 capabilities.
+      description: |
+        `features.serverPlugins` reflects the real `enableServerPlugins` config.
+        `features.headlessPlugins` reflects `api.v1.headlessPlugins`; when true,
+        `features.headlessHooks` lists the supported hook names. Clients MUST show
+        unsupported features explicitly and MUST NOT fall back to private SPA endpoints.
+      responses:
+        '200':
+          description: Capability document.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  features:
+                    type: object
+                    properties:
+                      images: { type: boolean }
+                      audio: { type: boolean }
+                      tts: { type: boolean }
+                      embeddings: { type: boolean }
+                      vectors: { type: boolean }
+  /api/v1/groups:
+    get:
+      operationId: listGroups
+      summary: List native SillyTavern group descriptors.
+      responses:
+        '200': { description: Group documents with revision and bounded invalid-file diagnostics. }
+    post:
+      operationId: createGroup
+      summary: Create a native group descriptor.
+      responses:
+        '201': { description: Created group document with revision. }
+  /api/v1/groups/{groupId}:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getGroup
+      summary: Read a native group descriptor and its SHA-256 revision.
+      responses:
+        '200': { description: Group document. }
+    put:
+      operationId: updateGroup
+      summary: Replace a group descriptor with revision checking.
+      responses:
+        '200': { description: Updated group document. }
+        '409': { description: Revision conflict. }
+    delete:
+      operationId: deleteGroup
+      summary: Delete a group and optionally its explicitly confirmed group chats.
+      responses:
+        '200': { description: Deleted group. }
+        '409': { description: Revision conflict or deleteChats confirmation required. }
+  /api/v1/groups/{groupId}/chats:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: listGroupChats
+      summary: List group JSONL chats attached to a native group.
+      responses:
+        '200': { description: Attached group chats. }
+    post:
+      operationId: createGroupChat
+      summary: Attach and initialize a group chat with revision checking.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chatId, expectedRevision]
+              properties:
+                chatId: { type: string }
+                expectedRevision: { type: string }
+      responses:
+        '201': { description: Updated group document. }
+        '409': { description: Revision conflict or existing chat file. }
+  /api/v1/groups/{groupId}/chats/{chatId}:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getGroupChat
+      summary: Read a bounded paged group JSONL transcript.
+      responses:
+        '200': { description: Paged group transcript. }
+    delete:
+      operationId: deleteGroupChat
+      summary: Delete one group chat and update its group descriptor.
+      parameters:
+        - { name: expectedRevision, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Updated group document. }
+        '404': { description: Chat is not attached to the group. }
+        '409': { description: Stale revision, active generation, or shared chat. }
+  /api/v1/groups/{groupId}/chats/{chatId}/render:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: renderGroupChat
+      summary: Read a group transcript page and its native display projections.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                limit: { type: integer, minimum: 1, maximum: 500 }
+                before: { type: integer, minimum: 0 }
+                after: { type: integer, minimum: 0 }
+                nativeContext: { type: object }
+      responses:
+        '200': { description: Raw page, indexed display views and warnings from the same transcript snapshot. }
+        '400': { description: Invalid display context. }
+        '404': { description: Group chat not found. }
+  /api/v1/groups/{groupId}/chats/{chatId}/swipe:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: selectGroupSwipe
+      summary: Select an assistant reply alternative.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [index, swipeId]
+              properties:
+                index: { type: integer, minimum: 0 }
+                swipeId: { type: integer, minimum: 0 }
+                expectedMessage: { type: object }
+      responses:
+        '200': { description: Selected reply alternative. }
+        '400': { description: Invalid message or alternative. }
+        '409': { description: Chat has an active or unresolved generation. }
+  /api/v1/groups/{groupId}/chats/{chatId}/messages/delete:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: deleteGroupMessage
+      summary: Delete an unchanged group message.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [index, expectedMessage]
+              properties:
+                index: { type: integer, minimum: 0 }
+                expectedMessage: { type: object }
+      responses:
+        '200': { description: Message deleted. }
+        '404': { description: Message or chat not found. }
+        '409': { description: Message changed or chat has an active or unresolved generation. }
+  /api/v1/groups/{groupId}/chats/{chatId}/messages/edit:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: editGroupMessage
+      summary: Edit an unchanged group message using native text processing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [index, expectedMessage, text]
+              properties:
+                index: { type: integer, minimum: 0 }
+                expectedMessage: { type: object }
+                text: { type: string }
+                nativeContext: { type: object }
+      responses:
+        '200': { description: Message edited. }
+        '409': { description: Group or transcript changed, or generation remains unresolved. }
+        '422': { description: Message character is unavailable. }
+  /api/v1/groups/{groupId}/chats/{chatId}/preview:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: previewGroupPrompt
+      summary: Prepare a group member's prompt without dispatching a provider request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [characterId]
+              properties:
+                characterId: { type: string }
+                input: { type: string }
+                type: { type: string, enum: [normal, quiet, regenerate, continue] }
+                overrides: { type: object }
+                nativeContext: { type: object }
+      responses:
+        '200': { description: Prepared prompt and warnings. }
+        '404': { description: Group, chat or member was not found. }
+  /api/v1/groups/{groupId}/chats/{chatId}/generations:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: generateGroupChat
+      summary: Admit a durable group generation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clientRequestId]
+              properties:
+                clientRequestId: { type: string }
+                input: { type: string }
+                type: { type: string, enum: [normal, regenerate, continue] }
+                overrides: { type: object }
+                nativeContext: { type: object }
+      responses:
+        '202': { description: Accepted or previously admitted generation. }
+        '409': { description: Conflicting request identity or unresolved generation. }
+        '422': { description: Unsupported generation type. }
+  /csrf-token:
+    get:
+      operationId: getCsrfToken
+      summary: Obtain the CSRF token for the current cookie session.
+      responses:
+        '200':
+          description: CSRF token.
+  /api/v1/session:
+    get:
+      operationId: getSession
+      summary: Describe the authenticated user session.
+      responses:
+        '200':
+          description: Session document.
+  /api/v1/settings:
+    get:
+      operationId: getSettings
+      summary: Read raw and typed user settings.
+    patch:
+      operationId: patchSettings
+      summary: Apply an RFC 7386 JSON Merge Patch to user settings.
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              type: object
+              additionalProperties: true
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Updated raw settings.
+  /api/v1/provider-credentials:
+    get:
+      operationId: getProviderCredentialState
+      summary: Read whether the OpenAI credential is configured; never returns secret values.
+      responses:
+        '200':
+          description: Credential presence flags.
+    put:
+      operationId: saveProviderCredential
+      summary: Store the OpenAI API key in the server-side secrets file.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, apiKey]
+              properties:
+                provider: { type: string, enum: [openai] }
+                apiKey: { type: string, minLength: 1, maxLength: 4096, writeOnly: true }
+      responses:
+        '200':
+          description: Credential stored; response contains no secret value.
+  /api/v1/provider-credentials/{provider}:
+    delete:
+      operationId: deleteProviderCredential
+      summary: Delete all stored keys for OpenAI.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema: { type: string, enum: [openai] }
+      responses:
+        '200':
+          description: Credential deleted.
+  /api/v1/characters:
+    get:
+      operationId: listCharacters
+      summary: List characters using stable filename-based identifiers.
+    post:
+      operationId: createCharacter
+      summary: Create a V1/V2/V3 character card without rewriting its schema or unknown fields.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [characterId, card]
+              properties:
+                characterId: { type: string }
+                card: { type: object, additionalProperties: true }
+      responses:
+        '201': { description: Card created with its revision digest. }
+        '409': { description: ID already exists or an active generation fences this character. }
+  /api/v1/characters/import:
+    post:
+      operationId: importCharacter
+      summary: Import one JSON, PNG/APNG or CHARX card using a caller-owned character ID.
+      description: JSON is bounded to 1 MiB, PNG/APNG to 4 MiB, and CHARX ZIP archives to 7 MiB with bounded entry paths and uncompressed sizes. No imported code is executed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [characterId, format, dataBase64]
+              properties:
+                characterId: { type: string }
+                format: { type: string, enum: [json, png, charx] }
+                dataBase64: { type: string, contentEncoding: base64 }
+      responses:
+        '201': { description: Imported card document with revision. }
+        '413': { description: Card or image exceeds the documented size limit. }
+        '422': { description: Malformed or unsupported card format. }
+  /api/v1/characters/{characterId}:
+    get:
+      operationId: getCharacter
+      summary: Read a normalized character card.
+      parameters:
+        - $ref: '#/components/parameters/characterId'
+    put:
+      operationId: updateCharacter
+      summary: Replace the exact inspected card revision, preserving its existing PNG image.
+      parameters:
+        - $ref: '#/components/parameters/characterId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [card, expectedRevision]
+              properties:
+                card: { type: object, additionalProperties: true }
+                expectedRevision: { type: string }
+      responses:
+        '200': { description: Updated card document with new revision. }
+        '409': { description: Stale revision or character has an active generation. }
+    delete:
+      operationId: deleteCharacter
+      summary: Delete a revision-checked character; associated chat deletion requires an explicit flag.
+      parameters:
+        - $ref: '#/components/parameters/characterId'
+        - name: expectedRevision
+          in: query
+          required: true
+          schema: { type: string }
+        - name: deleteChats
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200': { description: Character deleted. }
+        '409': { description: Stale revision, active generation, or unconfirmed associated chat deletion. }
+  /api/v1/characters/{characterId}/avatar:
+    put:
+      operationId: replaceCharacterAvatar
+      summary: Replace the PNG avatar while retaining the card and checking its revision.
+      parameters:
+        - $ref: '#/components/parameters/characterId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, dataBase64]
+              properties:
+                expectedRevision: { type: string }
+                dataBase64: { type: string, description: Canonical base64 PNG or APNG bounded to 4 MiB. }
+      responses:
+        '200': { description: Updated card document and revision. }
+        '409': { description: Stale revision or active generation. }
+        '422': { description: Invalid PNG image. }
+  /api/v1/characters/{characterId}/export:
+    get:
+      operationId: exportCharacter
+      summary: Export the current character as JSON, PNG or a bounded CHARX archive.
+      parameters:
+        - $ref: '#/components/parameters/characterId'
+        - name: format
+          in: query
+          schema: { type: string, enum: [json, png, charx], default: json }
+      responses:
+        '200':
+          description: Native file-picker envelope.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [fileName, mimeType, dataBase64]
+                properties:
+                  fileName: { type: string }
+                  mimeType: { type: string, enum: [application/json, image/png] }
+                  dataBase64: { type: string, contentEncoding: base64 }
+  /api/v1/personas:
+    get:
+      operationId: listPersonas
+      summary: Read a persona-only catalog with selectedId and a revision independent of provider settings.
+      responses:
+        '200': { description: Persona catalog. No unrelated settings or credentials are returned. }
+  /api/v1/personas/{personaId}:
+    parameters:
+      - name: personaId
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      operationId: savePersona
+      summary: Save a persona using standard SillyTavern name/description/placement settings.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, name, description]
+              properties:
+                expectedRevision: { type: string }
+                name: { type: string, minLength: 1, maxLength: 200 }
+                description: { type: string, maxLength: 65536 }
+                title: { type: string, maxLength: 200 }
+                position: { type: integer, enum: [0, 2, 3, 4, 9] }
+                depth: { type: integer, minimum: 0, maximum: 10000 }
+                role: { type: integer, enum: [0, 1, 2] }
+                lorebook: { type: string, description: Existing native book name; empty clears the Persona binding. }
+                select: { type: boolean, default: false }
+      responses:
+        '200': { description: Updated persona catalog. Unknown descriptor fields are preserved. }
+        '409': { description: Persona revision changed. }
+        '422': { description: Persona placement/role/depth is invalid. }
+    delete:
+      operationId: deletePersona
+      summary: Remove a persona and its avatar while preserving existing chat messages.
+      parameters:
+        - name: expectedRevision
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Updated persona catalog; deleting the selected persona resets the active name to User. }
+  /api/v1/personas/{personaId}/select:
+    post:
+      operationId: selectPersona
+      summary: Select the persona for subsequent generation requests without rewriting existing history.
+      parameters:
+        - name: personaId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision]
+              properties:
+                expectedRevision: { type: string }
+      responses:
+        '200': { description: Updated persona catalog. }
+  /api/v1/characters/{characterId}/chats:
+    get:
+      operationId: listChats
+      summary: List JSONL chats for a character.
+      parameters:
+        - $ref: '#/components/parameters/characterId'
+    post:
+      operationId: createChat
+      summary: Create a new chat, optionally seeded with the character greeting.
+      parameters:
+        - $ref: '#/components/parameters/characterId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chatId]
+              properties:
+                chatId:
+                  type: string
+                firstMessage:
+                  type: string
+                  description: Overrides the card greeting; omitted uses the card's first_mes. Expanded once by the saved upstream macro engine; variable effects occur before publication. An existing chat ID is rejected before evaluation.
+                nativeContext:
+                  $ref: '#/components/schemas/GenerationInput/properties/nativeContext'
+      responses:
+        '201':
+          description: Chat created.
+        '409':
+          description: Chat already exists.
+  /api/v1/chats/{chatId}:
+    get:
+      operationId: getChat
+      summary: Read a stable-indexed page of ST chat messages.
+      parameters:
+        - $ref: '#/components/parameters/chatId'
+        - $ref: '#/components/parameters/characterIdQuery'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 200
+        - name: before
+          in: query
+          description: Return the newest messages with index below this value.
+          schema:
+            type: integer
+            minimum: 0
+        - name: after
+          in: query
+          description: Return the oldest messages with index above this value.
+          schema:
+            type: integer
+            minimum: 0
+        - name: render
+          in: query
+          description: Add read-only native display projections with default macro facts. Native clients use POST /render to supply device facts privately.
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Chat page with total, hasMore and nextBefore.
+    delete:
+      operationId: deleteChat
+      summary: Delete a chat file.
+      parameters:
+        - $ref: '#/components/parameters/chatId'
+        - $ref: '#/components/parameters/characterIdQuery'
+      responses:
+        '200':
+          description: Chat deleted.
+        '404':
+          description: Chat not found.
+    patch:
+      operationId: renameChat
+      summary: Rename a chat file.
+      parameters:
+        - $ref: '#/components/parameters/chatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [characterId, newChatId]
+              properties:
+                characterId: { type: string }
+                newChatId: { type: string }
+      responses:
+        '200':
+          description: Chat renamed.
+        '404':
+          description: Chat not found.
+        '409':
+          description: Target chat already exists.
+  /api/v1/chats/{chatId}/messages:
+    post:
+      operationId: mutateChat
+      summary: Append, edit, delete or select a swipe by stable index.
+      description: Text append/edit runs source storage regex (runOnEdit for edits) in the bounded worker, then rechecks admission and the transcript before publishing effects.
+      parameters:
+        - $ref: '#/components/parameters/chatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [characterId, action]
+              properties:
+                characterId:
+                  type: string
+                action:
+                  type: string
+                  enum: [append, edit, delete, swipe]
+                index:
+                  type: integer
+                  description: Required for edit/delete.
+                swipeId:
+                  type: integer
+                  minimum: 0
+                  description: Required with action swipe; selects a stored assistant alternative.
+                nativeContext:
+                  $ref: '#/components/schemas/GenerationInput/properties/nativeContext'
+                message:
+                  type: object
+                  description: Required for append/edit.
+      responses:
+        '201':
+          description: Message appended.
+        '200':
+          description: Message edited or deleted.
+        '409': { description: Active/unresolved admission or transcript changed during evaluation. }
+        '500': { description: Publication is unknown; inspect text/variables before another explicit save. }
+  /api/v1/extensions:
+    get:
+      operationId: listExtensions
+      summary: List UI/server extensions and their API v1 runtime classification.
+  /api/v1/extensions/{extensionId}/settings:
+    get:
+      operationId: getExtensionSettings
+      summary: Read one extension's settings namespace.
+      parameters:
+        - $ref: '#/components/parameters/extensionId'
+      responses:
+        '200':
+          description: Extension settings.
+    patch:
+      operationId: patchExtensionSettings
+      summary: Merge-patch one extension's settings namespace (requires headlessPlugins).
+      parameters:
+        - $ref: '#/components/parameters/extensionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Updated extension settings.
+        '403':
+          description: Headless plugins are disabled.
+  /api/v1/extensions/{extensionId}/shell:
+    get:
+      operationId: getExtensionShell
+      summary: Open a same-origin compatibility WebView shell with a real context bridge.
+      parameters:
+        - $ref: '#/components/parameters/extensionId'
+      responses:
+        '200':
+          description: HTML shell.
+          content:
+            text/html:
+              schema:
+                type: string
+  /api/v1/generations/preview:
+    post:
+      operationId: previewGeneration
+      summary: Assemble a prompt without contacting a model provider.
+      description: Supports normal, quiet, regenerate and continue. Returns derived providerRequest; never dispatches or publishes variables. Regenerate excludes the prior assistant reply, while continue reserves its prefix and nudge.
+      requestBody:
+        $ref: '#/components/requestBodies/GenerationInput'
+      responses:
+        '200':
+          description: Prompt messages, segments, warnings and provider request.
+  /api/v1/generations:
+    get:
+      operationId: listGenerations
+      summary: Discover scoped active, uncertain and historical request identities without replay.
+      parameters:
+        - { name: characterId, in: query, required: true, schema: { type: string } }
+        - { name: chatId, in: query, required: true, schema: { type: string } }
+        - { name: targetKind, in: query, schema: { type: string, enum: [character, group], default: character } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: before, in: query, schema: { type: string, format: uuid } }
+        - { name: unresolvedOnly, in: query, schema: { type: boolean, default: false } }
+      responses:
+        '200':
+          description: Scoped metadata page. Canonical snapshots remain readable outside the memory cache.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [generations, hasMore, nextBefore]
+                properties:
+                  generations: { type: array, items: { $ref: '#/components/schemas/GenerationReference' } }
+                  hasMore: { type: boolean }
+                  nextBefore: { type: [string, 'null'] }
+        '503': { description: Journal integrity or synchronization could not be verified. }
+    post:
+      operationId: createGeneration
+      summary: Start an idempotent generation.
+      description: |
+        Detached from the request. The chat JSONL is written ONCE, atomically, at
+        successful completion; a failure or cancellation leaves no partial user row.
+        `regenerate` preserves the trailing assistant reply as a swipe and selects
+        the new alternative; `continue` appends to the selected alternative.
+        Admission synchronizes both the canonical journal and permanent caller-key
+        index before dispatch. A duplicate never starts another worker, including
+        after process restart or memory expiry; different normalized payloads with
+        the same key return 409. The accepted connection/credential is captured in
+        memory and never serialized. Active/draining work and unacknowledged
+        uncertain outcomes block another generation. Storage failure returns 503
+        instead of a successful admission.
+      requestBody:
+        $ref: '#/components/requestBodies/GenerationInput'
+      responses:
+        '202':
+          description: Generation accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerationAccepted'
+  /api/v1/generations/by-client/{clientRequestId}:
+    parameters:
+      - { name: clientRequestId, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 200 } }
+    get:
+      operationId: resolveGenerationByClient
+      summary: Resolve unconfirmed acceptance through the permanent caller-key index.
+      description: A 404 is only a lookup result; reserve/stop the key before permitting a delayed POST to be forgotten.
+      responses:
+        '200':
+          description: Existing canonical snapshot; no provider is contacted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerationSnapshot' }
+        '404': { description: No admission is visible at this lookup. }
+        '503': { description: Storage could not be verified; do not infer absence or replay. }
+  /api/v1/generations/by-client/{clientRequestId}/abandon:
+    parameters:
+      - { name: clientRequestId, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 200 } }
+    post:
+      operationId: abandonUnconfirmedGeneration
+      summary: Cancel the admitted task or permanently reserve a not-yet-admitted key against late execution.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [characterId, chatId]
+              properties:
+                characterId: { type: string }
+                chatId: { type: string }
+                targetKind: { type: string, enum: [character, group], default: character }
+      responses:
+        '200':
+          description: Snapshot of the original task or a no-dispatch cancelled tombstone.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerationSnapshot' }
+        '409': { description: Caller identity belongs to a different chat. }
+        '503': { description: Reservation could not be made durable. }
+  /api/v1/generations/{requestId}/acknowledge:
+    post:
+      operationId: acknowledgeGenerationOutcome
+      summary: Acknowledge the exact inspected uncertain outcome after local work drains.
+      parameters:
+        - $ref: '#/components/parameters/requestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedSeq]
+              properties:
+                expectedSeq: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: Acknowledged snapshot; the old request is never replayed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerationSnapshot' }
+        '409': { description: State changed or the local worker has not drained. }
+        '503': { description: Acknowledgement could not be synchronized. }
+  /api/v1/generations/{requestId}:
+    get:
+      operationId: getGeneration
+      summary: Poll the current generation snapshot after a disconnected SSE stream.
+      description: |
+        Restores persisted journal entries after a server restart. Records that
+        were in flight are restored as `unknown` and are NEVER replayed automatically.
+      parameters:
+        - $ref: '#/components/parameters/requestId'
+      responses:
+        '200':
+          description: Current or restored snapshot; interrupted work is unknown and never replayed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerationSnapshot' }
+        '404': { description: Request is not owned by this authenticated user. }
+        '503': { description: Snapshot could not be verified. }
+  /api/v1/generations/{requestId}/events:
+    get:
+      operationId: streamGenerationEvents
+      summary: Subscribe to SSE events. Clients should not automatically replay a generation.
+      description: |
+        Events: accepted, stage, token, reasoning, heartbeat, plugin, message,
+        error, done, cancelled. `plugin` carries bounded headless-extension effects.
+        `afterSeq` / `Last-Event-ID` filter replayed live events.
+      parameters:
+        - $ref: '#/components/parameters/requestId'
+        - name: afterSeq
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: SSE event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  /api/v1/generations/{requestId}/cancel:
+    post:
+      operationId: cancelGeneration
+      summary: Request cancellation; draining work remains cancelling and terminal races may be unknown.
+      parameters:
+        - $ref: '#/components/parameters/requestId'
+      responses:
+        '202':
+          description: Stop requested; inspect the snapshot until drained. A request is not proof that upstream billing stopped.
+components:
+  securitySchemes:
+    cookieSession:
+      type: apiKey
+      in: cookie
+      name: session
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+    bearerCapability:
+      type: http
+      scheme: bearer
+      description: 64 hex characters (32 random bytes), regenerated on every companion start.
+  parameters:
+    characterId:
+      name: characterId
+      in: path
+      required: true
+      description: Character avatar filename without `.png`.
+      schema:
+        type: string
+    characterIdQuery:
+      name: characterId
+      in: query
+      required: true
+      schema:
+        type: string
+    extensionId:
+      name: extensionId
+      in: path
+      required: true
+      schema:
+        type: string
+    chatId:
+      name: chatId
+      in: path
+      required: true
+      description: Chat filename without `.jsonl`.
+      schema:
+        type: string
+    requestId:
+      name: requestId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  requestBodies:
+    GenerationInput:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GenerationInput'
+  schemas:
+    MacroVariableState:
+      type: object
+      required: [revision, variables]
+      properties:
+        revision: { type: string, description: SHA-256 of the inspected scoped document. }
+        variables:
+          type: object
+          additionalProperties: true
+          description: Complete JSON variable object, at most 7340032 serialized UTF-8 bytes.
+        experimental:
+          type: boolean
+          description: Present only in global state; true selects the upstream experimental engine.
+    GlobalMacroVariableEdit:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, variables, experimental]
+      properties:
+        expectedRevision: { type: string }
+        variables: { type: object, additionalProperties: true }
+        experimental: { type: boolean }
+    LocalMacroVariableEdit:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, variables]
+      properties:
+        expectedRevision: { type: string }
+        variables: { type: object, additionalProperties: true }
+    GenerationInput:
+      type: object
+      required: [characterId, chatId, clientRequestId]
+      properties:
+        characterId:
+          type: string
+        chatId:
+          type: string
+        clientRequestId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        type:
+          type: string
+          enum: [normal, quiet, regenerate, continue]
+          default: normal
+        input:
+          type: string
+        tools:
+          type: array
+          maxItems: 32
+          items: { type: object, additionalProperties: true }
+          description: OpenAI function definitions within 256 KiB. Requires enabled Chat Completion function calling and character normal/regenerate generation. Catalogs never authorize execution.
+        stream:
+          type: boolean
+          default: true
+        nativeContext:
+          type: object
+          additionalProperties: false
+          description: Device/UI facts for upstream macro evaluation, included in caller-key identity. Preview evaluates variable writes in memory only. Actual preparation saves macro variable metadata before provider dispatch; a provider failure does not roll it back. Script, extension and clock injection are rejected.
+          properties:
+            input:
+              type: string
+              maxLength: 1048576
+              description: Current composer draft, including when requesting regenerate/continue.
+            locale:
+              type: string
+              maxLength: 128
+              description: Valid BCP-47 device locale.
+            timeZone:
+              type: string
+              maxLength: 128
+              description: Valid IANA device time-zone identifier.
+            isMobile:
+              type: boolean
+            firstDisplayedMessageId:
+              type: integer
+              minimum: 0
+              description: Zero-based visible transcript message, excluding the JSONL metadata header.
+            lastGenerationType:
+              type: string
+              enum: [normal, quiet, regenerate, continue, swipe, impersonate, '']
+              description: Previously observed generation type for preview; actual dispatch uses its accepted type.
+        overrides:
+          type: object
+          description: Per-request sampling overrides. Never exposes credentials or base URLs.
+          properties:
+            model:
+              type: string
+            temperature:
+              type: number
+            maxTokens:
+              type: integer
+            frequencyPenalty:
+              type: number
+            presencePenalty:
+              type: number
+            topP:
+              type: number
+            stop:
+              type: array
+              maxItems: 4
+              items:
+                type: string
+    GenerationReference:
+      type: object
+      required: [requestId, clientRequestId, characterId, chatId, status, seq, drained, acknowledged]
+      properties:
+        requestId: { type: string, format: uuid }
+        clientRequestId: { type: string }
+        targetKind: { type: string, enum: [character, group] }
+        characterId: { type: string }
+        chatId: { type: string }
+        type: { type: string }
+        status: { type: string, enum: [accepted, cancelling, done, error, unknown, cancelled] }
+        seq: { type: integer }
+        committed: { type: boolean }
+        drained: { type: boolean }
+        acknowledged: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    GenerationSnapshot:
+      allOf:
+        - $ref: '#/components/schemas/GenerationReference'
+        - type: object
+          properties:
+            targetKind: { type: string, enum: [character, group] }
+            text: { type: string }
+            reasoning: { type: string }
+            error: { type: [object, 'null'], additionalProperties: true }
+            cancelOutcome: { type: [string, 'null'] }
+            providerDispatched: { type: boolean }
+            restored: { type: boolean }
+            usage: { type: [object, 'null'], additionalProperties: true }
+            warnings:
+              type: [object, 'null']
+              additionalProperties: true
+              properties:
+            toolCalls:
+              type: array
+              description: Redacted, observational tool proposals. These values do not authorize execution.
+              items:
+                type: object
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  arguments: { type: string }
+            toolBatches:
+              type: array
+              description: Durable ordered client-tool proposals, execution claims and completed result receipts. Interrupted workers cannot resume dispatch.
+              items: { type: object, additionalProperties: true }
+            usageByCall:
+              type: array
+              items: { type: [object, 'null'], additionalProperties: true }
+              description: Group or client-tool provider usage in dispatch order, with null for calls without reported usage.
+            groupProgress:
+              type: [object, 'null']
+              description: Selected group speaker order and confirmed transcript commits, when available.
+              properties:
+                generationId: { type: integer }
+                members: { type: array, items: { type: string } }
+                completed:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      member: { type: string }
+                      messageIndex: { type: integer, minimum: 0 }
+            snapshot: { type: [object, 'null'], additionalProperties: true }
+            finishedAt: { type: [string, 'null'], format: date-time }
+    GenerationAccepted:
+      type: object
+      required: [requestId, status, seq, idempotent, snapshotUrl, eventUrl, cancelUrl]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        status:
+          type: string
+        seq:
+          type: integer
+        idempotent:
+          type: boolean
+        snapshotUrl:
+          type: string
+        eventUrl:
+          type: string
+        cancelUrl:
+          type: string
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, retryable, requestId]
+          properties:
+            code:
+              type: string
+              enum: [validation, not_found, unsupported, conflict, provider, internal, disabled, unknown, confirmation_required, storage]
+            message:
+              type: string
+            retryable:
+              type: boolean
+            requestId:
+              type: string
+            details: {}

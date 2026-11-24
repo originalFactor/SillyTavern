@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, test, expect, jest } from '@jest/globa
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { getImages } from '../src/util';
-import { MEDIA_REQUEST_TYPE } from '../src/constants';
+import { getImages } from '../dist/src/util';
+import { MEDIA_REQUEST_TYPE } from '../dist/src/constants';
 
 describe('getImages', () => {
     let tmpDir;

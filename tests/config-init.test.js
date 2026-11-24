@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals';
-import { addMissingConfigValues } from '../src/config-init.js';
+import { addMissingConfigValues } from '../dist/src/config-init.js';
 
 const oldEnvKey = 'SILLYTAVERN_DISABLETHUMBNAILS';
 const newEnvKey = 'SILLYTAVERN_THUMBNAILS_ENABLED';

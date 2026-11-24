@@ -394,3 +394,14 @@ gemini:
 enableServerPlugins: false
 # Attempt to automatically update server plugins on startup
 enableServerPluginsAutoUpdate: true
+
+# -- VERSIONED HEADLESS API --
+api:
+  v1:
+    # Enables the opt-in /api/v1 contract for native clients. Disabled by default.
+    enabled: false
+    # Allows explicitly declared runtime=headless extension hooks. Trusted code only.
+    # Hooks run in an isolated Worker with a bounded SillyTavern.getContext() shim.
+    headlessPlugins: false
+    # Per-hook timeout in milliseconds (1000..60000). Hooks are terminated on timeout.
+    headlessPluginTimeoutMs: 5000

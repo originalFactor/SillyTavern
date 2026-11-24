@@ -14,6 +14,32 @@ module.exports = {
     },
     overrides: [
         {
+            files: ['src/**/*.ts'],
+            parser: '@typescript-eslint/parser',
+            env: {
+                node: true,
+            },
+            parserOptions: {
+                ecmaVersion: 'latest',
+                sourceType: 'module',
+            },
+            globals: {
+                globalThis: 'readonly',
+                Deno: 'readonly',
+            },
+            rules: {
+                'no-undef': 'off',
+            },
+        },
+        {
+            files: ['src/types/**/*.d.ts'],
+            rules: {
+                'no-unused-vars': 'off',
+                'no-undef': 'off',
+                quotes: 'off',
+            },
+        },
+        {
             // Server-side files (plus this configuration file)
             files: ['src/**/*.js', './*.js', 'plugins/**/*.js'],
             env: {
@@ -46,8 +72,17 @@ module.exports = {
             },
         },
         {
+            files: ['scripts/**/*.mjs'],
+            parserOptions: {
+                sourceType: 'module',
+            },
+            env: {
+                node: true,
+            },
+        },
+        {
             // Browser-side files
-            files: ['public/**/*.js'],
+            files: ['compat-source/upstream/**/*.js'],
             env: {
                 browser: true,
                 jquery: true,

@@ -2,8 +2,8 @@ import { afterEach, describe, test, expect, jest } from '@jest/globals';
 import { once } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { Response } from 'node-fetch';
-import { CHAT_COMPLETION_SOURCES } from '../src/constants';
-import { flattenSchema, forwardFetchResponse } from '../src/util';
+import { CHAT_COMPLETION_SOURCES } from '../dist/src/constants';
+import { flattenSchema, forwardFetchResponse } from '../dist/src/util';
 
 function createMockExpressResponse() {
     const response = new PassThrough();

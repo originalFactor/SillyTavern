@@ -1,0 +1,6 @@
+packages:
+  - .
+allowBuilds:
+  protobufjs: true
+overrides:
+  '@babel/types': 7.28.5

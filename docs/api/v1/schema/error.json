@@ -1,0 +1,25 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://sillytavern.local/schemas/api-v1/error.json",
+    "title": "SillyTavern API v1 Error",
+    "type": "object",
+    "required": ["error"],
+    "additionalProperties": false,
+    "properties": {
+        "error": {
+            "type": "object",
+            "required": ["code", "message", "retryable", "requestId"],
+            "additionalProperties": false,
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "enum": ["validation", "not_found", "unsupported", "conflict", "provider", "internal", "disabled"]
+                },
+                "message": { "type": "string" },
+                "retryable": { "type": "boolean" },
+                "requestId": { "type": "string" },
+                "details": {}
+            }
+        }
+    }
+}
