@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ApiError } from './contract.js';
 import { readSettings } from './session.js';
 import { buildProviderRequest, listExtensions } from './prompt-settings.js';
@@ -25,7 +26,10 @@ function drain() {
     if (active || queue.length === 0) return;
     if (!worker) {
         let created;
-        try { created = new Worker(new URL('./prompt-worker.js', import.meta.url), { resourceLimits: { maxOldGenerationSizeMb: 256 }, execArgv: process.execArgv.filter(arg => !arg.startsWith('--input-type')) }); } catch {
+        try {
+            const workerFile = path.join(path.dirname(fileURLToPath(import.meta.url)), 'prompt-worker.js');
+            created = new Worker(pathToFileURL(workerFile), { resourceLimits: { maxOldGenerationSizeMb: 256 }, execArgv: process.execArgv.filter(arg => !arg.startsWith('--input-type')) });
+        } catch {
             settle(queue.shift(), new ApiError(422, 'validation', 'Native evaluation worker could not start.'));
             queueMicrotask(drain);
             return;

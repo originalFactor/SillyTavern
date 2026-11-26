@@ -9,6 +9,7 @@ import { assertCharacterIdle, assertChatIdle } from './generation-store.js';
 import { listCharacters, pageChat, readCharacter, writeChat } from './session.js';
 import { persistMacroEffects } from './macros.js';
 import { runNativeDisplayBatch, runNativeText } from './prompt.js';
+import { readTranscriptSnapshot } from './chat-snapshot.js';
 
 const MAX_GROUP_BYTES = 512 * 1024;
 const MAX_MEMBERS = 32;
@@ -261,6 +262,13 @@ export async function readGroupChat(session: any, groupId: any, chatId: any, pag
     const { file } = chatPath(session, chatId);
     if (!fs.existsSync(file)) throw new ApiError(404, 'not_found', 'Group chat not found.');
     return { groupId: item.id, chatId, ...pageChat(parseGroupChat(file), paging) };
+}
+
+export async function readGroupChatSnapshot(session: any, groupId: string, chatId: string) {
+    const item = await readGroup(session, groupId);
+    const { id, file } = chatPath(session, chatId);
+    if (!item.group.chats.includes(id)) throw new ApiError(404, 'not_found', 'Group chat is not attached to this group.');
+    return { groupId: item.id, chatId: id, ...readTranscriptSnapshot(session.directories.groupChats, file, true) };
 }
 
 async function messageCharacter(session: any, characters: any, message: any, historicalCards = new Map()) {

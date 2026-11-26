@@ -392,6 +392,11 @@ gemini:
     personGeneration: 'allow_adult'
 # -- SERVER PLUGIN CONFIGURATION --
 enableServerPlugins: false
+# Opt-in privileged V1 Git install/upgrade/remove management for local extensions
+# and trusted server plugins. Companion operator capability or administrator only.
+# Does not enable plugin execution, install dependencies, or hot-load code.
+# Legacy enablePackageManagement is also accepted when this key is absent.
+enablePluginManagement: false
 # Attempt to automatically update server plugins on startup
 enableServerPluginsAutoUpdate: true
 

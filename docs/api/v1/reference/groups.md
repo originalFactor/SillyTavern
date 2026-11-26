@@ -10,6 +10,7 @@
 - [GET /api/v1/groups/{groupId}/chats](#ep-get-api-v1-groups-groupid-chats)
 - [POST /api/v1/groups/{groupId}/chats](#ep-post-api-v1-groups-groupid-chats)
 - [GET /api/v1/groups/{groupId}/chats/{chatId}](#ep-get-api-v1-groups-groupid-chats-chatid)
+- [GET /api/v1/groups/{groupId}/chats/{chatId}/snapshot](#ep-get-api-v1-groups-groupid-chats-chatid-snapshot)
 - [DELETE /api/v1/groups/{groupId}/chats/{chatId}](#ep-delete-api-v1-groups-groupid-chats-chatid)
 - [POST /api/v1/groups/{groupId}/chats/{chatId}/generations](#ep-post-api-v1-groups-groupid-chats-chatid-generations)
 - [POST /api/v1/groups/{groupId}/chats/{chatId}/messages/delete](#ep-post-api-v1-groups-groupid-chats-chatid-messages-delete)
@@ -201,6 +202,24 @@ Read a bounded paged group JSONL transcript.
 
 **RETURN**
 - `200`: Paged group transcript.
+
+<a id="ep-get-api-v1-groups-groupid-chats-chatid-snapshot"></a>
+
+## GET /api/v1/groups/{groupId}/chats/{chatId}/snapshot
+
+Read one complete raw group transcript and metadata snapshot, advertised by
+`resources.groupChatSnapshot`. The chat must be attached to the named group;
+shared filenames do not grant access through an unrelated group. Returns
+`{groupId, chatId, revision, headerPresent, chatMetadata, messages}` with
+`Cache-Control: no-store`. `revision` is an observation-only SHA-256 digest.
+
+The same [strict snapshot limits](chats.md#ep-get-api-v1-chats-chatid-snapshot)
+apply: one no-follow regular file, strict UTF-8/JSONL, 8 MiB and 10000 messages,
+with 404/409/413/422 failures instead of partial results. Legacy headerless or
+empty group files return `headerPresent:false` and `{}` metadata in memory only;
+their source bytes and rows are unchanged. A supplied metadata header is
+validated and excluded from `messages`. No paging indexes are added. This read
+does not run macros, authorize saves or enable full `features.groupChats`.
 
 <a id="ep-delete-api-v1-groups-groupid-chats-chatid"></a>
 

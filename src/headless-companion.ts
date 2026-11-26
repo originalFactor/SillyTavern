@@ -16,9 +16,9 @@
  *  - A 32-byte random capability token, passed by the companion over a
  *    signature-protected AIDL call, is printed once to stdout (never logged
  *    in a URL, file or error message) and compared in constant time.
- *  - No static file serving, no SPA, no CORS, no CSRF cookie flow. All state
- *    changes require the bearer token; GET also requires it so an unrelated
- *    local process cannot enumerate characters.
+ *  - No static file serving, no SPA, wildcard CORS without cookies, and no
+ *    CSRF cookie flow. All state changes require the bearer token; GET also
+ *    requires it so an unrelated local process cannot enumerate characters.
  *  - Provider API keys stay inside the user's `secrets.json` and are only ever
  *    attached to the outbound provider request; they never enter a response.
  *
@@ -124,6 +124,26 @@ async function main() {
     const tokenBytes = Buffer.from(token, 'hex');
     const app = express();
     app.disable('x-powered-by');
+
+    // Native/local clients and browser-based callers can reach the API from
+    // any origin. Credentialed CORS cannot use '*', so echo the requesting
+    // origin while allowing credentials. The bearer capability remains
+    // mandatory on every actual request.
+    app.use((request, response, next) => {
+        const origin = request.get('origin');
+        if (origin) {
+            response.setHeader('Access-Control-Allow-Origin', origin);
+            response.setHeader('Vary', 'Origin');
+        }
+        response.setHeader('Access-Control-Allow-Credentials', 'true');
+        response.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS');
+        response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-CSRF-Token');
+        if (request.method === 'OPTIONS') {
+            response.sendStatus(204);
+            return;
+        }
+        next();
+    });
 
     app.use((request, response, next) => {
         const header = request.get('authorization') ?? '';

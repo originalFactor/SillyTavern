@@ -1,7 +1,11 @@
-import fs from 'node:fs';
+import { validateExtensionPromptInput } from '../headless/extension-prompt-input.js';
+import { packageManagementEnabled, packageInventory, mutatePackages } from '../headless/package-management.js';
+import { readExtensionUi, readExtensionSettings, saveExtensionSettings } from '../headless/extension-ui.js';
 import { validateClientTools, assertClientToolsProfile, claimClientToolBatch, declineClientToolBatch, submitClientToolResults } from '../headless/client-tools.js';
 import { removeGroupGenerationBatch } from '../headless/group-activation.js';
-import path from 'node:path';
+import { readCharacterChatSnapshot } from '../headless/chat-snapshot.js';
+import { readGroupChatSnapshot } from '../headless/group-management.js';
+import { checkProviderStatus, invalidateProviderStatus, readProviderStatus } from '../headless/provider-status.js';
 
 import express from 'express';
 
@@ -48,7 +52,6 @@ import {
     readChatPage,
     readSettings,
     resolveChatPath,
-    writeSettings,
 } from '../headless/session.js';
 import { getConfigValue } from '../util.js';
 
@@ -80,6 +83,7 @@ router.get('/capabilities', (_request, response) => {
             groups: true,
             groupManagement: true,
             groupChatPaging: true,
+            groupChatSnapshot: true,
             groupChatRender: true,
             groupChatCreate: true,
             groupChatDelete: true,
@@ -108,13 +112,19 @@ router.get('/capabilities', (_request, response) => {
             chatDelete: true,
             chatMutate: true,
             chatPaging: true,
+            chatSnapshot: true,
             chatSampling: true,
             chatRename: true,
             extensions: true,
+            packageManagement: packageManagementEnabled(),
             extensionSettings: headlessPlugins,
+            extensionUi: true,
             serverPlugins: !!getConfigValue('enableServerPlugins', false, 'boolean'),
             providerCredentials: true,
+            providerModels: true,
+            providerStatus: true,
             clientToolBatches: true,
+            clientExtensionPrompts: true,
         },
         generation: {
             preview: true,
@@ -184,11 +194,25 @@ router.get('/capabilities', (_request, response) => {
     });
 });
 
+router.get('/package-management', asyncHandler(async (request, response) => {
+    response.setHeader('Cache-Control', 'no-store');
+    response.json(await packageInventory(request, createSession(request)));
+}));
+router.post('/package-management/install', asyncHandler(async (request, response) => {
+    response.json(await mutatePackages(request, createSession(request), true));
+}));
+router.post('/package-management/bulk', asyncHandler(async (request, response) => {
+    response.json(await mutatePackages(request, createSession(request), false));
+}));
+
 router.get('/session', asyncHandler(async (request, response) => {
     const session = createSession(request);
+    response.setHeader('Cache-Control', 'no-store');
     response.json({
         handle: session.handle,
         userName: session.userName,
+        accountsEnabled: getConfigValue('enableUserAccounts', false, 'boolean'),
+        admin: request.user?.profile?.admin === true,
         csrfTokenUrl: '/csrf-token',
         authenticated: true,
     });
@@ -215,6 +239,7 @@ router.get('/settings', asyncHandler(async (request, response) => {
 
 router.patch('/settings', asyncHandler(async (request, response) => {
     const session = createSession(request);
+    invalidateProviderStatus(session);
     const settings = patchSettings(session.directories, request.body);
     response.json({ raw: publicConfiguration(settings) });
 }));
@@ -313,7 +338,25 @@ router.get('/provider-credentials', asyncHandler(async (request, response) => {
     const { readSecret, SECRET_KEYS } = await import('./secrets.js');
     response.json({
         openaiConfigured: Boolean(readSecret(session.directories, SECRET_KEYS.OPENAI)),
+        customConfigured: Boolean(readSecret(session.directories, SECRET_KEYS.CUSTOM)),
     });
+}));
+
+router.post('/provider-models', asyncHandler(async (request, response) => {
+    const session = createSession(request);
+    const { listCustomModels } = await import('../headless/provider.js');
+    response.json(await listCustomModels(session, request.body?.baseUrl));
+}));
+
+router.get('/provider-status', asyncHandler(async (request, response) => {
+    response.setHeader('Cache-Control', 'no-store');
+    response.json(await readProviderStatus(createSession(request)));
+}));
+router.post('/provider-status/check', asyncHandler(async (request, response) => {
+    response.setHeader('Cache-Control', 'no-store');
+    const input = requireObject(request.body, 'connection check');
+    if (Object.keys(input).length) throw new ApiError(400, 'validation', 'Connection checks use the saved provider configuration and accept no arguments.');
+    response.json(await checkProviderStatus(createSession(request)));
 }));
 
 router.put('/provider-credentials', asyncHandler(async (request, response) => {
@@ -322,10 +365,11 @@ router.put('/provider-credentials', asyncHandler(async (request, response) => {
     const provider = request.body?.provider;
     const apiKey = request.body?.apiKey;
     const key = credentialKey(provider, SECRET_KEYS);
-    if (!key) throw new ApiError(400, 'validation', 'Choose openai.');
+    if (!key) throw new ApiError(400, 'validation', 'Choose openai or custom.');
     if (typeof apiKey !== 'string' || apiKey.trim().length === 0 || apiKey.length > 4096) {
         throw new ApiError(400, 'validation', 'apiKey must be a non-empty string up to 4096 characters.');
     }
+    invalidateProviderStatus(session);
     writeSecret(session.directories, key, apiKey.trim());
     response.json({ saved: true, provider });
 }));
@@ -334,8 +378,9 @@ router.delete('/provider-credentials/:provider', asyncHandler(async (request, re
     const session = createSession(request);
     const { SECRET_KEYS, SecretManager } = await import('./secrets.js');
     const key = credentialKey(request.params.provider, SECRET_KEYS);
-    if (!key) throw new ApiError(400, 'validation', 'Choose openai.');
+    if (!key) throw new ApiError(400, 'validation', 'Choose openai or custom.');
     const manager = new SecretManager(session.directories);
+    invalidateProviderStatus(session);
     const entries = manager.getSecretState()[key];
     if (Array.isArray(entries)) {
         for (const entry of entries) manager.deleteSecret(key, entry.id);
@@ -345,6 +390,7 @@ router.delete('/provider-credentials/:provider', asyncHandler(async (request, re
 
 function credentialKey(provider: any, keys: any) {
     if (provider === 'openai') return keys.OPENAI;
+    if (provider === 'custom') return keys.CUSTOM;
     return null;
 }
 
@@ -352,8 +398,7 @@ function credentialKey(provider: any, keys: any) {
 
 router.get('/extensions/:extensionId/settings', asyncHandler(async (request, response) => {
     const session = createSession(request);
-    const name = requireSafeId(request.params.extensionId, 'extensionId');
-    response.json({ extensionId: name, settings: session.extensionSettings?.[name] ?? {} });
+    response.json(readExtensionSettings(session, request.params.extensionId));
 }));
 
 router.patch('/extensions/:extensionId/settings', asyncHandler(async (request, response) => {
@@ -361,16 +406,7 @@ router.patch('/extensions/:extensionId/settings', asyncHandler(async (request, r
         throw new ApiError(403, 'disabled', 'Headless plugins are disabled; extension settings are read-only.');
     }
     const session = createSession(request);
-    const name = requireSafeId(request.params.extensionId, 'extensionId');
-    const patch = request.body;
-    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
-        throw new ApiError(400, 'validation', 'Extension settings must be a JSON object.');
-    }
-    const settings = readSettings(session.directories);
-    settings.extension_settings ??= {};
-    settings.extension_settings[name] = { ...(settings.extension_settings[name] ?? {}), ...patch };
-    writeSettings(session.directories, settings);
-    response.json({ extensionId: name, settings: settings.extension_settings[name] });
+    response.json(saveExtensionSettings(session, request.params.extensionId, request.body, request.get('If-Match')));
 }));
 
 // ---- characters & chats ----
@@ -420,6 +456,11 @@ router.get('/groups/:groupId/chats/:chatId', asyncHandler(async (request, respon
     response.json(await readGroupChat(createSession(request), request.params.groupId, request.params.chatId, {
         limit: request.query.limit, before: request.query.before, after: request.query.after,
     }));
+}));
+
+router.get('/groups/:groupId/chats/:chatId/snapshot', asyncHandler(async (request, response) => {
+    response.setHeader('Cache-Control', 'no-store');
+    response.json(await readGroupChatSnapshot(createSession(request), request.params.groupId, request.params.chatId));
 }));
 
 router.post('/groups/:groupId/chats/:chatId/render', asyncHandler(async (request, response) => {
@@ -474,7 +515,7 @@ router.post('/groups/:groupId/chats/:chatId/preview', asyncHandler(async (reques
     if (input.type === 'regenerate') removeGroupGenerationBatch(chat);
     const built = await buildPrompt(session, character.data, chat, {
         type: input.type === 'regenerate' ? 'normal' : input.type, input: input.type === 'regenerate' ? '' : input.input, overrides: { ...chatSampling(chat), ...input.overrides },
-        characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext,
+        characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext, extensionPrompts: input.extensionPrompts,
         groupContext: { group, characters, characterIndex }, preview: true,
         stageUserInput: input.type === 'normal' && Boolean(input.input),
     });
@@ -594,6 +635,12 @@ router.get('/chats/:chatId', asyncHandler(async (request, response) => {
     response.json({ characterId, chatId: request.params.chatId, ...page });
 }));
 
+router.get('/chats/:chatId/snapshot', asyncHandler(async (request, response) => {
+    response.setHeader('Cache-Control', 'no-store');
+    const characterId = typeof request.query.characterId === 'string' ? request.query.characterId : '';
+    response.json(readCharacterChatSnapshot(createSession(request), characterId, request.params.chatId));
+}));
+
 router.post('/chats/:chatId/messages', asyncHandler(async (request, response) => {
     const session = createSession(request);
     const characterId = typeof request.body?.characterId === 'string' ? request.body.characterId : '';
@@ -668,7 +715,7 @@ router.post('/generations/preview', asyncHandler(async (request, response) => {
     if (input.type === 'regenerate' && chat.length > 1 && !lastMessage?.is_user) chat.pop();
     const built = await buildPrompt(session, character.data, chat, {
         type: input.type, input: input.input, overrides: { ...chatSampling(chat), ...input.overrides },
-        characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext, preview: true,
+        characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext, extensionPrompts: input.extensionPrompts, preview: true,
         macroChat, stageUserInput: input.type === 'normal' && Boolean(input.input),
     });
     if (input.tools?.length) {
@@ -774,58 +821,18 @@ router.post('/generations/:requestId/cancel', asyncHandler(async (request, respo
     response.status(202).json({ outcome: record.cancelOutcome ?? 'unknown', changed, status: record.status });
 }));
 
-// ---- extension WebView shell (real context bridge, all runtime tiers) ----
+// ---- isolated extension UI asset snapshot (no static SPA routes) ----
+router.get('/extensions/:extensionId/ui', asyncHandler(async (request, response) => {
+    response.set('Cache-Control', 'no-store');
+    response.json(await readExtensionUi(createSession(request), request.params.extensionId));
+}));
 
-router.get('/extensions/*/shell', asyncHandler(async (request, response) => {
-    const session = createSession(request);
-    const rawExtensionId = request.params[0];
-    const extensionId = rawExtensionId.includes('/') ? rawExtensionId : decodeURIComponent(rawExtensionId);
-    const extension = listExtensions(session).find(item => item.id === extensionId);
-    if (!extension) {
-        throw new ApiError(404, 'not_found', 'Extension not found.');
-    }
-    // Legacy extensions are served a shell that explains how to open the full UI,
-    // rather than a bare 422 that gives the native client nothing to show.
-    const uiPath = resolveUiPath(session, extension);
-    const uiFile = uiPath ? path.join(extensionDirectory(session, extension), path.basename(extension.ui)) : null;
-    const inlineUi = !uiPath || !uiFile || !fs.existsSync(uiFile)
-        ? null
-        : fs.readFileSync(uiFile, 'utf8').slice(0, 256 * 1024);
-    response.type('html').send(renderShell(extension, uiPath, inlineUi, ensureRequestId(request)));
+// The old same-origin executable shell exposed the host origin to extension code.
+router.get('/extensions/*/shell', asyncHandler(async () => {
+    throw new ApiError(410, 'unsupported', 'Use the isolated client extension host and the JSON UI snapshot endpoint.');
 }));
 
 router.use((error: any, request: any, response: any, _next: any) => sendApiError(response, ensureRequestId(request), error));
-
-/**
- * Resolves the directory of an extension.
- * @param {import('../headless/session.js').HeadlessSession} session Headless session
- * @param {Record<string, any>} extension Extension metadata
- * @returns {string} Extension directory
- */
-function extensionDirectory(session: import('../headless/session.js').HeadlessSession, extension: Record<string, any>) {
-    const name = path.basename(String(extension.id));
-    const roots: Record<string, any> = {
-        system: path.join(process.cwd(), 'compat-source/upstream', 'scripts', 'extensions', name),
-        local: path.join(session.directories.extensions, name),
-        global: path.join(process.cwd(), 'compat-source/upstream', 'scripts', 'extensions', 'third-party', name),
-    };
-    return roots[extension.type] ?? roots.system;
-}
-
-/**
- * Resolves the served UI URL for an extension, including user-installed ones.
- * @param {import('../headless/session.js').HeadlessSession} session Headless session
- * @param {Record<string, any>} extension Extension metadata
- * @returns {string|null} UI URL
- */
-function resolveUiPath(session: import('../headless/session.js').HeadlessSession, extension: Record<string, any>) {
-    if (!extension.ui) return null;
-    const name = path.basename(String(extension.id));
-    const safeUi = path.basename(String(extension.ui));
-    if (extension.type === 'system') return `/scripts/extensions/${encodeURIComponent(name)}/${encodeURIComponent(safeUi)}`;
-    if (extension.type === 'global') return `/scripts/extensions/third-party/${encodeURIComponent(name)}/${encodeURIComponent(safeUi)}`;
-    return `/api/v1/extensions/${encodeURIComponent(String(extension.id))}/ui/${encodeURIComponent(safeUi)}`;
-}
 
 /**
  * Validates a generation request.
@@ -852,6 +859,7 @@ function validateGenerationInput(body: any) {
         stream: body.stream !== false,
         overrides,
         nativeContext: validateNativeMacroContext(body.nativeContext),
+        ...(body.extensionPrompts !== undefined ? { extensionPrompts: validateExtensionPromptInput(body.extensionPrompts) } : {}),
         ...(body.tools !== undefined ? { tools: validateClientTools(body.tools) } : {}),
     };
 }
@@ -882,97 +890,4 @@ function validateNativeMacroContext(value: any) {
         result.firstDisplayedMessageId = value.firstDisplayedMessageId;
     }
     return result;
-}
-
-/**
- * Renders the same-origin WebView compatibility shell with a real context bridge.
- * @param {Record<string, any>} extension Extension metadata
- * @param {string|null} uiPath UI URL
- * @param {string|null} inlineUi Inlined extension HTML
- * @param {string} requestId Request identifier
- * @returns {string} HTML shell
- */
-function renderShell(extension: Record<string, any>, uiPath: string|null, inlineUi: string|null, requestId: string) {
-    const config = JSON.stringify({ extension, requestId, apiBase: '/api/v1' }).replace(/</g, '\\u003c');
-    const ui = inlineUi
-        ? `<div id="extension-ui">${inlineUi}</div>`
-        : uiPath
-            ? `<iframe id="extension-ui" src="${escapeHtml(uiPath)}" sandbox="allow-scripts allow-same-origin"></iframe>`
-            : `<div id="extension-ui"><p>${escapeHtml(extension.displayName)} has no declared UI. Open the full SillyTavern interface to configure it.</p></div>`;
-    return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src 'self'; img-src 'self' data:">
-<title>${escapeHtml(extension.displayName)}</title>
-<style>body{font:14px sans-serif;margin:0}#extension-ui{width:100%;min-height:100vh;border:0}</style>
-</head>
-<body>
-${ui}
-<script>
-window.__SILLYTAVERN_API_V1__=${config};
-(function(){
-  const extensionSettings = Object.create(null);
-  const listeners = new Map();
-  const eventTypes = {
-    APP_READY:'app_ready', MESSAGE_SENT:'message_sent', MESSAGE_RECEIVED:'message_received',
-    GENERATION_STARTED:'generation_started', GENERATION_ENDED:'generation_ended',
-    SETTINGS_UPDATED:'settings_updated', EXTENSION_SETTINGS_LOADED:'extension_settings_loaded',
-    CHAT_CHANGED:'chat_id_changed', CHAT_CREATED:'chat_created', CHAT_DELETED:'chat_deleted',
-    STREAM_TOKEN_RECEIVED:'stream_token_received', WORLD_INFO_ACTIVATED:'world_info_activated'
-  };
-  const eventSource = {
-    on(e,h){ const l=listeners.get(e)||[]; l.push(h); listeners.set(e,l); },
-    off(e,h){ listeners.set(e,(listeners.get(e)||[]).filter(x=>x!==h)); },
-    once(e,h){ const w=d=>{eventSource.off(e,w);h(d);}; eventSource.on(e,w); },
-    emit(e,d){ (listeners.get(e)||[]).forEach(h=>{try{h(d);}catch(err){console.warn(err);}}); },
-    makeLast(){}
-  };
-  const getHeaders = () => ({'Content-Type':'application/json','X-CSRF-Token':window.__SILLYTAVERN_CSRF_TOKEN__||''});
-  async function api(method, endpoint, body){
-    const r = await fetch(window.__SILLYTAVERN_API_V1__.apiBase+endpoint,{method,headers:getHeaders(),body:body?JSON.stringify(body):undefined});
-    if(!r.ok){const e: any=await r.json().catch(()=>({error:{message:r.statusText}}));throw new Error(e.error?.message||r.statusText);}
-    return r.json();
-  }
-  const id = window.__SILLYTAVERN_API_V1__.extension.id;
-  const ctx = {
-    eventSource, eventTypes, event_types:eventTypes, extensionSettings,
-    extensionId:id, extensionName:window.__SILLYTAVERN_API_V1__.extension.displayName,
-    getRequestHeaders:getHeaders,
-    saveSettingsDebounced(){}, saveSettings(){},
-    writeExtensionField(name,field,value,bulk){
-      const target=extensionSettings[name]??={};
-      if(bulk&&field&&typeof field==='object'){Object.assign(target,field);api('PATCH','/extensions/'+encodeURIComponent(name)+'/settings',field).catch(console.warn);}
-      else {target[field]=value;api('PATCH','/extensions/'+encodeURIComponent(name)+'/settings',{[field]:value}).catch(console.warn);}
-    },
-    writeExtensionFieldBulk(name,fields){ctx.writeExtensionField(name,fields,true);},
-    renderExtensionTemplateAsync:async()=>'', renderExtensionTemplate:()=>'',
-    substituteParams:(t,v={})=>String(t??'').replace(/\\{\\{\\s*([^{}\\s]+)\\s*\\}\\}/g,(m,k)=>Object.hasOwn(v,k)?String(v[k]):m),
-    generate:()=>Promise.reject(new Error('Generation is unavailable inside the extension settings shell.')),
-    generateQuietPrompt:()=>Promise.reject(new Error('Generation is unavailable inside the extension settings shell.')),
-    registerMacro(){}, unregisterMacro(){}, registerSlashCommand(){}, registerFunctionTool(){}
-  };
-  window.SillyTavern={getContext:()=>ctx,getContextAsync:async()=>ctx};
-  window.addEventListener('message',event=>{
-    if(event.source!==parent)return;
-    if(event.data?.type==='csrf-token')window.__SILLYTAVERN_CSRF_TOKEN__=String(event.data.token??'');
-  });
-  api('GET','/extensions/'+encodeURIComponent(id)+'/settings')
-    .then(r=>{Object.assign(extensionSettings,r.settings||{});eventSource.emit(eventTypes.EXTENSION_SETTINGS_LOADED,extensionSettings);})
-    .catch(err=>console.warn('extension settings unavailable',err));
-})();
-</script>
-</body>
-</html>`;
-}
-
-/**
- * Escapes HTML text.
- * @param {string} value Input text
- * @returns {string} Escaped text
- */
-function escapeHtml(value: string) {
-    const entities: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' };
-    return String(value).replace(/[&<>"']/g, char => entities[char]);
 }

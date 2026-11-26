@@ -39,7 +39,7 @@ function catalog(settings: Record<string, any>) {
     const p = settings.power_user ?? {};
     const selectedId = String(settings.user_avatar ?? '');
     return {
-        revision: revision(settings), selectedId,
+        revision: revision(settings), selectedId, username: String(settings.username || 'User'),
         personas: Object.entries(p.personas ?? {}).map(([id, name]) => {
             const d = p.persona_descriptions?.[id] ?? {};
             return { id, name: String(name), description: String(d.description ?? ''), title: String(d.title ?? ''),

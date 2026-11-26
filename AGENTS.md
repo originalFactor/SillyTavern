@@ -1,9 +1,54 @@
 # SillyTavern Headless
 
-This fork supplies the versioned `/api/v1` backend bundled by Messenger's
-standalone Android `stbridge` app. Preserve upstream source authorities under
-`compat-source/upstream/` for headless derivation and compatibility analysis;
-do not serve the browser SPA or static frontend routes.
+This fork supplies an authenticated `/api/v1` backend, run as a standalone
+loopback server or bundled by Messenger's Android `stbridge` app. A separate
+Next.js client lives in `client/`; it is not the upstream SillyTavern SPA.
+Do not restore or serve the upstream browser SPA or static frontend routes
+from the backend.
+
+## API stability
+
+**API v1 is still unstable. Any part of `/api/v1` may change, including breaking
+changes, without backward compatibility or a version bump.** Routes, request
+and response schemas, behavior, and capability flags are all subject to change.
+The `v1` prefix does not imply a stable contract. Keep the API documentation,
+behavior tests, and affected clients in sync with contract changes; instability
+does not relax the security, persistence, or authorization requirements below.
+
+## Current repository structure
+
+- `src/`: TypeScript backend sources. `headless-server.ts` is the standalone
+  entry; `headless-companion.ts` is the Android companion entry.
+- `src/endpoints/api-v1.ts`: public V1 router. `src/headless/` owns generation,
+  provider dispatch, sessions, resource management, plugins, and extension UI.
+  Its `macro-runtime/`, `prompt-runtime/`, and `world-info-runtime/` directories
+  hold the source-derived compatibility runtimes.
+- `src/types/`: ambient/runtime declarations; other retained backend helpers
+  live alongside `src/middleware/`, `src/png/`, `src/validator/`, and `src/vectors/`.
+- `client/`: separate Next.js/React V1 client with `app/`, `components/`, `lib/`,
+  and development scripts. It has its own `package.json` and `pnpm-lock.yaml`;
+  use `pnpm --dir client ...` for client commands. See `client/README.md`.
+- `scripts/`: backend development watcher, companion bundle builder, and minimal
+  compatibility client. `vite.config.js` and `tsconfig*.json` configure backend
+  builds and type checking.
+- `dist/src/`: generated Node ESM `.js` modules, including worker entry points.
+  Edit `src/**/*.ts`, not generated output. Source imports intentionally retain
+  NodeNext `.js` specifiers.
+- `default/`: packaged configuration, content/presets, and scaffold;
+  `plugins/`: server plugin location; `data/`: local runtime state, not source.
+- `docs/api/v1/{README.md,openapi.yaml}`: API guide and schema.
+  `docs/building.md`, `docs/compatibility.md`, and
+  `docs/android-extension-host.md` cover builds and integration limits.
+- `tests/`: Jest behavior/integration tests plus client and opt-in browser tests.
+  Backend suites import built modules from `dist/src/`; build before testing
+  source changes.
+- `compat-source/upstream/` is the historical upstream-authority location
+  referenced below, but is absent from this checkout. Do not assume those files
+  are available or claim comparison against them without restoring/locating the
+  authorities. Preserve them if restored; never serve them as frontend assets.
+  The Android/Gradle consumer is also maintained outside this repository.
+
+## Backend and compatibility invariants
 
 - Use pnpm exclusively for JavaScript dependency management and test execution.
   `pnpm-lock.yaml` is the companion dependency lockfile; do not add other
@@ -12,13 +57,13 @@ do not serve the browser SPA or static frontend routes.
   request with a fresh capability. Never expose secret values in API responses,
   URLs or logs. Provider credentials are configured through presence-only reads
   and explicit write/delete endpoints; deletion clears all keys for that source.
-- `src/endpoints/api-v1.js` owns the public contract. Update
+- `src/endpoints/api-v1.ts` owns the public contract. Update
   `docs/api/v1/{README.md,openapi.yaml}` and behavior tests alongside changes.
   Capability flags describe implemented behavior, not planned compatibility.
 - Provider dispatch never follows redirects or replays a request. A bounded SSE stream needs an explicit terminal marker/reason; an interrupted or malformed stream is `unknown`, keeps partial text in its generation journal and never commits a transcript row. Provider HTTP status/detail are visible after credential redaction. Settings/preview responses redact credential fields and custom headers; secret storage remains write-only. Keep these checks when adding provider formats.
 - Generation runtime rechecks terminal/cancelled state after every awaited lifecycle/output hook and before persistence. A cancelled turn must not later write transcript rows or queued extension settings. Final observation text preserves the complete bounded output (no 64 KiB slice); quiet completion is `done` with `committed:false` because it creates no transcript row. Keep these semantics in provider/plugin changes.
-- `generation-journal.js` synchronizes a canonical record and permanent caller-key index before dispatch. Memory expiry never permits replay; payload fingerprints detect conflicting reuse. Scoped discovery/read-by-client are observation only; unconfirmed keys can be permanently abandoned, and uncertain outcomes need exact-sequence acknowledgement after local drain. Legacy ambiguous cancellation/error records remain uncertain; retained long/quiet snapshots are repaired where possible. Never silently drop corrupt journals or treat failed writes as successful admission.
-- `generation-owner.js` uses atomic rename of prepared nonempty directories (hard links fail under the Android sandbox). PID/start/boot identity and a serialized recovery guard fence cooperating processes; an interrupted/unverifiable owner requires inspection. Exclude pre-lease legacy/noncooperating writers before upgrading. Headless settings, transcript and journal writes recheck ownership. Partial text receives periodic checkpoints even if no later token arrives.
+- `generation-journal.ts` synchronizes a canonical record and permanent caller-key index before dispatch. Memory expiry never permits replay; payload fingerprints detect conflicting reuse. Scoped discovery/read-by-client are observation only; unconfirmed keys can be permanently abandoned, and uncertain outcomes need exact-sequence acknowledgement after local drain. Legacy ambiguous cancellation/error records remain uncertain; retained long/quiet snapshots are repaired where possible. Never silently drop corrupt journals or treat failed writes as successful admission.
+- `generation-owner.ts` uses atomic rename of prepared nonempty directories (hard links fail under the Android sandbox). PID/start/boot identity and a serialized recovery guard fence cooperating processes; an interrupted/unverifiable owner requires inspection. Exclude pre-lease legacy/noncooperating writers before upgrading. Headless settings, transcript and journal writes recheck ownership. Partial text receives periodic checkpoints even if no later token arrives.
 - Provider settings and the matching vault key are captured together at admission. Vault keys live only in a private WeakMap; they never become serializable session/prompt/journal fields. Accepted workers retain their source/URL/key despite later settings changes; an in-turn source/URL change is rejected before dispatch.
 - ST owns JSONL transcripts. Generation commits atomically on success, never
   automatically replays billable requests, and preserves unknown outcomes.
@@ -28,28 +73,28 @@ do not serve the browser SPA or static frontend routes.
   packaged defaults for Messenger. Android packaging materializes the pnpm
   dependency graph separately; do not require runtime package installation or
   private browser routes in companion mode.
-- `src/headless/character-management.js` owns bounded V1/V2/V3 JSON/PNG/APNG card
+- `src/headless/character-management.ts` owns bounded V1/V2/V3 JSON/PNG/APNG card
   CRUD/import/export. Preserve opaque fields and the supplied card schema;
   replacements/deletion require the inspected PNG digest. Avatar replacement
   preserves card metadata and checks the same digest. Active generation
   admissions fence card mutation. Associated chat deletion needs an explicit
-  flag. `src/headless/charx.js` adds bounded CHARX import/export: `card.json`,
+  flag. `src/headless/charx.ts` adds bounded CHARX import/export: `card.json`,
   a PNG icon and declared `embedded://` image assets. ZIP entries, paths and
   uncompressed sizes are checked before reading; auxiliary images are stored
   under the character's owned user-images directory and exported canonically.
   Versioned card fields are preserved. WebP card metadata remains unsupported.
-- `src/headless/persona-management.js` uses standard ST persona settings and a
+- `src/headless/persona-management.ts` uses standard ST persona settings and a
   persona-only revision, preserving provider settings and unknown descriptor
   fields. In-prompt, depth/role and excluded description placements work;
   legacy position 1 maps to 0. Author-note placements 2/3 use the source-derived
   floating-note/Persona assembly and are separately capability-gated.
   The companion packages a default character and user avatar without the SPA.
-- `src/headless/prompt-manager.js` owns revision-checked active Chat Completion prompt edits and the shared preview/dispatch ordering. Writes are scoped to prompts and global order 100001, preserving provider settings and unrelated orders; old 100000 orders migrate with the persona marker. Support includes roles, enables, markers, generation triggers, depth/priority injection and card main/PHI overrides. Keep `promptManagerPresets` false: full macros and Instruct remain incomplete (source packing is implemented below) (named storage/selection is implemented below). Never publish partial ordering as full preset compatibility.
+- `src/headless/prompt-manager.ts` owns revision-checked active Chat Completion prompt edits and the shared preview/dispatch ordering. Writes are scoped to prompts and global order 100001, preserving provider settings and unrelated orders; old 100000 orders migrate with the persona marker. Support includes roles, enables, markers, generation triggers, depth/priority injection and card main/PHI overrides. Keep `promptManagerPresets` false: full macros and Instruct remain incomplete (source packing is implemented below) (named storage/selection is implemented below). Never publish partial ordering as full preset compatibility.
 - Existing ST tool-invocation rows are reconstructed in Chat Completion history when `function_calling` is enabled. Invalid stored calls fail before provider dispatch and the final prompt audit counts the outgoing calls. New calls require a separate authorization and execution lifecycle; keep `toolCalling` false until it is implemented.
 - Provider SSE decoding accumulates bounded, indexed tool-call fragments and usage through stream completion. Incomplete, malformed or interrupted calls remain unknown. Complete calls without an admitted client tool catalog report unsupported. Calls matching an admitted catalog require the revision-bound client batch lifecycle below.
 - A tool-call stream with a non-tool finish reason or conflicting finish reasons is unknown, even when its current arguments happen to parse. A standalone `[DONE]` remains accepted for compatible providers that omit finish reasons.
 - Unsupported completed tool proposals are stored in the generation journal only after credential redaction and exposed through `toolCalls` for observation. Redacted proposals are not execution inputs or authorization receipts.
-- `client-tools.js` provides revision-bound client-executed tool batches for
+- `client-tools.ts` provides revision-bound client-executed tool batches for
   character normal/regenerate Chat Completion requests with function calling
   enabled. Catalogs describe tools and never authorize execution. Persist a
   caller-owned execution claim before dispatch. Only a fresh claim response has
@@ -68,7 +113,7 @@ do not serve the browser SPA or static frontend routes.
   preserve source ST invocation rows on final commit. Five executed tool rounds
   follow the source recursion limit. Usage is retained per provider call, and
   aggregate fields are published only when every call reports them.
-- `src/headless/presets.js` manages revision-checked named Chat Completion/context/instruct/system templates. Presets use native ST directories and bundled defaults; portable snapshots/exports exclude credentials. Selection checks both file and active-config revisions, requires explicit consent for connection changes, and uses the upstream-checked alias table in `preset-mapping.js`. Template selection must not enable unsupported modes. Update the bundle/Gradle source inputs when changing packaged defaults.
+- `src/headless/presets.ts` manages revision-checked named Chat Completion/context/instruct/system templates. Presets use native ST directories and bundled defaults; portable snapshots/exports exclude credentials. Selection checks both file and active-config revisions, requires explicit consent for connection changes, and uses the upstream-checked alias table in `preset-mapping.ts`. Template selection must not enable unsupported modes. Update the bundle/Gradle source inputs when changing packaged defaults.
 - `PUT /instruct-mode` changes only the active Instruct enabled switch against the active Instruct revision. `textInstructSettings` advertises the switch used by text-completion assembly; it does not claim complete Instruct compatibility.
 - Provider dispatch is limited to OpenAI Chat Completions and compatible custom
   endpoints. Other chat wire formats, including Anthropic Messages and Google
@@ -111,7 +156,31 @@ do not serve the browser SPA or static frontend routes.
   character context; missing cards use an empty character context. Cancellation
   during the completion hook prevents publishing the computed message or effects.
 
-Focused verification from this checkout:
+## Build and verification
+
+Use Node.js 20 or newer and pnpm. Backend commands run from the repository root:
+
+```sh
+pnpm install
+pnpm build
+pnpm dev
+# Or run the built standalone server:
+pnpm start
+# Build the Android companion bundle:
+pnpm build:companion
+```
+
+`pnpm build` runs type checking and the Vite Node SSR build, preserving the
+runtime module tree under `dist/src/`. `pnpm dev` rebuilds/restarts the backend;
+it does not serve the client. Start the separate client with
+`pnpm --dir client install` and `pnpm --dir client dev`, or verify its production
+build with `pnpm --dir client build` and lint with `pnpm --dir client lint`.
+The client's development launcher manages its backend connection; do not expose
+its capability in logs or persist it in browser storage.
+
+After building, run the backend suite with `pnpm test --runInBand`, or select
+focused suites for the changed behavior. These commands are verification
+instructions, not a claim that checks have already passed:
 
 ```sh
 NODE_OPTIONS=--experimental-vm-modules pnpm exec jest --config tests/jest.config.json --runInBand api-v1-generation-owner.test.js api-v1-generation-journal.test.js api-v1-generation-lifecycle.test.js api-v1-presets.test.js api-v1-provider.test.js api-v1-prompt-manager.test.js api-v1-character-management.test.js api-v1-integration.test.js api-v1-headless.test.js api-v1-companion.test.js api-v1-bundle.test.js api-v1-plugins.test.js api-v1-macros.test.js api-v1-macro-management.test.js api-v1-world-info.test.js api-v1-world-info-management.test.js api-v1-regex-paths.test.js api-v1-regex-concurrency.test.js api-v1-source-prompt.test.js
@@ -119,9 +188,12 @@ pnpm exec eslint src/endpoints/api-v1.ts src/headless/session.ts src/headless/ru
 ```
 
 Host-side tests do not prove execution of the arm64 Android Node binary.
+See `client/README.md` for client suites and the opt-in browser check.
+
+## Source-derived runtime and resource invariants
 
 - Native macro runtime files are maintained manually against both upstream engines and all builtin definition groups. Update these files directly and review compatibility against the preserved upstream authorities under `compat-source/upstream/`.
-  `macro-runtime/platform.js` provides synchronous isolated frames, device facts,
+  `macro-runtime/platform.ts` provides synchronous isolated frames, device facts,
   live variable facades and resource limits without browser globals or secrets.
   Preview never persists macro effects. Actual preparation persists variable
   metadata before awaited hooks/provider dispatch, without committing staged
@@ -140,7 +212,7 @@ Host-side tests do not prove execution of the arm64 Android Node binary.
   greetings again during later prompt preparation; preserve that documented
   behavior instead of treating it as an admission replay.
 
-- `macro-management.js` exposes revision-checked global variables/engine and
+- `macro-management.ts` exposes revision-checked global variables/engine and
   chat-local variables as separate documents. Variable objects are bounded to
   7 MiB serialized UTF-8 for the native bulk editor; reject oversized/corrupt
   state, never truncate it. Global saves merge unrelated settings and check
@@ -163,7 +235,7 @@ Host-side tests do not prove execution of the arm64 Android Node binary.
   `personaAuthorNote` do not imply book management, full scoped regex or presets.
 
 
-- `world-info-management.js` owns native book CRUD/export, independent WI scan
+- `world-info-management.ts` owns native book CRUD/export, independent WI scan
   settings revisions and chat-binding revisions. Book JSON is strict and bounded
   to 4 MiB/20000 entries; catalogs to 512 files, settings to 1 MiB. Missing/stale
   revisions never overwrite existing books. Selected books must validate before
@@ -178,7 +250,7 @@ Host-side tests do not prove execution of the arm64 Android Node binary.
   uninspectable book remains intact. Management does not establish group support.
 
 
-- `regex-runtime.js` reuses generated upstream regex for storage, greetings,
+- `regex-runtime.ts` reuses generated upstream regex for storage, greetings,
   prompt history, editing and saved display; no simplified fallback remains.
   Preserve source global→preset→character order, role/depth, flags, captures and
   macro substitution. Default storage rules must not run again on every prompt
@@ -186,7 +258,7 @@ Host-side tests do not prove execution of the arm64 Android Node binary.
   row is published before successful generation. Greetings recheck identity and
   admission after awaited evaluation. Message edits recheck the whole transcript
   and admission before publishing effects; newer metadata/rows must win.
-- `regex-management.js` owns independently revisioned global scripts and standard
+- `regex-management.ts` owns independently revisioned global scripts and standard
   scope lists (1 MiB/512 scripts). A separate confirmation grants new/re-enabled
   character/preset scopes; import never grants authority. Preserve unrelated
   extension/provider state and opaque script fields. Grants bind avatar/preset
@@ -228,7 +300,7 @@ Host-side tests do not prove execution of the arm64 Android Node binary.
   compatibility analysis.
 
 - Character-chat sampling is stored under `chat_metadata.messenger_sampling`.
-  `chat-sampling.js` validates and revision-checks edits, fences active and
+  `chat-sampling.ts` validates and revision-checks edits, fences active and
   unresolved generation, and preserves other metadata. Preview and generation
   merge these values before explicit request overrides. Group chats share their file-backed overrides across group references and use
   the group generation fence. Native group editing remains separate work.

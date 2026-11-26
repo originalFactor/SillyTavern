@@ -3,6 +3,7 @@
 ## On this page
 
 - [GET /api/v1/chats/{chatId}](#ep-get-api-v1-chats-chatid)
+- [GET /api/v1/chats/{chatId}/snapshot](#ep-get-api-v1-chats-chatid-snapshot)
 - [PATCH /api/v1/chats/{chatId}](#ep-patch-api-v1-chats-chatid)
 - [DELETE /api/v1/chats/{chatId}](#ep-delete-api-v1-chats-chatid)
 - [POST /api/v1/chats/{chatId}/messages](#ep-post-api-v1-chats-chatid-messages)
@@ -40,6 +41,28 @@ Read a stable-indexed page of ST chat messages.
 
 **RETURN**
 - `200`: Chat page with total, hasMore and nextBefore.
+
+<a id="ep-get-api-v1-chats-chatid-snapshot"></a>
+
+## GET /api/v1/chats/{chatId}/snapshot
+
+Read one complete raw transcript and metadata snapshot with `characterId` as a
+required query parameter. Advertised by `resources.chatSnapshot`. Authentication
+is unchanged; responses use `Cache-Control: no-store`.
+
+Returns `{characterId, chatId, revision, headerPresent:true, chatMetadata, messages}`.
+`revision` is SHA-256 of the exact file bytes and grants no write authority.
+The metadata header is removed from `messages`; remaining rows retain raw text,
+reasoning, swipes and opaque fields. No paging index or display transformation
+is added. Array positions therefore match upstream chat indexes.
+
+The file must be a no-follow regular file in its owned chat directory, strict
+UTF-8/JSONL, at most 8 MiB and 10000 messages, with a valid object metadata
+header. Missing files return 404; concurrent file changes return 409; excessive
+size/count returns 413; unsafe files, invalid rows or missing/invalid headers
+return 422. No partial data, macro evaluation, variable effects or writes occur.
+There is no automatic retry or continuation token; oversized chats remain
+available through the existing paged interface.
 
 <a id="ep-patch-api-v1-chats-chatid"></a>
 

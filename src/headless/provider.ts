@@ -9,14 +9,73 @@ import { appendToken, isTerminal, markProviderDispatched, setToolCalls, setUsage
 // journal. A worker keeps the exact connection authorized at admission.
 const acceptedConnections = new WeakMap<object, any>();
 
+/** Reads model IDs from a configured OpenAI-compatible endpoint without exposing its credential. */
+export async function listCustomModels(session: any, baseUrl: unknown) {
+    const { readSecret, SECRET_KEYS } = await import('../endpoints/secrets.js');
+    const apiKey = readSecret(session.directories, SECRET_KEYS.CUSTOM, null);
+    if (!apiKey) throw new ApiError(409, 'conflict', 'Save a custom provider API key before loading its model list.');
+    if (typeof baseUrl !== 'string' || !baseUrl.trim()) throw new ApiError(422, 'validation', 'A custom OpenAI-compatible base URL is required.');
+    let endpoint: URL;
+    try { endpoint = new URL(baseUrl.trim()); } catch { throw new ApiError(422, 'validation', 'Custom provider URL must be an absolute HTTP(S) URL.'); }
+    if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
+        throw new ApiError(422, 'validation', 'Custom provider URL must use HTTP(S) without credentials, query, or fragment.');
+    }
+    endpoint.pathname = `${endpoint.pathname.replace(/\/+$/, '')}/models`;
+    const url = endpoint.toString();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    timeout.unref?.();
+    try {
+        const { default: fetch, Headers } = await import('node-fetch');
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: new Headers({ Authorization: `Bearer ${apiKey}`, Accept: 'application/json' }),
+            redirect: 'manual',
+            signal: controller.signal,
+            size: 2_097_152,
+        });
+        if (!response.ok) {
+            let detail = '';
+            try { detail = await response.text(); } catch { detail = 'Model list response exceeded its size limit.'; }
+            throw new ApiError(502, 'provider', `Model list request returned HTTP ${response.status}: ${redactProviderText(detail.slice(0, 8192), [apiKey]) || 'Provider rejected the request.'}`, { retryable: false });
+        }
+        let payload: any;
+        try { payload = await response.json(); } catch { throw new ApiError(502, 'provider', 'Custom endpoint returned an invalid or oversized model list.'); }
+        const rows = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.models) ? payload.models : null;
+        if (!rows) throw new ApiError(502, 'provider', 'Custom endpoint model list must contain a data array.');
+        const seen = new Set<string>();
+        const models = rows.slice(0, 2000).flatMap((item: any) => {
+            if (!item || typeof item.id !== 'string' || !item.id.trim() || item.id.length > 1024 || seen.has(item.id)) return [];
+            seen.add(item.id);
+            const id = redactProviderText(item.id, [apiKey]);
+            const name = typeof item.name === 'string' && item.name.trim() ? item.name.slice(0, 1024) : item.id;
+            const contextWindow = positiveInteger(item.contextWindow ?? item.context_window ?? item.context_length);
+            const maxTokens = positiveInteger(item.maxTokens ?? item.max_tokens ?? item.max_output_tokens ?? item.max_completion_tokens);
+            return [{ id, name: redactProviderText(name, [apiKey]), ...(contextWindow ? { contextWindow } : {}), ...(maxTokens ? { maxTokens } : {}) }];
+        });
+        return { models };
+    } catch (error: any) {
+        if (error instanceof ApiError) throw error;
+        throw new ApiError(502, 'provider', `Could not load custom provider models: ${redactProviderText(error?.type ?? 'connection_error', [apiKey])}`, { retryable: true });
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+function positiveInteger(value: any) {
+    const number = typeof value === 'number' ? value : Number(value);
+    return Number.isSafeInteger(number) && number > 0 ? number : undefined;
+}
+
 export async function prepareProviderSession(request: any) {
     const { readSecret, SECRET_KEYS } = await import('../endpoints/secrets.js');
     // No await between reading settings and the matching credential value.
     const session = createSession(request);
     const source = String(session.settings.oai_settings?.chat_completion_source ?? 'openai');
-    if (session.settings.main_api !== 'openai' || source !== 'openai') throw new ApiError(422, 'unsupported', 'Only the OpenAI Chat Completions provider is supported by this headless backend.');
-    const key = readSecret(session.directories, SECRET_KEYS.OPENAI, null);
-    acceptedConnections.set(session, { format: 'chat-completions', source, key, url: '' });
+    if (session.settings.main_api !== 'openai' || !['openai', 'custom'].includes(source)) throw new ApiError(422, 'unsupported', 'Only OpenAI Chat Completions and compatible custom endpoints are supported by this headless backend.');
+    const url = source === 'custom' ? customEndpoint(session.settings.oai_settings?.custom_url) : 'https://api.openai.com/v1/chat/completions';
+    const key = readSecret(session.directories, source === 'custom' ? SECRET_KEYS.CUSTOM : SECRET_KEYS.OPENAI, null);
+    acceptedConnections.set(session, { format: 'chat-completions', source, key, url });
     return session;
 }
 
@@ -24,7 +83,7 @@ export async function runSessionCompletion(request: any, providerRequest: any, r
     const connection: any = acceptedConnections.get(session);
     const requestSource = String(providerRequest.chat_completion_source ?? 'openai');
     const format = providerRequest.provider_format ?? 'chat-completions';
-    if (requestSource !== 'openai' || format !== 'chat-completions') throw new ApiError(422, 'unsupported', 'Only OpenAI Chat Completions is supported by this headless backend.');
+    if (!['openai', 'custom'].includes(requestSource) || format !== 'chat-completions') throw new ApiError(422, 'unsupported', 'Only OpenAI Chat Completions and compatible custom endpoints are supported by this headless backend.');
     if (connection && (connection.format !== format || connection.source !== requestSource)) throw new ApiError(409, 'conflict', 'The accepted provider connection changed inside the generation.');
     return runChatCompletion(request, providerRequest, record, connection, session, clientTools);
 }
@@ -49,9 +108,9 @@ export async function runChatCompletion(originalRequest: import('express').Reque
     const { readSecret, SECRET_KEYS } = await import('../endpoints/secrets.js');
     const request = structuredClone(providerRequest);
     const source = String(request.chat_completion_source ?? 'openai');
-    if (source !== 'openai' || (request.provider_format && request.provider_format !== 'chat-completions')) throw new ApiError(422, 'unsupported', 'Only OpenAI Chat Completions is supported by this headless backend.');
-    const apiKey = acceptedConnection?.key ?? readSecret(originalRequest.user.directories, SECRET_KEYS.OPENAI, null);
-    const url = 'https://api.openai.com/v1/chat/completions';
+    if (!['openai', 'custom'].includes(source) || (request.provider_format && request.provider_format !== 'chat-completions')) throw new ApiError(422, 'unsupported', 'Only OpenAI Chat Completions and compatible custom endpoints are supported by this headless backend.');
+    const apiKey = acceptedConnection?.key ?? readSecret(originalRequest.user.directories, source === 'custom' ? SECRET_KEYS.CUSTOM : SECRET_KEYS.OPENAI, null);
+    const url = acceptedConnection?.url ?? (source === 'custom' ? customEndpoint(request.custom_url) : 'https://api.openai.com/v1/chat/completions');
     const headers = new Headers({ 'Content-Type': 'application/json' });
     headers.set('Authorization', `Bearer ${apiKey ?? ''}`);
     const body: Record<string, any> = {
@@ -164,6 +223,15 @@ export async function runChatCompletion(originalRequest: import('express').Reque
         clearTimeout(timeout);
         record.controller.signal.removeEventListener('abort', abort);
     }
+}
+
+function customEndpoint(baseUrl: unknown) {
+    if (typeof baseUrl !== 'string' || !baseUrl.trim()) throw new ApiError(422, 'validation', 'A custom OpenAI-compatible base URL is required.');
+    let endpoint: URL;
+    try { endpoint = new URL(baseUrl.trim()); } catch { throw new ApiError(422, 'validation', 'Custom provider URL must be an absolute HTTP(S) URL.'); }
+    if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) throw new ApiError(422, 'validation', 'Custom provider URL must use HTTP(S) without credentials, query, or fragment.');
+    endpoint.pathname = `${endpoint.pathname.replace(/\/+$/, '')}/chat/completions`;
+    return endpoint.toString();
 }
 
 function redactToolValue(value: any, secrets: any): any {

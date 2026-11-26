@@ -31,6 +31,7 @@ describe('companion bundle builder', () => {
     });
 
     test('contains the entry, headless runtime and defaults', () => {
+        expect(fs.existsSync(path.join(serverDirectory, 'dist/dist'))).toBe(false);
         for (const file of [
             'dist/src/headless-companion.js',
             'dist/src/endpoints/api-v1.js',

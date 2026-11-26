@@ -29,6 +29,14 @@ Describe the authenticated user session.
 **RETURN**
 - `200`: Session document.
 
+Returns `handle`, Persona display name `userName`, `authenticated:true`,
+`csrfTokenUrl`, server multi-account switch `accountsEnabled`, and the authenticated
+profile's boolean `admin` flag. The response is `Cache-Control: no-store` and
+contains no password, salt, token, or full user profile. These fields describe
+identity; each endpoint still independently enforces its authorization policy.
+In particular, disabling multi-account mode does not grant package-management
+access to a non-admin profile.
+
 <a id="ep-get-api-v1-settings"></a>
 
 ## GET /api/v1/settings

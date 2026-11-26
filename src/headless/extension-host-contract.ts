@@ -1,0 +1,21 @@
+/** Virtual module IDs implemented by the separate client. Never static server routes. */
+export const EXTENSION_HOST_MODULES = [
+    '/script.js', '/lib.js', '/lib/eventemitter.js',
+    '/scripts/extensions.js', '/scripts/st-context.js', '/scripts/events.js',
+    '/scripts/event-types.js', '/scripts/utils.js', '/scripts/templates.js',
+    '/scripts/popup.js', '/scripts/i18n.js', '/scripts/power-user.js',
+    '/scripts/PromptManager.js', '/scripts/sse-stream.js', '/scripts/world-info.js',
+    '/scripts/tokenizers.js',
+    '/scripts/personas.js', '/scripts/reasoning.js',
+    '/scripts/user.js',
+    '/scripts/macros.js',
+    '/scripts/openai.js',
+    '/scripts/preset-manager.js',
+    '/scripts/extensions/regex/engine.js',
+    '/scripts/authors-note.js', '/scripts/constants.js', '/scripts/RossAscends-mods.js',
+    '/scripts/slash-commands.js', '/scripts/slash-commands/SlashCommand.js',
+    '/scripts/slash-commands/SlashCommandArgument.js',
+    '/scripts/slash-commands/SlashCommandEnumValue.js',
+    '/scripts/slash-commands/SlashCommandCommonEnumsProvider.js',
+    '/scripts/slash-commands/SlashCommandParser.js',
+] as const;

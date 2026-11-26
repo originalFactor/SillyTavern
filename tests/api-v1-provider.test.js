@@ -3,14 +3,14 @@ import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, test } from '@jest/globals';
-import { runChatCompletion, ProviderSseDecoder, prepareProviderSession, runSessionChatCompletion } from '../dist/src/headless/provider.js';
+import { runChatCompletion, ProviderSseDecoder, prepareProviderSession, runSessionChatCompletion, listCustomModels } from '../dist/src/headless/provider.js';
 import { cancel, clearGenerations, createGeneration, getGeneration, persistGeneration, snapshot } from '../dist/src/headless/generation-store.js';
 import { writeSettings } from '../dist/src/headless/session.js';
 import { publicConfiguration } from '../dist/src/headless/redaction.js';
 import { setConfigFilePath } from '../dist/src/util.js';
 import { serverDirectory } from '../dist/src/server-directory.js';
 
-let root, server, base, record, calls, forwarded;
+let root, server, base, record, calls, forwarded, modelCalls, modelRoute;
 const secret = 'private-provider-credential-123';
 const capability = 'private-loopback-capability-456';
 let route;
@@ -21,11 +21,14 @@ beforeEach(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'st-provider-contract-'));
     calls = 0;
     forwarded = 0;
+    modelCalls = 0;
     writeSecret({ root }, SECRET_KEYS.CUSTOM, secret);
     record = createGeneration({ handle: 'provider-test', clientRequestId: 'test', characterId: 'a', chatId: 'c', type: 'normal' }).record;
     const app = express();
     app.use(express.json());
     app.post('/v1/chat/completions', (req, res) => { calls++; route(req, res); });
+    app.get('/v1/models', (req, res) => { modelCalls++; modelRoute(req, res); });
+    app.get('/model-redirect', (_req, res) => { forwarded++; res.json({ data: [] }); });
     app.post('/redirect', (_req, res) => { forwarded++; res.send('must not dispatch'); });
     server = await new Promise(resolve => { const value = app.listen(0, '127.0.0.1', () => resolve(value)); });
     base = `http://127.0.0.1:${server.address().port}/v1`;
@@ -40,6 +43,28 @@ const request = () => runChatCompletion({ user: { directories: { root } }, heade
 const token = content => `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content } }] })}\n\n`;
 
 describe('non-replaying bounded provider dispatch', () => {
+    test('loads bounded model IDs through the saved custom credential', async () => {
+        let authorization;
+        modelRoute = (req, res) => {
+            authorization = req.headers.authorization;
+            res.json({ data: [{ id: 'model-a', name: 'Model A', owned_by: 'provider' }, { id: 'model-a' }, { id: 'model-b', context_length: 32000, max_output_tokens: 4096 }, { id: secret, name: `Exposed ${secret}` }, { name: 'invalid' }] });
+        };
+        const result = await listCustomModels({ directories: { root } }, base);
+        expect(result).toEqual({ models: [{ id: 'model-a', name: 'Model A' }, { id: 'model-b', name: 'model-b', contextWindow: 32000, maxTokens: 4096 }, { id: '[redacted]', name: 'Exposed [redacted]' }] });
+        expect(authorization).toBe(`Bearer ${secret}`);
+        expect(JSON.stringify(result)).not.toContain(secret);
+        expect(modelCalls).toBe(1);
+    });
+    test('does not follow redirects while fetching custom models', async () => {
+        modelRoute = (_req, res) => res.redirect(307, '/model-redirect');
+        await expect(listCustomModels({ directories: { root } }, base)).rejects.toMatchObject({ code: 'provider' });
+        expect(modelCalls).toBe(1);
+        expect(forwarded).toBe(0);
+    });
+    test('rejects credential-bearing model list URLs before dispatch', async () => {
+        await expect(listCustomModels({ directories: { root } }, 'https://user:pass@example.test/v1')).rejects.toMatchObject({ code: 'validation' });
+        expect(modelCalls).toBe(0);
+    });
     test('rejects oversized custom tool definitions before provider dispatch', async () => {
         writeSettings({ root }, { main_api: 'openai', oai_settings: { chat_completion_source: 'custom', custom_model: 'gpt-4', custom_url: base, openai_max_context: 256, openai_max_tokens: 32 } });
         const sourceRequest = { user: { directories: { root }, profile: { handle: 'owner' } }, headers: {} };
@@ -120,6 +145,24 @@ describe('non-replaying bounded provider dispatch', () => {
         expect(result.usage).toEqual({ total_tokens: 4, completion_tokens_details: { reasoning_tokens: 1 } });
         expect(record.usage).toEqual({ totalTokens: 4, reasoningTokens: 1 });
         expect(calls).toBe(1);
+    });
+    test('dispatches custom OpenAI-compatible requests to the configured base URL with the custom credential', async () => {
+        let url, authorization;
+        route = (req, res) => { url = req.url; authorization = req.headers.authorization; res.type('text/event-stream').end(token('Custom endpoint') + 'data: [DONE]\n\n'); };
+        const result = await request();
+        expect(result.text).toBe('Custom endpoint');
+        expect(url).toBe('/v1/chat/completions');
+        expect(authorization).toBe(`Bearer ${secret}`);
+        expect(calls).toBe(1);
+    });
+    test('rejects invalid custom URLs before dispatch', async () => {
+        await expect(runChatCompletion(
+            { user: { directories: { root } }, headers: {} },
+            { chat_completion_source: 'custom', custom_url: 'https://user:pass@example.invalid/v1', model: 'test', messages: [] },
+            record,
+        )).rejects.toMatchObject({ code: 'validation' });
+        expect(calls).toBe(0);
+        expect(record.providerDispatched).toBe(false);
     });
     test('returns each completion independently while retaining the combined stream', async () => {
         route = (_req, res) => res.type('text/event-stream').end(token(calls === 1 ? 'First' : 'Second') + 'data: [DONE]\n\n');

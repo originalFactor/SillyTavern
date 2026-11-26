@@ -3,6 +3,7 @@ import path from 'node:path';
 import { ApiError } from './contract.js';
 import { serverDirectory } from '../server-directory.js';
 import { classifyExtension } from './virtual-dom.js';
+import { packageRestartPending } from './package-management.js';
 
 /**
  * Builds a provider request from saved settings only.
@@ -14,8 +15,8 @@ export function buildProviderRequest(session: import('./session.js').HeadlessSes
     if (session.settings.main_api !== 'openai') throw new ApiError(422, 'unsupported', 'Only the OpenAI Chat Completions provider is supported by this headless backend.');
     const oai = session.settings.oai_settings ?? {};
     const source = String(oai.chat_completion_source ?? 'openai');
-    if (source !== 'openai') throw new ApiError(422, 'unsupported', 'Only the OpenAI Chat Completions provider is supported by this headless backend.');
-    const model = overrides.model ?? oai.openai_model;
+    if (!['openai', 'custom'].includes(source)) throw new ApiError(422, 'unsupported', 'Only OpenAI Chat Completions and compatible custom endpoints are supported by this headless backend.');
+    const model = overrides.model ?? (source === 'custom' ? oai.custom_model : oai.openai_model);
     if (!model) {
         throw new ApiError(422, 'validation', 'No Chat Completion model is configured.');
     }
@@ -58,8 +59,8 @@ export function listExtensions(session: import('./session.js').HeadlessSession):
                 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
                 const compatibility = classifyExtension(manifest);
                 const id = root.type === 'system' ? entry.name : `${root.type}/${entry.name}`;
-                const disabled = Array.isArray(session.extensionSettings.disabledExtensions)
-                    && session.extensionSettings.disabledExtensions.includes(id.replace(/^local\//, 'third-party/').replace(/^global\//, 'third-party/'));
+                const disabled = packageRestartPending(path.join(root.directory, entry.name)) || (Array.isArray(session.extensionSettings.disabledExtensions)
+                    && session.extensionSettings.disabledExtensions.includes(id.replace(/^local\//, 'third-party/').replace(/^global\//, 'third-party/')));
                 extensions.push({
                     id,
                     displayName: String(manifest.display_name ?? entry.name),
@@ -73,7 +74,9 @@ export function listExtensions(session: import('./session.js').HeadlessSession):
                     ui: typeof manifest.ui === 'string' ? manifest.ui : null,
                     capabilities: Array.isArray(manifest.capabilities) ? manifest.capabilities : [],
                     hooks: manifest.hooks && typeof manifest.hooks === 'object' ? Object.keys(manifest.hooks) : [],
-                    shellUrl: `/api/v1/extensions/${encodeURIComponent(id)}/shell`,
+                    uiUrl: `/api/v1/extensions/${encodeURIComponent(id)}/ui`,
+                    settingsNamespace: typeof manifest.settings_namespace === 'string' ? manifest.settings_namespace : entry.name,
+                    browserUiDeclared: Boolean(manifest.js || manifest.ui || manifest.entry && !['headless', 'server-plugin'].includes(manifest.runtime)),
                 });
             } catch (error) {
                 console.warn('[api-v1] Ignoring invalid extension manifest:', manifestPath, error instanceof Error ? error.message : error);

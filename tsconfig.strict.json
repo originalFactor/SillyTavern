@@ -5,6 +5,6 @@
     "noCheck": false,
     "rootDir": "."
   },
-  "include": ["src/**/*", "src/**/*.js", "server.js", "webpack.config.js"],
+  "include": ["src/**/*", "src/**/*.js", "server.js", "vite.config.js"],
   "exclude": ["dist", "node_modules"]
 }

@@ -10,6 +10,12 @@ porting workspace; its current contents are still the upstream baseline. Track
 unsupported functions and migration status in
 [`what-is-missing.md`](what-is-missing.md).
 
+A separate working frontend is maintained in [`client/`](../../../client/README.md).
+It references the preserved source behavior while using only V1 resource calls;
+it does not execute the copied browser code. Its host-only connection bootstrap
+is separate from the public backend contract. See that README for the actual UI
+coverage, snapshot-polling recovery, concurrency limits and verification commands.
+
 ## Design principles
 
 - Treat the server as the owner of SillyTavern state and behavior. The client

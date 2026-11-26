@@ -6,6 +6,7 @@ import express from 'express';
 import { simpleGit as git, CheckRepoActions } from 'simple-git';
 import { sync as commandExistsSync } from 'command-exists';
 import { getConfigValue, color } from './util.js';
+import { configurePackagePluginRoot, isManagedPackage } from './headless/package-management.js';
 
 const enableServerPlugins = !!getConfigValue('enableServerPlugins', false, 'boolean');
 const enableServerPluginsAutoUpdate = !!getConfigValue('enableServerPluginsAutoUpdate', true, 'boolean');
@@ -38,6 +39,7 @@ const isESModule = (file: any) => path.extname(file) === '.mjs';
  * be called before the server shuts down.
  */
 export async function loadPlugins(app: import('express').Express, pluginsPath: string) {
+    configurePackagePluginRoot(pluginsPath);
     try {
         const exitHooks: any[] = [];
         const emptyFn = () => { };
@@ -62,6 +64,7 @@ export async function loadPlugins(app: import('express').Express, pluginsPath: s
         await updatePlugins(pluginsPath);
 
         for (const file of files) {
+            if (file.startsWith('.')) continue;
             const pluginFilePath = path.join(pluginsPath, file);
 
             if (fs.statSync(pluginFilePath).isDirectory()) {
@@ -259,6 +262,7 @@ async function updatePlugins(pluginsPath: string) {
     for (const directory of directories) {
         try {
             const pluginPath = path.join(pluginsPath, directory);
+            if (isManagedPackage(pluginPath)) continue; // Managed updates require explicit trust and revision confirmation.
             const pluginRepo = git(pluginPath);
 
             const isRepo = await pluginRepo.checkIsRepo(CheckRepoActions.IS_REPO_ROOT);

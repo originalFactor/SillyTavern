@@ -31,7 +31,7 @@ function variableMap(value: any, frame: any) {
 }
 
 /** One isolated evaluation frame shared by all parts of a single prompt. */
-export function createMacroContext(session: any, character: any, chat: any, { type = 'normal', input = '', overrides = {}, characterId = '', chatId = '', nativeContext = {}, macroChat = null, preview = false, extensions = [], groupContext = null }: Record<string, any> = {}) {
+export function createMacroContext(session: any, character: any, chat: any, { type = 'normal', input = '', overrides = {}, characterId = '', chatId = '', nativeContext = {}, extensionPrompts, macroChat = null, preview = false, extensions = [], groupContext = null }: Record<string, any> = {}) {
     const settings = session.settings;
     const power = settings.power_user ?? {};
     const metadata = clone(chat[0]?.chat_metadata);
@@ -44,7 +44,7 @@ export function createMacroContext(session: any, character: any, chat: any, { ty
         localDirty: false, globalDirty: false,
         userName, characterName, mainApi: String(settings.main_api ?? 'openai'),
         chatId, characterId, chat: (macroChat ?? chat).filter((message: any) => typeof message?.mes === 'string').map(clone),
-        metadata, extensions, extensionPrompts: clone(nativeContext.extensionPrompts),
+        metadata, extensions, extensionPrompts: clone(extensionPrompts ?? nativeContext.extensionPrompts),
         extensionSettings: { variables: { global: {} } }, bannedWords: [],
         locale: nativeContext.locale ?? 'en', timeZone: nativeContext.timeZone,
         ui: { input: nativeContext.input ?? input, firstDisplayedMessageId: nativeContext.firstDisplayedMessageId, isMobile: nativeContext.isMobile ?? true },

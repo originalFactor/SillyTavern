@@ -43,7 +43,7 @@ export async function runGroupGeneration(request: any, session: any, record: any
                     const formatted: any = await runNativeText(session, character?.data ?? {}, chat.slice(0, -1), {
                         mode: 'input', text: input.input, input: input.input, type,
                         characterId: character?.avatar.slice(0, -4) ?? '', chatId: input.chatId,
-                        nativeContext: input.nativeContext, groupContext: { group, characters, characterIndex: 0 },
+                        nativeContext: input.nativeContext, extensionPrompts: input.extensionPrompts, groupContext: { group, characters, characterIndex: 0 },
                     });
                     if (shouldStopGeneration(record)) return;
                     chat.at(-1).mes = formatted.text;
@@ -71,7 +71,7 @@ export async function runGroupGeneration(request: any, session: any, record: any
                 stage(record, 'prompt');
                 let built = await buildPrompt(session, character.data, chat, {
                     type: generationType, input: type === 'regenerate' ? '' : input.input, overrides: { ...chatSampling(chat), ...(input.overrides ?? {}) },
-                    characterId, chatId: input.chatId, nativeContext: input.nativeContext,
+                    characterId, chatId: input.chatId, nativeContext: input.nativeContext, extensionPrompts: input.extensionPrompts,
                     groupContext,
                     stageUserInput: type === 'normal' && Boolean(input.input) && record.groupProgress.completed.length === 0,
                 });
@@ -96,7 +96,7 @@ export async function runGroupGeneration(request: any, session: any, record: any
                 if (shouldStopGeneration(record)) return;
                 const formatted: any = await runNativeText(session, character.data, chat, {
                     mode: 'output', text: result.text, reasoning: result.reasoning, type: generationType,
-                    characterId, chatId: input.chatId, nativeContext: input.nativeContext, groupContext,
+                    characterId, chatId: input.chatId, nativeContext: input.nativeContext, extensionPrompts: input.extensionPrompts, groupContext,
                 });
                 if (shouldStopGeneration(record)) return;
                 const output = await applyHeadlessOutputHooks(session, formatted.text, {

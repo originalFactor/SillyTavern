@@ -127,6 +127,24 @@ describe('headless companion entry', () => {
         expect(ok.body.service).toBe('messenger-sillytavern');
     });
 
+    test('credentialed CORS permits any origin while actual requests still require the capability', async () => {
+        const preflight = await fetch(baseUrl + '/api/v1/characters', {
+            method: 'OPTIONS',
+            headers: {
+                Origin: 'https://client.example',
+                'Access-Control-Request-Method': 'GET',
+                'Access-Control-Request-Headers': 'authorization',
+            },
+        });
+        expect(preflight.status).toBe(204);
+        expect(preflight.headers.get('access-control-allow-origin')).toBe('https://client.example');
+        expect(preflight.headers.get('access-control-allow-credentials')).toBe('true');
+        expect(preflight.headers.get('access-control-allow-headers')).toContain('Authorization');
+        const denied = await fetch(baseUrl + '/api/v1/characters', { headers: { Origin: 'https://client.example' } });
+        expect(denied.status).toBe(401);
+        expect(denied.headers.get('access-control-allow-origin')).toBe('https://client.example');
+    });
+
     test('capabilities advertise bearer auth in companion mode', async () => {
         const { status, body } = await request('/api/v1/capabilities');
         expect(status).toBe(200);
@@ -134,13 +152,18 @@ describe('headless companion entry', () => {
         expect(body.auth.cookieSession).toBe(false);
         expect(body.generation.restoreAfterRestart).toBe(true);
         expect(body.resources.chatPaging).toBe(true);
+        expect(body.resources.chatSnapshot).toBe(true);
+        expect(body.resources.groupChatSnapshot).toBe(true);
+        expect(body.resources.providerStatus).toBe(true);
+        expect(body.resources.clientExtensionPrompts).toBe(true);
     });
 
     test('every non-health route is gated by the capability', async () => {
-        for (const endpoint of ['/api/v1/characters', '/api/v1/settings', '/api/v1/extensions', '/']) {
+        for (const endpoint of ['/api/v1/characters', '/api/v1/settings', '/api/v1/extensions', '/api/v1/provider-status', '/api/v1/provider-status/check', '/api/v1/chats/chat/snapshot?characterId=ada', '/api/v1/groups/team/chats/shared/snapshot', '/']) {
             const denied = await request(endpoint, {}, false);
             expect(denied.status).toBe(401);
         }
+        expect((await request('/api/v1/provider-status/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }, false)).status).toBe(401);
     });
 
     test('the browser SPA and private routes are not exposed', async () => {

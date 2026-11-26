@@ -149,7 +149,8 @@ function buildHookData(session: import('./session.js').HeadlessSession, prompt: 
  * @returns {Promise<Record<string, any>>} Hook result
  */
 async function runHook(extension: Record<string, any>, entryPath: string, hook: string, data: Record<string, any>) {
-    const worker = new Worker(new URL('./plugin-worker.js', import.meta.url), {
+    const workerFile = path.join(path.dirname(url.fileURLToPath(import.meta.url)), 'plugin-worker.js');
+    const worker = new Worker(url.pathToFileURL(workerFile), {
         workerData: { entry: url.pathToFileURL(entryPath).href, hook, context: data },
     });
     try {

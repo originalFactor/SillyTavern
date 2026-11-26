@@ -25,6 +25,14 @@ afterEach(() => roots.splice(0).forEach(root => fs.rmSync(root, { recursive:true
 const contents = built => built.messages.map(message => message.content).join('\n');
 
 describe('source-derived World Info execution', () => {
+    test('request injection scan includes only explicitly scannable prompt values', async () => {
+        const f = fixture(); f.chat[1].mes = 'No keyword in history';
+        f.save([f.entry(1, 'Lore activated by injection')]);
+        const prompt = { value: 'alpha', position: -1, depth: 0, role: 0, scan: true };
+        const scanned = await f.build({ extensionPrompts: { request: prompt } });
+        expect(contents(scanned)).toContain('Lore activated by injection');
+        expect(contents(await f.build({ extensionPrompts: { request: { ...prompt, scan: false } } }))).not.toContain('Lore activated by injection');
+    });
     test('embedded lore follows the selected group character', async () => {
         const f = fixture();
         f.session.settings.world_info_settings.world_info.globalSelect = [];

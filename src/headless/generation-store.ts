@@ -73,6 +73,13 @@ const idempotency = new Map();
 const restoredDirectories = new Set();
 /** @type {Map<string, Promise<void>>} Per-chat serialization of detached generations */
 const chatLocks = new Map();
+let packageMaintenance = false;
+/** Fence every user's generation admission while privileged package files change. */
+export async function withPackageMaintenance<T>(work: () => Promise<T>): Promise<T> {
+    if (packageMaintenance || [...generations.values()].some(record => !isTerminal(record.status) || record.workerActive)) throw new ApiError(409, 'conflict', 'Wait for active generations or package operations to finish.');
+    packageMaintenance = true;
+    try { return await work(); } finally { packageMaintenance = false; }
+}
 
 /**
  * Reject transcript mutations while a detached generation may still commit.
@@ -213,6 +220,7 @@ export function restoreGenerations(directories: any) {
 }
 
 export function createGeneration({ handle, clientRequestId, characterId, chatId, type, directories, requestIdentity, reservationOnly = false, targetKind = 'character' }: any) {
+    if (packageMaintenance) throw new ApiError(409, 'conflict', 'Package maintenance is in progress. No generation was admitted.');
     clientId(clientRequestId);
     if (!['character', 'group'].includes(targetKind)) throw new ApiError(400, 'validation', 'Unknown generation target kind.');
     if (directories) restoreGenerations(directories);

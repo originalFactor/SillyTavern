@@ -113,6 +113,22 @@ describe('native named presets', () => {
         expect(readSettings(dirs).oai_settings.custom_model).toBe('changed-independently');
         expect((await request(url + '?expectedRevision=' + created.revision, 'DELETE')).status).toBe(200);
     });
+    test.each(['chat-completion', 'context', 'instruct', 'sysprompt'])('imports and edits %s JSON without applying settings or dropping unknown fields', async kind => {
+        const url = presetPath(kind, '导入编辑 ' + kind);
+        const settingsBefore = fs.readFileSync(path.join(root, 'settings.json'), 'utf8');
+        const preset = { name: 'Foreign template name', vendor: { opaque: { enabled: false, data: ['保留', 42] } } };
+        const imported = await request(url, 'PUT', { preset });
+        expect(imported.status).toBe(200);
+        const inspected = await request(url);
+        expect(inspected.body.preset).toEqual(preset);
+        const edited = { ...inspected.body.preset, vendor: { ...inspected.body.preset.vendor, newField: true } };
+        const saved = await request(url, 'PUT', { preset: edited, expectedRevision: inspected.body.revision });
+        expect(saved.status).toBe(200);
+        expect(saved.body.preset).toEqual(edited);
+        expect((await request(url, 'PUT', { preset, expectedRevision: inspected.body.revision })).status).toBe(409);
+        expect((await request(url)).body.preset).toEqual(edited);
+        expect(fs.readFileSync(path.join(root, 'settings.json'), 'utf8')).toBe(settingsBefore);
+    });
     test('built-in presets cannot be deleted but can be overridden after inspection', async () => {
         const url = presetPath('context', 'Default');
         const builtin = (await request(url)).body;

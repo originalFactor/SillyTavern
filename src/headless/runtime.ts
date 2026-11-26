@@ -83,7 +83,7 @@ export async function runGeneration(sourceRequest: import('express').Request, se
             const macroChat = previousReply ? [...chat, { ...previousReply, swipe_id: previousReply.swipes?.length ?? 1 }] : chat;
             let built = await buildPrompt(session, character.data, chat, {
                 type: input.type, input: input.input, overrides: { ...chatSampling(chat), ...(input.overrides ?? {}) },
-                characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext,
+                characterId: input.characterId, chatId: input.chatId, nativeContext: input.nativeContext, extensionPrompts: input.extensionPrompts,
                 macroChat,
                 stageUserInput: input.type === 'normal' && Boolean(input.input),
             });

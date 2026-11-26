@@ -290,7 +290,12 @@ Read a persona-only catalog with selectedId and a revision independent of provid
 - None.
 
 **RETURN**
-- `200`: Persona catalog. No unrelated settings or credentials are returned.
+- `200`: Persona catalog with `revision`, `selectedId`, `username` and `personas`.
+  `username` is the active chat display name from native settings (default `User`),
+  not the authenticated handle and not inferred from the selected descriptor's
+  name. It is covered by the Persona revision and also returned by successful
+  save/select/delete operations. Reads do not rewrite settings. No unrelated
+  settings or credentials are returned.
 
 <a id="ep-put-api-v1-personas-personaid"></a>
 

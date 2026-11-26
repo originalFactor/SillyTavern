@@ -31,6 +31,7 @@ let mockUrl;
 /** @type {Array<Record<string, any>>} */
 let providerRequests;
 let groupToCancel;
+let authenticatedProfile;
 
 beforeAll(async () => {
     process.env.SILLYTAVERN_API_V1_ENABLED = 'true';
@@ -70,9 +71,10 @@ beforeAll(async () => {
     writeSettings(directories, defaultSettings);
 
     const app = express();
+    authenticatedProfile = { ...DEFAULT_USER, handle: 'contract-user' };
     app.use(express.json({ limit: '2mb' }));
     app.use((request, _response, next) => {
-        request.user = { profile: { ...DEFAULT_USER, handle: 'contract-user' }, directories };
+        request.user = { profile: authenticatedProfile, directories };
         next();
     });
     app.use('/api/v1', apiV1Router);
@@ -88,6 +90,23 @@ afterAll(async () => {
 });
 
 describe('API v1 routes', () => {
+    test.each([[false, false], [false, true], [true, false], [true, true]])('describes actual account mode and authenticated profile without granting authority (%s, %s)', async (accountsEnabled, admin) => {
+        const previousMode = process.env.SILLYTAVERN_ENABLEUSERACCOUNTS;
+        const previousProfile = authenticatedProfile;
+        process.env.SILLYTAVERN_ENABLEUSERACCOUNTS = String(accountsEnabled);
+        authenticatedProfile = { ...previousProfile, admin, password: 'must-not-leak', salt: 'must-not-leak' };
+        try {
+            const response = await fetch(baseUrl + '/api/v1/session');
+            expect(response.status).toBe(200);
+            expect(response.headers.get('cache-control')).toBe('no-store');
+            expect(await response.json()).toEqual({ handle: 'contract-user', userName: 'Native User', accountsEnabled, admin, authenticated: true, csrfTokenUrl: '/csrf-token' });
+            if (!admin) expect((await fetch(baseUrl + '/api/v1/package-management')).status).toBe(403);
+        } finally {
+            authenticatedProfile = previousProfile;
+            if (previousMode === undefined) delete process.env.SILLYTAVERN_ENABLEUSERACCOUNTS;
+            else process.env.SILLYTAVERN_ENABLEUSERACCOUNTS = previousMode;
+        }
+    });
     test('sends stored tool invocation history in order through the normal provider path', async () => {
         const chatFile = path.join(directories.chats, 'Aria', 'tool-history.jsonl');
         const originalSettings = readSettings(directories);
@@ -1322,14 +1341,17 @@ export async function afterGeneration(context) { return context.generation.type;
     });
 
     test('reads and patches extension settings when headless plugins are enabled', async () => {
+        const extensionDir = path.join(directories.extensions, 'my-ext');
+        fs.mkdirSync(extensionDir, { recursive: true });
+        fs.writeFileSync(path.join(extensionDir, 'manifest.json'), JSON.stringify({ display_name: 'My extension' }));
         process.env.SILLYTAVERN_API_V1_HEADLESSPLUGINS = 'true';
         try {
-            const patched = await fetch(`${baseUrl}/api/v1/extensions/my-ext/settings`, {
+            const patched = await fetch(`${baseUrl}/api/v1/extensions/local%2Fmy-ext/settings`, {
                 method: 'PATCH', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ enabled: true }),
             });
             expect(patched.status).toBe(200);
-            const read = await (await fetch(`${baseUrl}/api/v1/extensions/my-ext/settings`)).json();
+            const read = await (await fetch(`${baseUrl}/api/v1/extensions/local%2Fmy-ext/settings`)).json();
             expect(read.settings.enabled).toBe(true);
         } finally {
             delete process.env.SILLYTAVERN_API_V1_HEADLESSPLUGINS;
@@ -1350,7 +1372,7 @@ export async function afterGeneration(context) { return context.generation.type;
         expect(body.changed).toBe(false);
     });
 
-    test('classifies runtime=webview extensions and serves a restricted same-origin shell', async () => {
+    test('serves an authenticated JSON UI snapshot and retires the same-origin executable shell', async () => {
         const extensionDirectory = path.join(directories.extensions, 'native-contract');
         fs.mkdirSync(extensionDirectory, { recursive: true });
         fs.writeFileSync(path.join(extensionDirectory, 'manifest.json'), JSON.stringify({
@@ -1360,15 +1382,20 @@ export async function afterGeneration(context) { return context.generation.type;
             ui: 'settings.html',
             capabilities: ['extensionSettings'],
         }));
+        fs.writeFileSync(path.join(extensionDirectory, 'settings.html'), '<label>Native setting<input id="native-setting"></label>');
         const extensions = await (await fetch(`${baseUrl}/api/v1/extensions`)).json();
         const extension = extensions.find(item => item.id === 'local/native-contract');
         expect(extension.runtime).toBe('webview');
         expect(extension.runtime).not.toBe('legacy');
-        const shell = await fetch(`${baseUrl}${extension.shellUrl}`);
-        const html = await shell.text();
-        expect(shell.status).toBe(200);
-        expect(html).toContain('Content-Security-Policy');
-        expect(html).toContain('window.SillyTavern');
+        const ui = await fetch(`${baseUrl}${extension.uiUrl}`);
+        expect(ui.status).toBe(200);
+        expect(ui.headers.get('cache-control')).toBe('no-store');
+        const bundle = await ui.json();
+        expect(bundle.html).toContain('native-setting');
+        expect(bundle.namespace).toBe('native-contract');
+        expect(bundle.libraries.jquery).toContain('jQuery');
+        const shell = await fetch(`${baseUrl}/api/v1/extensions/local%2Fnative-contract/shell`);
+        expect(shell.status).toBe(410);
     });
 });
 

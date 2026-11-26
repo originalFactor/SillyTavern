@@ -117,6 +117,19 @@ Inspect a preset, its revision and connection changes before selection.
 
 Create a named preset or replace the inspected revision (maximum 1 MiB JSON).
 
+This is also the JSON import endpoint. Parse the uploaded UTF-8 file as a JSON
+object and send it as `preset`; multipart uploads and export envelopes are not
+accepted here. Retain unknown fields. Omit `expectedRevision` only when creating
+a new name. For editing or intentionally replacing a name (including a bundled
+preset override), inspect that exact target first and send its revision. Renaming
+an edited document creates a copy; do not reuse the original name's revision.
+
+Saving/importing never selects the preset or changes active provider settings.
+Activate separately after reviewing connection changes. On conflict, keep the
+local draft and require an explicit reload; do not fetch a new revision and
+automatically retry an overwrite. Credentials and custom headers are rejected,
+and must be configured through their dedicated endpoints.
+
 **PARAMS**
 - `kind` (path, required; string)
 - `name` (path, required; string)

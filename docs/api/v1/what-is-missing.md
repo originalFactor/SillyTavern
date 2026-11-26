@@ -15,6 +15,14 @@ fallback.
 
 ## Supported functions that need porting
 
+The separate Next client in [`client/`](../../../client/README.md) now implements
+the supported resource subset listed below through V1-only calls. Its coverage,
+reference-source mapping, draft/recovery guarantees and remaining UI limits are
+documented there. This does **not** mark the original copied functions in
+`compat-source/v1-client/` as migrated, or establish full upstream compatibility.
+The missing API operations below remain unavailable; the new client has no
+legacy endpoint fallback.
+
 These upstream behaviors have V1 equivalents, but their original client
 functions still use legacy endpoints or state assumptions. They are migration
 work, not API gaps.

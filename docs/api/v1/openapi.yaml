@@ -423,6 +423,14 @@ paths:
     put:
       operationId: saveNamedPreset
       summary: Create a named preset or replace the inspected revision (maximum 1 MiB JSON).
+      description: >-
+        Used for both JSON file import and editing. Parse a UTF-8 JSON object
+        and send it in preset, preserving unknown fields. Omit expectedRevision
+        for a new name; replacing an existing name or a bundled override requires
+        that exact target's inspected revision. Saving never activates a preset
+        or changes the active configuration. Keep drafts on conflict and require
+        explicit inspection before retrying. Credentials and custom headers
+        must be configured separately.
       requestBody:
         required: true
         content:
@@ -618,6 +626,24 @@ paths:
         '200': { description: Updated group document. }
         '404': { description: Chat is not attached to the group. }
         '409': { description: Stale revision, active generation, or shared chat. }
+  /api/v1/groups/{groupId}/chats/{chatId}/snapshot:
+    parameters:
+      - { name: groupId, in: path, required: true, schema: { type: string } }
+      - { name: chatId, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getGroupChatSnapshot
+      summary: Read one complete bounded group transcript and metadata snapshot.
+      description: Requires the chat to be attached to this group. Strict UTF-8 and JSONL, no-follow regular file, at most 8 MiB and 10000 messages. Legacy headerless groups return headerPresent=false and empty metadata in memory only. No macro evaluation, mutation, generation or write authorization. Advertised by resources.groupChatSnapshot; full features.groupChats remains false. Cache-Control is no-store.
+      responses:
+        '200':
+          description: Raw messages and metadata from the same file read; the metadata header is excluded from messages. No paging indexes are added.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatSnapshot' }
+        '404': { description: Group or attached chat not found. }
+        '409': { description: File changed while reading; no partial snapshot. }
+        '413': { description: Transcript exceeds 8 MiB or 10000 messages. }
+        '422': { description: Unsafe file, invalid UTF-8, malformed JSONL, or invalid metadata. }
   /api/v1/groups/{groupId}/chats/{chatId}/render:
     parameters:
       - { name: groupId, in: path, required: true, schema: { type: string } }
@@ -726,6 +752,8 @@ paths:
                 type: { type: string, enum: [normal, quiet, regenerate, continue] }
                 overrides: { type: object }
                 nativeContext: { type: object }
+                extensionPrompts:
+                  $ref: '#/components/schemas/ExtensionPromptSnapshot'
       responses:
         '200': { description: Prepared prompt and warnings. }
         '404': { description: Group, chat or member was not found. }
@@ -749,6 +777,8 @@ paths:
                 type: { type: string, enum: [normal, regenerate, continue] }
                 overrides: { type: object }
                 nativeContext: { type: object }
+                extensionPrompts:
+                  $ref: '#/components/schemas/ExtensionPromptSnapshot'
       responses:
         '202': { description: Accepted or previously admitted generation. }
         '409': { description: Conflicting request identity or unresolved generation. }
@@ -767,6 +797,18 @@ paths:
       responses:
         '200':
           description: Session document.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [handle, userName, accountsEnabled, admin, authenticated, csrfTokenUrl]
+                properties:
+                  handle: { type: string }
+                  userName: { type: string, description: Current Persona display name; not an authorization identity. }
+                  accountsEnabled: { type: boolean, description: Server multi-account mode. }
+                  admin: { type: boolean, description: Authenticated profile administrator flag; informational only. Endpoint authorization is checked separately. }
+                  authenticated: { type: boolean, enum: [true] }
+                  csrfTokenUrl: { type: string, enum: ['/csrf-token'] }
   /api/v1/settings:
     get:
       operationId: getSettings
@@ -791,13 +833,13 @@ paths:
   /api/v1/provider-credentials:
     get:
       operationId: getProviderCredentialState
-      summary: Read whether the OpenAI credential is configured; never returns secret values.
+      summary: Read whether OpenAI or custom endpoint credentials are configured; never returns secret values.
       responses:
         '200':
           description: Credential presence flags.
     put:
       operationId: saveProviderCredential
-      summary: Store the OpenAI API key in the server-side secrets file.
+      summary: Store an OpenAI or OpenAI-compatible custom endpoint API key in the server-side secrets file.
       requestBody:
         required: true
         content:
@@ -806,20 +848,91 @@ paths:
               type: object
               required: [provider, apiKey]
               properties:
-                provider: { type: string, enum: [openai] }
+                provider: { type: string, enum: [openai, custom], description: Use custom with oai_settings.chat_completion_source=custom and custom_url set to the base URL. }
                 apiKey: { type: string, minLength: 1, maxLength: 4096, writeOnly: true }
       responses:
         '200':
           description: Credential stored; response contains no secret value.
+  /api/v1/provider-status:
+    get:
+      operationId: getProviderStatus
+      summary: Observe the most recent explicit check of the saved provider connection.
+      description: Advertised by resources.providerStatus. Cache-Control is no-store. This GET never contacts a provider or infers success from credentials, model discovery or generation. Observations are process-local, scoped to the authenticated user, bound privately to current provider settings and the matching vault key, and expire after five minutes. Initial, invalidated or expired state is unchecked/no_connection. Configuration or credential changes discard old observations; settings PATCH and credential writes invalidate before mutation. No secrets, URLs, model catalogs or private connection fingerprints are returned. Valid means the model catalog check succeeded, not that generation or a particular model is supported.
+      responses:
+        '200':
+          description: Current bounded provider observation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderStatus' }
+  /api/v1/provider-status/check:
+    post:
+      operationId: checkProviderStatus
+      summary: Explicitly check access to the saved OpenAI-compatible provider model catalog.
+      description: Uses only saved main_api and Chat Completion source/URL plus the matching write-only vault credential. OpenAI and custom sources are supported. Performs one GET to the base URL plus /models, with a ten-second deadline, 2 MiB response bound and at most 2000 valid model entries. Redirects and automatic replay are forbidden. No generation or tool execution occurs. A late result cannot publish success after connection changes or invalidation. At most 128 user observations/checks are retained; idle observations may be evicted. Concurrent checks for one user are rejected. Browser extension frames have read-only observation access and cannot invoke this operation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, maxProperties: 0 }
+      responses:
+        '200':
+          description: Check succeeded; the observation is valid/Valid.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderStatus' }
+        '400': { description: Body must be an empty object; caller-selected URLs, keys, sources and headers are forbidden. }
+        '409': { description: Missing credential, concurrent check, connection changed during the check or bounded check capacity exhausted. }
+        '422': { description: Unsupported API/source or invalid saved provider URL. }
+        '502': { description: Provider HTTP/network/timeout/JSON/catalog failure; details are credential-redacted and the observation becomes failed/no_connection. }
+  /api/v1/provider-models:
+    post:
+      operationId: listCustomProviderModels
+      summary: Read model IDs from the configured OpenAI-compatible endpoint.
+      description: Performs a bounded GET to the supplied base URL's /models path using the write-only custom credential. The credential is never returned to the client.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [baseUrl]
+              properties:
+                baseUrl: { type: string, maxLength: 2048 }
+      responses:
+        '200':
+          description: Model IDs and display names returned by the endpoint.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [models]
+                properties:
+                  models:
+                    type: array
+                    maxItems: 2000
+                    items:
+                      type: object
+                      required: [id, name]
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        contextWindow: { type: integer, minimum: 1 }
+                        maxTokens: { type: integer, minimum: 1 }
+        '409':
+          description: Custom provider credential is not configured.
+        '422':
+          description: Invalid provider URL.
+        '502':
+          description: Provider model list request failed.
   /api/v1/provider-credentials/{provider}:
     delete:
       operationId: deleteProviderCredential
-      summary: Delete all stored keys for OpenAI.
+      summary: Delete all stored keys for OpenAI or custom endpoints.
       parameters:
         - name: provider
           in: path
           required: true
-          schema: { type: string, enum: [openai] }
+          schema: { type: string, enum: [openai, custom] }
       responses:
         '200':
           description: Credential deleted.
@@ -946,9 +1059,13 @@ paths:
   /api/v1/personas:
     get:
       operationId: listPersonas
-      summary: Read a persona-only catalog with selectedId and a revision independent of provider settings.
+      summary: Read a persona-only catalog with selectedId, current username and a revision independent of provider settings.
       responses:
-        '200': { description: Persona catalog. No unrelated settings or credentials are returned. }
+        '200':
+          description: Persona catalog. No unrelated settings or credentials are returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PersonaCatalog' }
   /api/v1/personas/{personaId}:
     parameters:
       - name: personaId
@@ -976,7 +1093,11 @@ paths:
                 lorebook: { type: string, description: Existing native book name; empty clears the Persona binding. }
                 select: { type: boolean, default: false }
       responses:
-        '200': { description: Updated persona catalog. Unknown descriptor fields are preserved. }
+        '200':
+          description: Updated persona catalog. Unknown descriptor fields are preserved.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PersonaCatalog' }
         '409': { description: Persona revision changed. }
         '422': { description: Persona placement/role/depth is invalid. }
     delete:
@@ -988,7 +1109,11 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        '200': { description: Updated persona catalog; deleting the selected persona resets the active name to User. }
+        '200':
+          description: Updated persona catalog; deleting the selected persona resets the active name to User.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PersonaCatalog' }
   /api/v1/personas/{personaId}/select:
     post:
       operationId: selectPersona
@@ -1008,7 +1133,11 @@ paths:
               properties:
                 expectedRevision: { type: string }
       responses:
-        '200': { description: Updated persona catalog. }
+        '200':
+          description: Updated persona catalog.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PersonaCatalog' }
   /api/v1/characters/{characterId}/chats:
     get:
       operationId: listChats
@@ -1040,6 +1169,25 @@ paths:
           description: Chat created.
         '409':
           description: Chat already exists.
+  /api/v1/chats/{chatId}/snapshot:
+    get:
+      operationId: getChatSnapshot
+      summary: Read one complete bounded character transcript and metadata snapshot.
+      description: Strict UTF-8 and JSONL, no-follow regular file, at most 8 MiB and 10000 messages. Requires a valid metadata header; corrupt or oversized data is rejected rather than skipped or clipped. Revision is the SHA-256 of the source bytes for observation only, not write authorization. No macro evaluation or transcript/metadata mutation. Advertised by resources.chatSnapshot. Cache-Control is no-store.
+      parameters:
+        - $ref: '#/components/parameters/chatId'
+        - $ref: '#/components/parameters/characterIdQuery'
+      responses:
+        '200':
+          description: Raw messages and metadata from the same file read; the metadata header is excluded from messages. No paging indexes are added.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatSnapshot' }
+        '400': { description: Missing or invalid character/chat identifier. }
+        '404': { description: Chat not found. }
+        '409': { description: File changed while reading; no partial snapshot. }
+        '413': { description: Transcript exceeds 8 MiB or 10000 messages. }
+        '422': { description: Unsafe file, invalid UTF-8, malformed JSONL, or missing/invalid metadata header. }
   /api/v1/chats/{chatId}:
     get:
       operationId: getChat
@@ -1145,6 +1293,96 @@ paths:
           description: Message edited or deleted.
         '409': { description: Active/unresolved admission or transcript changed during evaluation. }
         '500': { description: Publication is unknown; inspect text/variables before another explicit save. }
+  /api/v1/package-management:
+    get:
+      operationId: getPackageInventory
+      summary: Inspect managed extension and server-plugin files (privileged operator API).
+      description: Separate from the extension settings bridge. User profiles require admin=true outside companion mode; companion capability represents its operator. Inventory is available with writes disabled, waits for current management operations, and never executes package code. resources.packageManagement reflects enablePluginManagement (default false), falling back to legacy enablePackageManagement only when the new key is absent.
+      responses:
+        '200':
+          description: Bounded filesystem inventory and revision.
+          headers:
+            Cache-Control: { schema: { type: string }, description: no-store }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled, revision, packages]
+                properties:
+                  enabled: { type: boolean }
+                  revision: { type: string }
+                  packages: { type: array, items: { $ref: '#/components/schemas/ManagedPackage' } }
+                  diagnostics: { type: array, items: { type: string } }
+        '403': { description: Administrator access required. }
+        '413': { description: Inventory exceeds filesystem bounds. }
+        '422': { description: Unsafe or unreadable package storage. }
+  /api/v1/package-management/install:
+    post:
+      operationId: installManagedPackage
+      summary: Install a reviewed HTTPS Git snapshot without execution; restart required.
+      description: Requires operator enablePluginManagement, admin outside companion, explicit trust and inspected revision. HTTPS only; credentials, query, fragment, redirects, submodules and unsafe paths are forbidden. Fresh bare clone ignores old package/system/global Git config, hooks and filters. No package scripts, dependency installation, code execution or hot reload. Extensions are installed disabled. New admissions are fenced and active generations reject management. Concurrent mutations reject; Git preparation is bounded to 20 seconds and whole request to 90 seconds. Do not automatically retry uncertain requests. Only API-managed packages can later be upgraded/removed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, url, name, expectedRevision, confirmTrust]
+              properties:
+                kind: { $ref: '#/components/schemas/ManagedPackageKind' }
+                name: { $ref: '#/components/schemas/ManagedPackageName' }
+                url: { type: string, format: uri, maxLength: 2048, description: HTTPS repository URL without credentials, query or fragment. }
+                expectedRevision: { type: string }
+                confirmTrust: { type: boolean, enum: [true] }
+      responses:
+        '200':
+          description: Per-item outcome; no code executed. Inspect restartRequired even for partial failures.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PackageMutationResult' }
+        '400': { description: Invalid input or missing explicit trust. }
+        '403': { description: Operator policy disabled or administrator access required. }
+        '409': { description: Inventory changed, operation already running or active generation. }
+        '413': { description: Inventory exceeds filesystem bounds. }
+        '422': { description: Unsafe package storage. }
+  /api/v1/package-management/bulk:
+    post:
+      operationId: mutateManagedPackages
+      summary: Sequentially upgrade or remove selected managed packages, with partial results.
+      description: Same privileged enablement, trust, revision, no-execution and restart boundaries as install. 1–32 distinct selections; upgrades use managed repository metadata and disable changed extensions without new grants. A 90-second batch deadline marks unattempted items as failures; Git preparation is at most 20 seconds per item. Earlier successes persist. Concurrent mutations reject, inventory reads wait for completion. No implicit retry or caller-key idempotency. Already loaded plugin routes remain until restart.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, packages, expectedRevision, confirmTrust]
+              properties:
+                action: { type: string, enum: [upgrade, remove] }
+                expectedRevision: { type: string }
+                confirmTrust: { type: boolean, enum: [true] }
+                packages:
+                  type: array
+                  minItems: 1
+                  maxItems: 32
+                  uniqueItems: true
+                  items:
+                    type: object
+                    required: [kind, name]
+                    properties:
+                      kind: { $ref: '#/components/schemas/ManagedPackageKind' }
+                      name: { $ref: '#/components/schemas/ManagedPackageName' }
+      responses:
+        '200':
+          description: Ordered per-item results; earlier successes remain on later failure.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PackageMutationResult' }
+        '400': { description: Invalid selections or missing trust/revision. }
+        '403': { description: Operator policy disabled or administrator access required. }
+        '409': { description: Inventory changed, management busy or generation active. }
+        '413': { description: Inventory exceeds filesystem bounds. }
+        '422': { description: Unsafe package storage. }
   /api/v1/extensions:
     get:
       operationId: listExtensions
@@ -1152,7 +1390,8 @@ paths:
   /api/v1/extensions/{extensionId}/settings:
     get:
       operationId: getExtensionSettings
-      summary: Read one extension's settings namespace.
+      summary: Read an installed extension's redacted settings, namespace and revision.
+      description: Encode the whole inventory ID as one path segment (local%2Ffoo). Namespace defaults to the directory basename; settings_namespace can explicitly override it.
       parameters:
         - $ref: '#/components/parameters/extensionId'
       responses:
@@ -1160,9 +1399,14 @@ paths:
           description: Extension settings.
     patch:
       operationId: patchExtensionSettings
-      summary: Merge-patch one extension's settings namespace (requires headlessPlugins).
+      summary: Shallow-merge one installed extension's settings namespace (requires headlessPlugins).
+      description: Credentials and containers with stored credentials are not editable. Patches/results are limited to 1 MiB. Non-object namespaces require a dedicated management API. Only this namespace is changed.
       parameters:
         - $ref: '#/components/parameters/extensionId'
+        - name: If-Match
+          in: header
+          description: Exact opaque revision from GET, without added quotes. The isolated client host always supplies this; legacy unversioned editing remains accepted.
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -1175,19 +1419,57 @@ paths:
           description: Updated extension settings.
         '403':
           description: Headless plugins are disabled.
-  /api/v1/extensions/{extensionId}/shell:
+  /api/v1/extensions/{extensionId}/ui:
     get:
-      operationId: getExtensionShell
-      summary: Open a same-origin compatibility WebView shell with a real context bridge.
+      operationId: getExtensionUi
+      summary: Snapshot manifest-declared UI modules, CSS, templates and browser libraries as JSON.
+      description: Authenticated no-store data, never server-side module execution. At most 128 loaded files, 4 MiB per UI asset, 512 KiB per manifest, 4 MiB extension source total, template depth 4. Oversized asset errors identify the relative path and size limit. Rejects non-regular files, symlinks, traversal, external/computed imports and unknown static host modules. Unknown literal dynamic host imports reject locally when invoked. Third-party virtual module paths retain upstream directory depth. The separate client additionally provides Prompt/slash descriptor modules, SSE decoding, custom dialog controls, local tokenizer string-length estimates (ceil of UTF-16 length divided by 3.35, not model tokenization), a named read-only World Info book bridge, registered Persona catalog reads and revision-checked native Persona selection with a live avatar ID. Persona rendering/media and greeting side effects remain unsupported. Reasoning parsing receives only four scalar settings switches, never credentials or URLs. Author-note metadata/no-chat behavior, shared runtime constants and Bowser-based device/time helpers are also provided; chat-bound author-note injection and upstream navigation remain unsupported. The snapshot includes the Bowser browser library. The client also supplies frame-local legacy macro registration and OpenAI text message/collection/budget classes, model selection and stream response parsing. Default message counts estimate serialized JSON string length, not provider usage. Read-only OpenAI settings include only source, model IDs, the thoughts switch and configured numeric context/response token limits; generation, prompt/chat setters, proxy presets and media mutation are unavailable. The preset-manager adapter provides detached read-only catalogs, preset content and active extension fields for four native kinds, with recursive connection/credential exclusion, revision checks, at most four concurrent GETs, 128 entries per kind, 256 files total and 8 MiB aggregate document data. Preset selection, mutation and upstream selector DOM are unavailable. The regex engine adapter provides local capture/trim replacement, compiler/LRU caches and upstream placement/depth/edit/display filtering against detached global and active-preset rules. Its named parent read projects known fields from bounded 1 MiB documents with at most 512 scripts/scope names and 32 preset API grant lists, rechecks revisions/main API and caches success or failure until reload. Preset execution honors captured grants; macro-dependent processing, character/chat binding, script writes and scope changes reject. The World Info adapter also reads detached catalog, selected-book, global/extra-character binding and supported scan-setting snapshots, bounded to 1 MiB settings, 128 KiB/512 catalog rows and 512 names per list, with revision/catalog rechecks and latched failures. Opaque fields and unavailable budget controls are omitted. Source entry definitions/templates and embedded character-book conversion are local data helpers only. Installed extension name/type snapshots are bounded to 512 rows/1 MiB, preserve local-over-global precedence and grant no cross-extension settings access. The metadata-save alias rejects without a chat binding. Local utilities also provide upstream filename sanitization with a 255-byte UTF-8 limit, explicit manual-avatar filename extraction and custom-list icon selection (4096 icons, 32 aliases each, 128 characters per alias); default icon discovery, character lookup and downloads reject. The script adapter supplies prompt/system-message constants, role lookup, parity/occurrence helpers, memoized lazy fields, a live Persona avatar re-export and the captured API kind (also on context). Script/context imports initialize their Persona/reasoning/OpenAI dependencies before extension startup without duplicate initialization. Chat Completion context/response/prompt-limit queries share the safe OpenAI snapshot; configured limits must be safe integers (positive context, nonnegative response), while missing required limits and other API kinds reject. The deprecated getMaxContextSize alias is the same function as getMaxPromptTokens, subtracting response length with upstream override and unclamped arithmetic. These queries do not tokenize, trim prompts or dispatch generations. Reasoning identifiers are bounded to 256 characters. The current-chat-ID helper returns undefined with no selection and rejects unbound character/group selections; native chat state and legacy avatar asset routes remain unavailable. Parent Persona/settings/identity operations discard responses after abort or session replacement; uncertain Persona selection remains latched until reload. These adapters use existing V1 endpoints; they provide no STscript execution or book mutation. resources.extensionUi advertises this API, not full legacy extension compatibility.
       parameters:
         - $ref: '#/components/parameters/extensionId'
       responses:
         '200':
-          description: HTML shell.
+          description: Isolated-host UI snapshot; module keys are virtual identifiers, not served URLs. Client adapters additionally provide bounded settings-frame text cleanup with explicit stopping strings, literal card preprocessing, example-block parsing and pure formatting helpers. Conversation-bound printMessages redraws the latest native page after a parent-owned read and DOM commit without returning transcript contents or writing messages; settings-only hosts reject it. Async saveChatConditional, saveMetadata and saveChat exports reject unbound transcript persistence without sending backend requests or claiming a successful save; context.saveChat aliases the conditional dispatcher as upstream. Native-only character/editor/DOM/navigation function exports including saveCharacterDebounced fail explicitly before timers or requests. Literal-only substituteParams helpers and isolated Handlebars bias extraction run locally; native macro evaluation stays unbound. stopGeneration notifies only frame-local listeners and returns false without native cancellation. Conversation-bound activateSendButtons and deactivateSendButtons asynchronously release/acquire session-scoped native send and reply-alternative UI locks without bypassing generation fences; session abort releases its locks. The parent also supplies a complete native character catalog snapshot bounded to 512 cards, 4 MiB per card response and 16 MiB aggregate, with catalog identity and revision rechecks. Frozen characters and this_chid/context.characterId expose the actual catalog and selected array index. Conversation-bound getCurrentChatId and context.chatId capture the parent selection; group hosts expose context.groupId without a character selection, and settings hosts select none. The frame cannot retarget the operation or mutate the snapshot. Catalog refresh, character editing and navigation remain guarded. A parent-only chat.snapshot operation with exactly empty arguments loads the complete selected conversation through the managed snapshot GETs, bounded to one 8 MiB strict UTF-8 JSONL file and 10000 messages. Frozen chat and chat_metadata share raw messages and metadata from the same read; the header is excluded without adding paging indexes, legacy headerless groups get in-memory empty metadata, and no-selection settings frames get source initial empty state without a transcript request. Failed or oversized selected chats never fall back to empty state. Snapshots remain fixed until frame reload; transcript and metadata saves remain guarded. getLastMessageId uses complete-snapshot zero-based indexes and upstream swipe/filter rules. Native name, macro, upstream chat DOM globals and generation dependencies remain unsupported.
+          headers:
+            Cache-Control: { schema: { type: string }, description: no-store }
           content:
-            text/html:
+            application/json:
               schema:
-                type: string
+                type: object
+                required: [extensionId, name, namespace, base, entries, modules, templates, css, html, libraries, activate]
+                properties:
+                  extensionId: { type: string }
+                  name: { type: string }
+                  namespace: { type: string }
+                  base: { type: string }
+                  entries: { type: array, items: { type: string } }
+                  modules:
+                    type: object
+                    description: Virtual module source map. Rewriting preserves JavaScript string literals for static imports, reexports and literal dynamic imports, including non-interpolated template literals.
+                    additionalProperties: { type: string }
+                  templates: { type: object, additionalProperties: { type: string } }
+                  css: { type: array, items: { type: string } }
+                  html: { type: string }
+                  libraries:
+                    type: object
+                    properties:
+                      jquery: { type: string }
+                      handlebars: { type: string }
+                      purify: { type: string }
+                      lodash: { type: string }
+                      moment: { type: string }
+                      bowser: { type: string, description: Browser detector exposed as Bowser by the client lib.js adapter. }
+                  activate: { type: string, nullable: true }
+        '404': { description: Missing or symlinked extension/asset. }
+        '413': { description: Snapshot bounds exceeded. }
+        '422': { description: No declared UI or unsupported module dependency. }
+  /api/v1/extensions/{extensionId}/shell:
+    get:
+      operationId: getExtensionShell
+      summary: Retired same-origin executable shell.
+      parameters:
+        - $ref: '#/components/parameters/extensionId'
+      responses:
+        '410': { description: Use the JSON UI snapshot and isolated client host instead. }
   /api/v1/generations/preview:
     post:
       operationId: previewGeneration
@@ -1413,6 +1695,101 @@ components:
           schema:
             $ref: '#/components/schemas/GenerationInput'
   schemas:
+    ExtensionPromptSnapshot:
+      type: object
+      maxProperties: 128
+      description: Optional per-request temporary prompt injections, bounded to 1 MiB UTF-8 JSON; included in caller-key identity. Predicates must be resolved by the client. No script execution, settings writes or persistent registry. Native preparation retains control of its own generated prompts.
+      propertyNames:
+        minLength: 1
+        maxLength: 128
+        description: Control characters and __proto__, constructor and prototype are rejected.
+      additionalProperties:
+        type: object
+        additionalProperties: false
+        required: [value, position, depth, scan, role]
+        properties:
+          value: { type: string, maxLength: 65536 }
+          position: { type: integer, enum: [-1, 0, 1, 2], description: "None, relative in-prompt, in-chat or before-prompt." }
+          depth: { type: integer, minimum: 0, maximum: 10000 }
+          scan: { type: boolean, description: Include the value in the World Info scan. }
+          role: { type: integer, enum: [0, 1, 2], description: "System, user or assistant." }
+    ProviderStatus:
+      type: object
+      additionalProperties: false
+      required: [onlineStatus, state, checkedAt]
+      properties:
+        onlineStatus: { type: string, enum: [no_connection, Valid], description: Valid only for state valid; all other states use no_connection. }
+        state: { type: string, enum: [unchecked, checking, valid, failed] }
+        checkedAt: { type: [integer, 'null'], minimum: 0, description: Unix epoch milliseconds for completed valid/failed checks; null for unchecked/checking. }
+    PersonaCatalog:
+      type: object
+      required: [revision, selectedId, username, personas]
+      properties:
+        revision: { type: string, description: Revision of Persona-owned state including the active username. }
+        selectedId: { type: string, description: Selected avatar ID; may be empty or absent from the registered descriptor list. }
+        username: { type: string, description: Current chat display name from settings (default User), independent of the selected descriptor name and authenticated account. }
+        personas:
+          type: array
+          items:
+            type: object
+            required: [id, name, description, title, position, depth, role, lorebook]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              description: { type: string }
+              title: { type: string }
+              position: { type: number }
+              depth: { type: number }
+              role: { type: number }
+              lorebook: { type: string }
+    ChatSnapshot:
+      type: object
+      required: [chatId, revision, headerPresent, chatMetadata, messages]
+      properties:
+        characterId: { type: string, description: Present for character chats. }
+        groupId: { type: string, description: Present for group chats. }
+        chatId: { type: string }
+        revision: { type: string, pattern: '^[a-f0-9]{64}$', description: SHA-256 of the exact source bytes. Observation only. }
+        headerPresent: { type: boolean, description: False only for legacy headerless/empty group transcripts. }
+        chatMetadata: { type: object, additionalProperties: true }
+        messages:
+          type: array
+          maxItems: 10000
+          items: { type: object, additionalProperties: true }
+    ManagedPackageKind:
+      type: string
+      enum: [extension, server-plugin]
+    ManagedPackageName:
+      type: string
+      pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
+      description: Single safe basename. node_modules and third-party are reserved.
+    ManagedPackage:
+      type: object
+      required: [kind, name, id, manageable]
+      properties:
+        kind: { $ref: '#/components/schemas/ManagedPackageKind' }
+        name: { type: string, description: Inventory can include unmanaged names that fail mutation validation. }
+        id: { type: string, description: '<kind>/<name>, not the extension settings/UI ID.' }
+        version: { type: string }
+        repository: { type: string, format: uri }
+        commit: { type: string }
+        manageable: { type: boolean }
+        diagnostic: { type: string }
+    PackageMutationResult:
+      type: object
+      required: [results, restartRequired]
+      properties:
+        restartRequired: { type: boolean }
+        results:
+          type: array
+          items:
+            type: object
+            required: [kind, name, ok, message]
+            properties:
+              kind: { $ref: '#/components/schemas/ManagedPackageKind' }
+              name: { $ref: '#/components/schemas/ManagedPackageName' }
+              ok: { type: boolean }
+              message: { type: string }
     MacroVariableState:
       type: object
       required: [revision, variables]
@@ -1458,6 +1835,8 @@ components:
           default: normal
         input:
           type: string
+        extensionPrompts:
+          $ref: '#/components/schemas/ExtensionPromptSnapshot'
         tools:
           type: array
           maxItems: 32

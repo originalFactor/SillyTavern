@@ -12,7 +12,7 @@ The endpoint chapters below document every operation in [OpenAPI](../openapi.yam
 - [Groups](./groups.md) (17 endpoints)
 - [Macros](./macros.md) (2 endpoints)
 - [Prompts and presets](./prompts-and-presets.md) (10 endpoints)
-- [Provider credentials](./provider-credentials.md) (3 endpoints)
+- [Provider credentials](./provider-credentials.md) (6 endpoints)
 - [Session and settings](./session-and-settings.md) (4 endpoints)
 - [Text processing](./text-processing.md) (2 endpoints)
 - [World Info](./world-info.md) (7 endpoints)

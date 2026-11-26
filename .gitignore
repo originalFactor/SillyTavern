@@ -3,4 +3,5 @@
 /tests/test-results/
 /*-censored.json
 /config.yaml
-/compat-source
+/compat-source/
+/data/

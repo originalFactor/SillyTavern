@@ -1,0 +1,7 @@
+.next/
+.next-dev/
+.next-build/
+.next-browser-dev/
+node_modules/
+out/
+next-env.d.ts

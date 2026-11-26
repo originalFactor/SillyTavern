@@ -4,8 +4,9 @@
  */
 import { parseHTML } from 'linkedom';
 import jquery from 'jquery';
+import path from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const unsupported = new Set([
     'getComputedStyle', 'requestAnimationFrame', 'cancelAnimationFrame',
@@ -83,7 +84,8 @@ export function classifyExtension(manifest: Record<string, any> = {}) {
  * @returns {Promise<{html: string, text: string, diagnostics: string[]}>
  */
 export function runVirtualDOMExtension(entry: string, options: Record<string, any> = {}) {
-    const worker = new Worker(new URL('./virtual-dom-worker.js', import.meta.url), {
+    const workerFile = path.join(path.dirname(fileURLToPath(import.meta.url)), 'virtual-dom-worker.js');
+    const worker = new Worker(pathToFileURL(workerFile), {
         workerData: { entry: pathToFileURL(entry).href, html: options.html, timeoutMs: options.timeoutMs },
         resourceLimits: { maxOldGenerationSizeMb: 128, stackSizeMb: 4 },
     });
